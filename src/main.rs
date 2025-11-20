@@ -23,7 +23,8 @@ use crate::{
         ConfigFile,
         cli::{Args, Command},
     },
-    mpd::{client::Client, mpd_client::MpdClient, proto_client::SocketClient},
+    mpd::{mpd_client::MpdClient, proto_client::SocketClient},
+    player::Client,
     shared::{
         dependencies::{DEPENDENCIES, FFMPEG, FFPROBE, PYTHON3, PYTHON3MUTAGEN, UEBERZUGPP, YTDLP},
         env::ENV,
@@ -46,6 +47,7 @@ mod config;
 mod core;
 mod ctx;
 mod mpd;
+mod player;
 mod shared;
 mod ui;
 

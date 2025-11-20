@@ -86,6 +86,8 @@ pub struct Config {
     pub show_playlists_in_browser: ShowPlaylistsMode,
     pub directories_sort: Arc<SortOptions>,
     pub cava: Cava,
+    pub backend: PlayerBackend,
+    pub mpv_socket: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -94,6 +96,15 @@ pub enum ShowPlaylistsMode {
     None,
     #[default]
     NonRoot,
+}
+
+#[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum PlayerBackend {
+    #[default]
+    #[serde(rename = "mpd")]
+    Mpd,
+    #[serde(rename = "mpv")]
+    Mpv,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -172,6 +183,10 @@ pub struct ConfigFile {
     pub directories_sort: SortModeFile,
     #[serde(default)]
     pub cava: CavaFile,
+    #[serde(default)]
+    pub backend: PlayerBackend,
+    #[serde(default)]
+    pub mpv_socket: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
@@ -234,6 +249,8 @@ impl Default for ConfigFile {
             reflect_changes_to_playlist: false,
             cava: CavaFile::default(),
             show_playlists_in_browser: ShowPlaylistsMode::default(),
+            backend: PlayerBackend::default(),
+            mpv_socket: None,
         }
     }
 }
@@ -470,6 +487,8 @@ impl ConfigFile {
             keep_state_on_song_change: self.keep_state_on_song_change,
             reflect_changes_to_playlist: self.reflect_changes_to_playlist,
             cava: self.cava.into(),
+            backend: self.backend,
+            mpv_socket: self.mpv_socket.map(|v| tilde_expand(&v).into_owned()),
         };
 
         if skip_album_art_check {

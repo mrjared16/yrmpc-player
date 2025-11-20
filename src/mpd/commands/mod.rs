@@ -24,8 +24,23 @@ pub use self::{
     list_files::ListFiles,
     list_mounts::Mounts,
     list_playlists::Playlist,
-    lsinfo::LsInfo,
-    status::{State, Status},
+    lsinfo::{LsInfo, LsInfoEntry},
+    outputs::Output,
+    status::{OnOffOneshot, State, Status},
     update::Update,
     volume::Volume,
 };
+// Re-export types from parent modules
+pub use crate::mpd::{
+    mpd_client::{Tag, ValueChange},
+    queue_position::QueuePosition,
+};
+
+/// Position for seeking in a track
+#[derive(Debug, Clone, Copy)]
+pub enum SeekPosition {
+    /// Absolute position in seconds
+    Absolute(f64),
+    /// Relative position in seconds (positive or negative)
+    Relative(f64),
+}
