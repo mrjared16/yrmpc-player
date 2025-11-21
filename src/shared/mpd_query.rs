@@ -9,10 +9,10 @@ use super::{events::AppEvent, mpd_client_ext::PartitionedOutput};
 use crate::{
     config::tabs::PaneType,
     mpd::{
-        client::Client,
         commands::{Decoder, IdleEvent, Song, Status, Volume},
         mpd_client::MpdClient,
     },
+    player::client::Client,
     shared::{events::ClientRequest, macros::try_skip},
     ui::{dir_or_song::DirOrSong, dirstack::Path},
 };

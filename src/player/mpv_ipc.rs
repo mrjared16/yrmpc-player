@@ -25,6 +25,7 @@ pub struct MpvResponse {
     pub event: Option<String>,
 }
 
+#[derive(Debug)]
 pub struct MpvIpc {
     reader: BufReader<UnixStream>,
     writer: UnixStream,
@@ -43,6 +44,10 @@ impl MpvIpc {
             writer: stream,
             request_id: 1,
         })
+    }
+
+    pub fn try_clone_stream(&self) -> Result<UnixStream> {
+        self.writer.try_clone().context("Failed to clone MPV stream")
     }
 
     pub fn send_command(&mut self, args: Vec<&str>) -> Result<Value> {

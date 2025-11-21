@@ -1,3 +1,4 @@
+pub mod count;
 pub mod current_song;
 pub mod decoders;
 pub mod idle;
@@ -18,6 +19,7 @@ pub mod update;
 pub mod volume;
 
 pub use self::{
+    count::Count,
     current_song::Song,
     decoders::Decoder,
     idle::IdleEvent,
@@ -32,7 +34,7 @@ pub use self::{
 };
 // Re-export types from parent modules
 pub use crate::mpd::{
-    mpd_client::{Tag, ValueChange},
+    mpd_client::{SaveMode, Tag, ValueChange},
     queue_position::QueuePosition,
 };
 

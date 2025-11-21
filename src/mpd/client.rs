@@ -29,7 +29,7 @@ const MIN_SUPPORTED_VERSION: Version = Version { major: 0, minor: 23, patch: 5 }
 
 pub struct Client<'name> {
     name: &'name str,
-    rx: BufReader<TcpOrUnixStream>,
+    pub rx: BufReader<TcpOrUnixStream>,
     pub stream: TcpOrUnixStream,
     addr: MpdAddress,
     password: Option<MpdPassword>,
@@ -287,5 +287,11 @@ impl SocketClient for Client<'_> {
 
     fn version(&self) -> Version {
         self.version
+    }
+}
+
+impl Client<'_> {
+    pub fn stream(&mut self) -> &mut TcpOrUnixStream {
+        &mut self.stream
     }
 }

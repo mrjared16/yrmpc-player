@@ -22,11 +22,11 @@ use crate::{
     },
     core::scheduler::{Scheduler, time_provider::DefaultTimeProvider},
     mpd::{
-        client::Client,
         commands::{Song, State, Status},
         mpd_client::MpdClient,
         version::Version,
     },
+    player::client::Client,
     shared::{
         events::ClientRequest,
         lrc::{Lrc, LrcIndex, get_lrc_path},
@@ -84,7 +84,7 @@ impl Ctx {
         client_request_sender: Sender<ClientRequest>,
         mut scheduler: Scheduler<(Sender<AppEvent>, Sender<ClientRequest>), DefaultTimeProvider>,
     ) -> Result<Self> {
-        let supported_commands: HashSet<String> = client.supported_commands.clone();
+        let supported_commands: HashSet<String> = client.supported_commands();
         let stickers_supported = if supported_commands.contains("sticker") {
             StickersSupport::Supported
         } else {
@@ -92,8 +92,8 @@ impl Ctx {
         };
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
 
-        let status = client.get_status()?;
-        let queue = client.playlist_info()?.unwrap_or_default();
+        let status = client.status()?;
+        let queue = client.playlist_info()?;
 
         if !supported_commands.contains("albumart") || !supported_commands.contains("readpicture") {
             config.album_art.method = ImageMethod::None;

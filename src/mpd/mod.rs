@@ -7,6 +7,7 @@ pub mod mpd_client;
 pub mod proto_client;
 mod queue_position;
 pub mod version;
+pub use mpd_client::{MpdClient, SingleOrRange};
 pub use queue_position::QueuePosition;
 
 pub(crate) trait FromMpd

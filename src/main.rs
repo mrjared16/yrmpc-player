@@ -24,7 +24,7 @@ use crate::{
         cli::{Args, Command},
     },
     mpd::{mpd_client::MpdClient, proto_client::SocketClient},
-    player::Client,
+    player::client::Client,
     shared::{
         dependencies::{DEPENDENCIES, FFMPEG, FFPROBE, PYTHON3, PYTHON3MUTAGEN, UEBERZUGPP, YTDLP},
         env::ENV,
@@ -123,13 +123,19 @@ fn main() -> Result<()> {
 
             client.set_read_timeout(Some(Duration::from_secs(3)))?;
             client.set_write_timeout(Some(Duration::from_secs(3)))?;
-            client.stream.write_all(command.as_bytes())?;
-            client.stream.write_all(b"\n")?;
-            client.stream.flush()?;
+            client
+                .stream()
+                .expect("MPD backend required for debug command")
+                .write_all(command.as_bytes())?;
+            client.stream().expect("MPD backend required for debug command").write_all(b"\n")?;
+            client.stream().expect("MPD backend required for debug command").flush()?;
 
             let mut buf = String::new();
             loop {
-                client.read().read_line(&mut buf)?;
+                client
+                    .read()
+                    .expect("MPD backend required for debug command")
+                    .read_line(&mut buf)?;
                 print!("{buf}");
                 if buf.trim().starts_with("OK") || buf.trim().starts_with("ACK") {
                     break;
@@ -345,14 +351,16 @@ fn main() -> Result<()> {
             }
             event_tx.send(AppEvent::RequestRender).context("Failed to render first frame")?;
 
-            let mut client = Client::init(
+            let mut client = Client::init_with_backend(
+                config.backend,
                 config.address.clone(),
                 config.password.clone(),
+                config.mpv_socket.clone(),
                 "command",
                 args.partition.partition,
                 args.partition.autocreate,
             )
-            .context("Failed to connect to MPD")?;
+            .context("Failed to connect to backend")?;
             client.set_read_timeout(Some(config.mpd_read_timeout))?;
             client.set_write_timeout(Some(config.mpd_write_timeout))?;
 

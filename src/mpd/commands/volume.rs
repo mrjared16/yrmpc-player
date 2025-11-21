@@ -4,7 +4,7 @@ use serde::Serialize;
 use crate::mpd::{FromMpd, LineHandled, errors::MpdError};
 
 #[derive(Debug, Serialize, Default, PartialEq, AsRef, Clone, Copy)]
-pub struct Volume(u32);
+pub struct Volume(pub u32);
 
 impl Bound<u32> for Volume {
     fn value(&self) -> &u32 {

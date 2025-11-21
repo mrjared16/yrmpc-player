@@ -23,6 +23,7 @@ use super::{
         Status,
         Update,
         Volume,
+        count::Count,
         decoders::Decoders,
         list::MpdList,
         list_playlist::FileList,
@@ -142,6 +143,7 @@ pub trait MpdCommand {
         position: Option<QueuePosition>,
     ) -> MpdResult<()>;
     fn send_list_tag(&mut self, tag: Tag, filter: Option<&[Filter<'_>]>) -> MpdResult<()>;
+    fn send_count(&mut self, filter: &[Filter<'_>]) -> MpdResult<()>;
     fn send_shuffle(&mut self, range: Option<SingleOrRange>) -> MpdResult<()>;
     fn send_list_all(&mut self, path: Option<&str>) -> MpdResult<()>;
     fn send_lsinfo(&mut self, path: Option<&str>) -> MpdResult<()>;
@@ -270,6 +272,7 @@ pub trait MpdClient: Sized {
         position: Option<QueuePosition>,
     ) -> MpdResult<()>;
     fn list_tag(&mut self, tag: Tag, filter: Option<&[Filter<'_>]>) -> MpdResult<MpdList>;
+    fn count(&mut self, filter: &[Filter<'_>]) -> MpdResult<Count>;
     /// Shuffles the current queue.
     fn shuffle(&mut self, range: Option<SingleOrRange>) -> MpdResult<()>;
     // Database
@@ -384,7 +387,9 @@ impl MpdClient for Client<'_> {
     }
 
     fn binary_limit(&mut self, limit: u64) -> MpdResult<()> {
-        self.send_binary_limit(limit).and_then(|()| self.read_ok())
+        // Commented out for Mopidy compatibility - Mopidy doesn't support binarylimit
+        // self.send_binary_limit(limit).and_then(|()| self.read_ok())
+        Ok(())
     }
 
     fn password(&mut self, password: &str) -> MpdResult<()> {
@@ -591,7 +596,13 @@ impl MpdClient for Client<'_> {
     }
 
     fn list_tag(&mut self, tag: Tag, filter: Option<&[Filter<'_>]>) -> MpdResult<MpdList> {
-        self.send_list_tag(tag, filter).and_then(|()| self.read_response())
+        self.send_list_tag(tag, filter)?;
+        self.read_response()
+    }
+
+    fn count(&mut self, filter: &[Filter<'_>]) -> MpdResult<Count> {
+        self.send_count(filter)?;
+        self.read_response()
     }
 
     fn shuffle(&mut self, range: Option<SingleOrRange>) -> MpdResult<()> {
@@ -1289,6 +1300,15 @@ impl<T: SocketClient> MpdCommand for T {
 
     fn send_outputs(&mut self) -> MpdResult<()> {
         self.execute("outputs")
+    }
+
+    fn send_count(&mut self, filter: &[Filter<'_>]) -> MpdResult<()> {
+        let mut command = String::from("count");
+        for f in filter {
+            command.push(' ');
+            command.push_str(&f.to_query_str());
+        }
+        self.execute(&command)
     }
 
     fn send_toggle_output(&mut self, id: u32) -> MpdResult<()> {

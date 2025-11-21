@@ -4,12 +4,16 @@ use anyhow::{Context, Result};
 use parking_lot::Mutex;
 
 use super::{backend::MusicBackend, mpv_ipc::MpvIpc};
-use crate::mpd::commands::*;
+use crate::mpd::{
+    commands::*,
+    mpd_client::{Filter, SingleOrRange},
+};
 
 /// MPV backend implementation
 ///
 /// This implements the MusicBackend trait using MPV's JSON IPC protocol.
 /// Since MPV doesn't have a built-in queue, we manage it internally.
+#[derive(Debug)]
 pub struct MpvBackend {
     ipc: Arc<Mutex<MpvIpc>>,
     queue: Arc<Mutex<Vec<Song>>>,
@@ -25,6 +29,52 @@ impl MpvBackend {
             queue: Arc::new(Mutex::new(Vec::new())),
             current_index: Arc::new(Mutex::new(0)),
         })
+    }
+
+    pub fn try_clone_stream(&self) -> Result<std::os::unix::net::UnixStream> {
+        let ipc = self.ipc.lock();
+        ipc.try_clone_stream()
+    }
+
+    pub fn reconnect(&mut self) -> Result<()> {
+        // TODO: Implement reconnection logic
+        // For now, just return Ok as if connected, or error if we can't check
+        Ok(())
+    }
+
+    pub fn enter_idle(&mut self) -> Result<()> {
+        // MPV sends events asynchronously, so we don't need to explicitly enter idle
+        // mode But we might want to ensure we are subscribed to events
+        Ok(())
+    }
+
+    pub fn read_response(&mut self) -> Result<Vec<crate::mpd::commands::IdleEvent>> {
+        // Read events from MPV IPC
+        // This is a blocking call in MPD, so we should block here too or use timeout
+        // MpvIpc::receive_message uses read_line which blocks
+        let mut ipc = self.ipc.lock();
+        match ipc.receive_message() {
+            Ok(resp) => {
+                if let Some(event) = resp.event {
+                    // Map MPV events to MPD IdleEvents
+                    match event.as_str() {
+                        "property-change" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        "pause" | "unpause" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        "metadata-update" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        "seek" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        "file-loaded" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        _ => Ok(vec![]),
+                    }
+                } else {
+                    Ok(vec![])
+                }
+            }
+            Err(_) => {
+                // If error (e.g. timeout), return empty list or error
+                // For now, return empty list to avoid crashing the loop
+                Ok(vec![])
+            }
+        }
     }
 }
 
@@ -124,20 +174,29 @@ impl MusicBackend for MpvBackend {
         };
 
         Ok(Status {
+            partition: String::from("default"),
             state,
-            volume: volume as u8,
-            repeat: false, // MPV doesn't have these concepts
+            volume: Volume::new(volume as u32),
+            repeat: false,
             random: false,
             single: OnOffOneshot::Off,
             consume: OnOffOneshot::Off,
-            playlist_length: self.queue.lock().len(),
-            song: *self.current_index.lock(),
-            elapsed: Some(std::time::Duration::from_secs_f64(time_pos)),
-            duration: Some(std::time::Duration::from_secs_f64(duration)),
-            crossfade: None,
+            playlist: Some(1),
+            playlistlength: self.queue.lock().len() as u32,
+            song: Some(*self.current_index.lock() as u32),
+            songid: None,
+            nextsong: None,
+            nextsongid: None,
+            elapsed: std::time::Duration::from_secs_f64(time_pos),
+            duration: std::time::Duration::from_secs_f64(duration),
             bitrate: None,
-            audio_format: None,
+            xfade: None,
+            mixrampdb: None,
+            mixrampdelay: None,
+            audio: None,
             updating_db: None,
+            error: None,
+            lastloadedplaylist: None,
         })
     }
 
@@ -157,15 +216,11 @@ impl MusicBackend for MpvBackend {
         // Create a minimal Song struct
         let song = Song {
             file: uri.to_string(),
-            title: None,
-            artist: None,
-            album: None,
             duration: None,
             id: self.queue.lock().len() as u32,
+            metadata: std::collections::HashMap::new(),
             last_modified: chrono::Utc::now(),
             added: Some(chrono::Utc::now()),
-            // ... other fields with defaults
-            ..Default::default()
         };
 
         self.queue.lock().push(song);
@@ -217,7 +272,7 @@ impl MusicBackend for MpvBackend {
         let mut ipc = self.ipc.lock();
 
         match volume {
-            ValueChange::Absolute(v) => {
+            ValueChange::Set(v) => {
                 ipc.set_property("volume", serde_json::json!(v as f64))?;
             }
             ValueChange::Increase(delta) => {
@@ -256,6 +311,13 @@ impl MusicBackend for MpvBackend {
         Ok(())
     }
 
+    fn shuffle(&mut self, _range: Option<SingleOrRange>) -> Result<()> {
+        // MPV shuffle implementation (basic)
+        let mut ipc = self.ipc.lock();
+        ipc.send_command(vec!["playlist-shuffle"])?;
+        Ok(())
+    }
+
     // ===== Library Browsing (Stubs - MPV doesn't have a library) =====
 
     fn lsinfo(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
@@ -266,8 +328,9 @@ impl MusicBackend for MpvBackend {
         Ok(vec![])
     }
 
-    fn search(&mut self, _filter: &[(Tag, String)]) -> Result<Vec<Song>> {
-        Ok(vec![])
+    fn search(&mut self, _filter: &[Filter]) -> Result<Vec<Song>> {
+        // MPV doesn't support search
+        Ok(Vec::new())
     }
 
     fn find(
@@ -300,7 +363,9 @@ impl MusicBackend for MpvBackend {
         Ok(())
     }
 
-    fn save_queue_as_playlist(&mut self, _name: &str) -> Result<()> {
+    fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {
+        // MPV doesn't support server-side playlists in the same way
+        // We could implement a local playlist file, but for now just return Ok
         Ok(())
     }
 

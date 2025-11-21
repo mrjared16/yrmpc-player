@@ -868,3 +868,120 @@ mod tests {
         }
     }
 }
+
+// Implement MpdClientExt for player::Client to enable backend abstraction
+impl MpdClientExt for crate::player::Client<'_> {
+    fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.play_position_safe(queue_len),
+            crate::player::Client::Mpv(_) => Ok(()), // Not applicable for MPV
+        }
+    }
+
+    fn enqueue_multiple(
+        &mut self,
+        items: Vec<Enqueue>,
+        autoplay_idx: Option<usize>,
+        position: Option<QueuePosition>,
+        replace: bool,
+    ) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => {
+                b.client.enqueue_multiple(items, autoplay_idx, position, replace)
+            }
+            crate::player::Client::Mpv(_) => {
+                log::debug!("enqueue_multiple not fully supported in MPV backend");
+                Ok(())
+            }
+        }
+    }
+
+    fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.delete_multiple(items),
+            crate::player::Client::Mpv(_) => Ok(()),
+        }
+    }
+
+    fn add_to_playlist_multiple(
+        &mut self,
+        playlist_name: &str,
+        song_paths: Vec<String>,
+    ) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => {
+                b.client.add_to_playlist_multiple(playlist_name, song_paths)
+            }
+            crate::player::Client::Mpv(_) => Ok(()),
+        }
+    }
+
+    fn list_partitioned_outputs(
+        &mut self,
+        current_partition: &str,
+    ) -> Result<Vec<PartitionedOutput>, MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.list_partitioned_outputs(current_partition),
+            crate::player::Client::Mpv(_) => Ok(Vec::new()),
+        }
+    }
+
+    fn create_playlist(&mut self, name: &str, items: Vec<String>) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.create_playlist(name, items),
+            crate::player::Client::Mpv(_) => {
+                log::debug!("Playlists not supported in MPV backend");
+                Ok(())
+            }
+        }
+    }
+
+    fn next_keep_state(&mut self, keep: bool, state: State) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.next_keep_state(keep, state),
+            crate::player::Client::Mpv(_) => {
+                // Simple next for MPV
+                self.next().map_err(|e| MpdError::Generic(e.to_string()))
+            }
+        }
+    }
+
+    fn prev_keep_state(&mut self, keep: bool, state: State) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.prev_keep_state(keep, state),
+            crate::player::Client::Mpv(_) => {
+                // Simple previous for MPV
+                self.previous().map_err(|e| MpdError::Generic(e.to_string()))
+            }
+        }
+    }
+
+    fn fetch_song_stickers(
+        &mut self,
+        song_uris: Vec<String>,
+    ) -> Result<HashMap<String, HashMap<String, String>>, MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.fetch_song_stickers(song_uris),
+            crate::player::Client::Mpv(_) => Ok(HashMap::new()),
+        }
+    }
+
+    fn set_sticker_multiple(
+        &mut self,
+        key: &str,
+        value: String,
+        items: Vec<Enqueue>,
+    ) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.set_sticker_multiple(key, value, items),
+            crate::player::Client::Mpv(_) => Ok(()),
+        }
+    }
+
+    fn delete_sticker_multiple(&mut self, key: &str, items: Vec<Enqueue>) -> Result<(), MpdError> {
+        match self {
+            crate::player::Client::Mpd(b) => b.client.delete_sticker_multiple(key, items),
+            crate::player::Client::Mpv(_) => Ok(()),
+        }
+    }
+}

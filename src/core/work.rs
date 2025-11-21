@@ -46,13 +46,15 @@ fn handle_work_request(
             } else {
                 let url = YtDlp::search_single(kind, &query)?;
                 let files = YtDlp::init_and_download(config, &url)?;
-                let cb = move |client: &mut crate::mpd::client::Client<'_>| -> anyhow::Result<()> {
-                    client.send_start_cmd_list()?;
-                    for f in &files {
-                        client.send_add(f, position)?;
+                let cb = move |client: &mut crate::player::Client<'_>| -> anyhow::Result<()> {
+                    if let Some(mpd) = client.as_mpd_mut() {
+                        mpd.send_start_cmd_list()?;
+                        for f in &files {
+                            mpd.send_add(f, position)?;
+                        }
+                        mpd.send_execute_cmd_list()?;
+                        mpd.read_ok()?;
                     }
-                    client.send_execute_cmd_list()?;
-                    client.read_ok()?;
                     Ok(())
                 };
                 try_skip!(

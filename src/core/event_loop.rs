@@ -626,12 +626,12 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
             ctx.query()
                 .id(GLOBAL_VOLUME_UPDATE)
                 .replace_id("volume")
-                .query(move |client| Ok(MpdQueryResult::Volume(client.get_volume()?)));
+                .query(move |client| Ok(MpdQueryResult::Volume(client.volume()?)));
         }
         IdleEvent::Mixer => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.get_status()?,
+                    data: client.status()?,
                     source_event: Some(IdleEvent::Mixer),
                 })
             });
@@ -639,7 +639,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Options => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.get_status()?,
+                    data: client.status()?,
                     source_event: Some(IdleEvent::Options),
                 })
             });
@@ -647,7 +647,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Player => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.get_status()?,
+                    data: client.status()?,
                     source_event: Some(IdleEvent::Player),
                 })
             });
@@ -662,7 +662,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
                 ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status_from_playlist").query(
                     move |client| {
                         Ok(MpdQueryResult::Status {
-                            data: client.get_status()?,
+                            data: client.status()?,
                             source_event: Some(IdleEvent::Playlist),
                         })
                     },
@@ -683,7 +683,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Database => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.get_status()?,
+                    data: client.status()?,
                     source_event: Some(IdleEvent::Database),
                 })
             });

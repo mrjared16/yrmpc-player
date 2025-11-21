@@ -19,12 +19,12 @@ use drop_guard::ClientDropGuard;
 use crate::{
     config::Config,
     mpd::{
-        client::Client,
         commands::idle::IdleEvent,
         errors::MpdError,
         mpd_client::MpdClient,
         proto_client::ProtoClient,
     },
+    player::client::Client,
     shared::{
         events::{AppEvent, ClientRequest, WorkDone},
         macros::{status_error, try_break, try_skip},
@@ -110,7 +110,7 @@ fn client_task(
 
             if is_client_ok {
                 let mut client_write =
-                    client.stream.try_clone().expect("Client write clone to succeed");
+                    client.try_clone_stream().expect("Client write clone to succeed");
 
                 let idle = Builder::new()
                     .name("idle".to_string())
@@ -134,16 +134,15 @@ fn client_task(
                             let events: Vec<IdleEvent> = loop {
                                 match client.read_response() {
                                     Ok(events) => break events,
-                                    Err(MpdError::TimedOut(err)) => {
-                                        if !HEALTHY.load(Ordering::Relaxed) {
-                                            log::warn!(err:?; "Not healthy. Reading idle events timed out");
-                                            break 'outer;
-                                        }
-                                    }
                                     Err(err) => {
-                                        log::error!(err:?; "Encountered error while reading idle events");
+                                        if let Some(MpdError::TimedOut(_)) = err.downcast_ref::<MpdError>() {
+                                            log::trace!("Idle timeout, restarting idle");
+                                            continue;
+                                        }
+
+                                        log::error!(error:? = err; "Encountered error while reading idle events");
                                         HEALTHY.store(false, Ordering::Relaxed);
-                                        break 'outer
+                                        break 'outer;
                                     }
                                 }
                             };
@@ -241,7 +240,7 @@ fn client_task(
                                             status_error!(err:?; "Reading response from MPD timed out, will try to reconnect");
                                             health!(client.reconnect(), "Failed to reconnect");
                                             health!(client.set_write_timeout(Some(config.mpd_write_timeout)), "Failed to set write timeout");
-                                            client_write = health!(client.stream.try_clone(), "Client write clone to succeed");
+                                            client_write = health!(client.try_clone_stream(), "Client write clone to succeed");
                                         },
                                         _ => {
                                             log::error!(error:? = err; "Failed to handle client request");
@@ -288,7 +287,7 @@ mod drop_guard {
 
     use crossbeam::channel::Sender;
 
-    use crate::mpd::client::Client;
+    use crate::player::client::Client;
 
     #[derive(Debug)]
     pub struct ClientDropGuard<'sender, 'client> {

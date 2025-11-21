@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::mpd::{commands::*, version::Version};
+use crate::mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Version};
 
 /// Trait for music player backends (MPD, MPV, etc.)
 ///
@@ -44,12 +44,13 @@ pub trait MusicBackend: Send + Sync {
     fn single(&mut self, single: OnOffOneshot) -> Result<()>;
     fn consume(&mut self, consume: OnOffOneshot) -> Result<()>;
     fn crossfade(&mut self, seconds: u32) -> Result<()>;
+    fn shuffle(&mut self, range: Option<SingleOrRange>) -> Result<()>;
 
     // ===== Library Browsing =====
 
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
     fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
-    fn search(&mut self, filter: &[(Tag, String)]) -> Result<Vec<Song>>;
+    fn search(&mut self, filter: &[Filter]) -> Result<Vec<Song>>;
     fn find(&mut self, filter: &[(Tag, String)], window: Option<(u32, u32)>) -> Result<Vec<Song>>;
     fn list_tag(&mut self, tag: Tag, filter: Option<&[(Tag, String)]>) -> Result<Vec<String>>;
     fn count(&mut self, filter: &[(Tag, String)]) -> Result<(usize, std::time::Duration)>;
@@ -59,7 +60,7 @@ pub trait MusicBackend: Send + Sync {
     fn list_playlists(&mut self) -> Result<Vec<Playlist>>;
     fn playlist_info_name(&mut self, name: &str) -> Result<Vec<Song>>;
     fn load_playlist(&mut self, name: &str, position: Option<QueuePosition>) -> Result<()>;
-    fn save_queue_as_playlist(&mut self, name: &str) -> Result<()>;
+    fn save_queue_as_playlist(&mut self, name: &str, mode: Option<SaveMode>) -> Result<()>;
     fn delete_playlist(&mut self, name: &str) -> Result<()>;
     fn rename_playlist(&mut self, old_name: &str, new_name: &str) -> Result<()>;
     fn add_to_playlist(&mut self, playlist: &str, uri: &str) -> Result<()>;

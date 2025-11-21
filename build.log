@@ -1,0 +1,548 @@
+   Compiling rmpc v0.10.0 (<PROJECT_ROOT>/rmpc)
+warning: unused import: `std::collections::HashMap`
+ --> src/player/backend.rs:1:5
+  |
+1 | use std::collections::HashMap;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `config::PlayerBackend` and `mpv_ipc::MpvIpc`
+  --> src/player/client.rs:6:5
+   |
+ 6 |     config::PlayerBackend,
+   |     ^^^^^^^^^^^^^^^^^^^^^
+...
+12 |         mpv_ipc::MpvIpc,
+   |         ^^^^^^^^^^^^^^^
+
+warning: unused import: `Context`
+ --> src/player/mpv_backend.rs:3:14
+  |
+3 | use anyhow::{Context, Result};
+  |              ^^^^^^^
+
+warning: unused import: `backend::MusicBackend`
+ --> src/player/mod.rs:8:9
+  |
+8 | pub use backend::MusicBackend;
+  |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `client::Client`
+ --> src/player/mod.rs:9:9
+  |
+9 | pub use client::Client;
+  |         ^^^^^^^^^^^^^^
+
+warning: unused import: `mpd_backend::MpdBackend`
+  --> src/player/mod.rs:10:9
+   |
+10 | pub use mpd_backend::MpdBackend;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpv_backend::MpvBackend`
+  --> src/player/mod.rs:11:9
+   |
+11 | pub use mpv_backend::MpvBackend;
+   |         ^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0308]: mismatched types
+  --> src/player/mpd_backend.rs:86:9
+   |
+85 |     fn playlist_info(&mut self) -> Result<Vec<Song>> {
+   |                                    ----------------- expected `Result<Vec<current_song::Song>, anyhow::Error>` because of return type
+86 |         self.client.playlist_info().map_err(Into::into)
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Vec<Song>, Error>`, found `Result<Option<Vec<Song>>, _>`
+   |
+   = note: expected enum `Result<Vec<_>, anyhow::Error>`
+              found enum `Result<std::option::Option<Vec<_>>, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:108:35
+    |
+108 |         self.client.move_id(from, to).map_err(Into::into)
+    |                     -------       ^^ expected `QueuePosition`, found `u32`
+    |                     |
+    |                     arguments to this method are incorrect
+    |
+note: method defined here
+   --> src/mpd/mpd_client.rs:263:8
+    |
+263 |     fn move_id(&mut self, id: u32, to: QueuePosition) -> MpdResult<()>;
+    |        ^^^^^^^                     --
+
+error[E0599]: no method named `status` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/player/mpd_backend.rs:119:34
+    |
+119 |         let status = self.client.status().map_err(Into::into)?;
+    |                                  ^^^^^^
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `status` not found for this struct
+    |
+help: there is a method `get_status` with a similar name
+    |
+119 |         let status = self.client.get_status().map_err(Into::into)?;
+    |                                  ++++
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:126:71
+    |
+126 |             ValueChange::Set(v) => self.client.set_volume(Volume::new(v as u8)).map_err(Into::into),
+    |                                                           ----------- ^^^^^^^ expected `u32`, found `u8`
+    |                                                           |
+    |                                                           arguments to this function are incorrect
+    |
+note: associated function defined here
+   --> src/mpd/commands/volume.rs:45:12
+    |
+ 45 |     pub fn new(value: u32) -> Self {
+    |            ^^^ ----------
+help: you can convert a `u8` to a `u32`
+    |
+126 |             ValueChange::Set(v) => self.client.set_volume(Volume::new((v as u8).into())).map_err(Into::into),
+    |                                                                       +       ++++++++
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:158:9
+    |
+157 |     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
+    |                                                 ------------------------ expected `Result<Vec<lsinfo::LsInfoEntry>, anyhow::Error>` because of return type
+158 |         self.client.lsinfo(path).map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Vec<LsInfoEntry>, Error>`, found `Result<LsInfo, _>`
+    |
+    = note: expected enum `Result<Vec<lsinfo::LsInfoEntry>, anyhow::Error>`
+               found enum `Result<LsInfo, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:162:9
+    |
+161 |     fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
+    |                                                   ------------------------ expected `Result<Vec<lsinfo::LsInfoEntry>, anyhow::Error>` because of return type
+162 |         self.client.list_all(path).map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Vec<LsInfoEntry>, Error>`, found `Result<ListAll, _>`
+    |
+    = note: expected enum `Result<Vec<lsinfo::LsInfoEntry>, anyhow::Error>`
+               found enum `Result<ListAll, _>`
+
+error[E0282]: type annotations needed
+   --> src/player/mpd_backend.rs:181:59
+    |
+181 |         Ok(self.client.list_tag(tag, filters_ref).map_err(Into::into)?.0)
+    |                                                           ^^^^^^^^^^ cannot infer type of the type parameter `T` declared on the trait `Into`
+    |
+help: consider specifying the generic argument
+    |
+181 |         Ok(self.client.list_tag(tag, filters_ref).map_err(Into::<T>::into)?.0)
+    |                                                               +++++
+
+error[E0283]: type annotations needed
+   --> src/player/mpd_backend.rs:181:59
+    |
+181 |         Ok(self.client.list_tag(tag, filters_ref).map_err(Into::into)?.0)
+    |                                                           ^^^^^^^^^^ - type must be known at this point
+    |                                                           |
+    |                                                           cannot infer type of the type parameter `T` declared on the trait `Into`
+    |
+    = note: multiple `impl`s satisfying `anyhow::Error: std::convert::From<_>` found in the following crates: `anyhow`, `core`:
+            - impl<E> std::convert::From<E> for anyhow::Error
+              where E: StdError, E: Send, E: std::marker::Sync, E: 'static;
+            - impl<T> std::convert::From<T> for T;
+help: consider specifying the generic argument
+    |
+181 |         Ok(self.client.list_tag(tag, filters_ref).map_err(Into::<T>::into)?.0)
+    |                                                               +++++
+
+error[E0599]: `mpd::client::Client<'name>` is not an iterator
+   --> src/player/mpd_backend.rs:185:21
+    |
+185 |         self.client.count(filter).map_err(Into::into)
+    |                     ^^^^^ `mpd::client::Client<'name>` is not an iterator
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `count` not found for this struct because it doesn't satisfy `mpd::client::Client<'name>: Iterator`
+    |
+    = note: the following trait bounds were not satisfied:
+            `mpd::client::Client<'name>: Iterator`
+            which is required by `&mut mpd::client::Client<'name>: Iterator`
+note: the trait `Iterator` must be implemented
+   --> ~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/core/src/iter/traits/iterator.rs:39:1
+    |
+ 39 | pub trait Iterator {
+    | ^^^^^^^^^^^^^^^^^^
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `count`, perhaps you need to implement one of them:
+            candidate #1: `MusicBackend`
+            candidate #2: `Iterator`
+            candidate #3: `log::kv::Source`
+            candidate #4: `rayon::iter::ParallelIterator`
+            candidate #5: `tiff::encoder::tiff_value::TiffValue`
+
+error[E0599]: no method named `playlist_info_name` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/player/mpd_backend.rs:195:21
+    |
+195 |         self.client.playlist_info_name(name).map_err(Into::into)
+    |                     ^^^^^^^^^^^^^^^^^^
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `playlist_info_name` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+note: `MusicBackend` defines an item `playlist_info_name`, perhaps you need to implement it
+   --> src/player/backend.rs:11:1
+    |
+ 11 | pub trait MusicBackend: Send + Sync {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is a method `playlist_info` with a similar name, but with different arguments
+   --> src/mpd/mpd_client.rs:259:5
+    |
+259 |     fn playlist_info(&mut self) -> MpdResult<Option<Vec<Song>>>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+error[E0061]: this method takes 3 arguments but 2 arguments were supplied
+   --> src/player/mpd_backend.rs:215:21
+    |
+215 |         self.client.add_to_playlist(playlist, uri).map_err(Into::into)
+    |                     ^^^^^^^^^^^^^^^--------------- argument #3 of type `std::option::Option<usize>` is missing
+    |
+note: method defined here
+   --> src/mpd/mpd_client.rs:303:8
+    |
+303 |     fn add_to_playlist(
+    |        ^^^^^^^^^^^^^^^
+...
+307 |         target_position: Option<usize>,
+    |         ---------------
+help: provide the argument
+    |
+215 |         self.client.add_to_playlist(playlist, uri, /* std::option::Option<usize> */).map_err(Into::into)
+    |                                                  ++++++++++++++++++++++++++++++++++
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:219:52
+    |
+219 |         self.client.delete_from_playlist(playlist, position).map_err(Into::into)
+    |                     --------------------           ^^^^^^^^ expected `&SingleOrRange`, found `u32`
+    |                     |
+    |                     arguments to this method are incorrect
+    |
+note: method defined here
+   --> src/mpd/mpd_client.rs:296:8
+    |
+296 |     fn delete_from_playlist(&mut self, name: &str, songs: &SingleOrRange) -> MpdResult<()>;
+    |        ^^^^^^^^^^^^^^^^^^^^                        -----
+
+error[E0599]: no associated item named `Single` found for struct `SingleOrRange` in the current scope
+    --> src/player/mpd_backend.rs:224:57
+     |
+ 224 |             .move_in_playlist(playlist, &SingleOrRange::Single(from), to as usize)
+     |                                                         ^^^^^^ associated item not found in `SingleOrRange`
+     |
+    ::: src/mpd/mpd_client.rs:1466:1
+     |
+1466 | pub struct SingleOrRange {
+     | ------------------------ associated item `Single` not found for this struct
+     |
+note: if you're trying to build a new `SingleOrRange` consider using one of the following associated functions:
+      SingleOrRange::single
+      SingleOrRange::range
+    --> src/mpd/mpd_client.rs:1485:5
+     |
+1485 |     pub fn single(idx: usize) -> Self {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+1489 |     pub fn range(start: usize, end: usize) -> Self {
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is an associated function `single` with a similar name (notice the capitalization)
+     |
+ 224 -             .move_in_playlist(playlist, &SingleOrRange::Single(from), to as usize)
+ 224 +             .move_in_playlist(playlist, &SingleOrRange::single(from), to as usize)
+     |
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:231:9
+    |
+230 |     fn list_stickers(&mut self, uri: &str) -> Result<HashMap<String, String>> {
+    |                                               ------------------------------- expected `Result<HashMap<std::string::String, std::string::String>, anyhow::Error>` because of return type
+231 |         self.client.list_stickers(uri).map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<HashMap<String, String>, Error>`, found `Result<Stickers, _>`
+    |
+    = note: expected enum `Result<HashMap<std::string::String, std::string::String>, anyhow::Error>`
+               found enum `Result<Stickers, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:245:9
+    |
+244 |     fn update(&mut self, path: Option<&str>) -> Result<u32> {
+    |                                                 ----------- expected `Result<u32, anyhow::Error>` because of return type
+245 |         self.client.update(path).map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<u32, Error>`, found `Result<Update, _>`
+    |
+    = note: expected enum `Result<u32, anyhow::Error>`
+               found enum `Result<update::Update, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:249:9
+    |
+248 |     fn rescan(&mut self, path: Option<&str>) -> Result<u32> {
+    |                                                 ----------- expected `Result<u32, anyhow::Error>` because of return type
+249 |         self.client.rescan(path).map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<u32, Error>`, found `Result<Update, _>`
+    |
+    = note: expected enum `Result<u32, anyhow::Error>`
+               found enum `Result<update::Update, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:259:9
+    |
+258 |     fn outputs(&mut self) -> Result<Vec<Output>> {
+    |                              ------------------- expected `Result<Vec<mpd::commands::outputs::Output>, anyhow::Error>` because of return type
+259 |         self.client.outputs().map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Vec<Output>, Error>`, found `Result<Outputs, _>`
+    |
+    = note: expected enum `Result<Vec<mpd::commands::outputs::Output>, anyhow::Error>`
+               found enum `Result<Outputs, _>`
+
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:263:9
+    |
+262 |     fn decoders(&mut self) -> Result<Vec<Decoder>> {
+    |                               -------------------- expected `Result<Vec<mpd::commands::decoders::Decoder>, anyhow::Error>` because of return type
+263 |         self.client.decoders().map_err(Into::into)
+    |         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Result<Vec<Decoder>, Error>`, found `Result<Decoders, _>`
+    |
+    = note: expected enum `Result<Vec<mpd::commands::decoders::Decoder>, anyhow::Error>`
+               found enum `Result<Decoders, _>`
+
+error[E0599]: no method named `partitions` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/player/mpd_backend.rs:267:21
+    |
+267 |         self.client.partitions().map_err(Into::into)
+    |                     ^^^^^^^^^^
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `partitions` not found for this struct
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+note: `MusicBackend` defines an item `partitions`, perhaps you need to implement it
+   --> src/player/backend.rs:11:1
+    |
+ 11 | pub trait MusicBackend: Send + Sync {
+    | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: there is a method `list_partitions` with a similar name
+    |
+267 |         self.client.list_partitions().map_err(Into::into)
+    |                     +++++
+
+error[E0308]: mismatched types
+   --> src/player/mpv_backend.rs:128:21
+    |
+128 |             volume: volume as u8,
+    |                     ^^^^^^^^^^^^ expected `Volume`, found `u8`
+
+error[E0560]: struct `status::Status` has no field named `playlist_length`
+   --> src/player/mpv_backend.rs:133:13
+    |
+133 |             playlist_length: self.queue.lock().len(),
+    |             ^^^^^^^^^^^^^^^ unknown field
+    |
+help: a field with a similar name exists
+    |
+133 -             playlist_length: self.queue.lock().len(),
+133 +             playlistlength: self.queue.lock().len(),
+    |
+
+error[E0308]: mismatched types
+   --> src/player/mpv_backend.rs:134:19
+    |
+134 |             song: *self.current_index.lock(),
+    |                   ^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Option<u32>`, found `usize`
+    |
+    = note: expected enum `std::option::Option<u32>`
+               found type `usize`
+
+error[E0308]: mismatched types
+   --> src/player/mpv_backend.rs:135:22
+    |
+135 |             elapsed: Some(std::time::Duration::from_secs_f64(time_pos)),
+    |                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Duration`, found `Option<Duration>`
+    |
+    = note: expected struct `Duration`
+                 found enum `std::option::Option<Duration>`
+
+error[E0308]: mismatched types
+   --> src/player/mpv_backend.rs:136:23
+    |
+136 |             duration: Some(std::time::Duration::from_secs_f64(duration)),
+    |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `Duration`, found `Option<Duration>`
+    |
+    = note: expected struct `Duration`
+                 found enum `std::option::Option<Duration>`
+
+error[E0560]: struct `status::Status` has no field named `crossfade`
+   --> src/player/mpv_backend.rs:137:13
+    |
+137 |             crossfade: None,
+    |             ^^^^^^^^^ `status::Status` does not have this field
+    |
+    = note: available fields are: `partition`, `playlist`, `playlistlength`, `songid`, `nextsong` ... and 7 others
+
+error[E0560]: struct `status::Status` has no field named `audio_format`
+   --> src/player/mpv_backend.rs:139:13
+    |
+139 |             audio_format: None,
+    |             ^^^^^^^^^^^^ `status::Status` does not have this field
+    |
+    = note: available fields are: `partition`, `playlist`, `playlistlength`, `songid`, `nextsong` ... and 7 others
+
+error[E0560]: struct `current_song::Song` has no field named `title`
+   --> src/player/mpv_backend.rs:160:13
+    |
+160 |             title: None,
+    |             ^^^^^ `current_song::Song` does not have this field
+    |
+    = note: available fields are: `metadata`
+
+error[E0560]: struct `current_song::Song` has no field named `artist`
+   --> src/player/mpv_backend.rs:161:13
+    |
+161 |             artist: None,
+    |             ^^^^^^ `current_song::Song` does not have this field
+    |
+    = note: available fields are: `metadata`
+
+error[E0560]: struct `current_song::Song` has no field named `album`
+   --> src/player/mpv_backend.rs:162:13
+    |
+162 |             album: None,
+    |             ^^^^^ `current_song::Song` does not have this field
+    |
+    = note: available fields are: `metadata`
+
+error[E0599]: no variant or associated item named `Absolute` found for enum `mpd_client::ValueChange` in the current scope
+   --> src/player/mpv_backend.rs:220:26
+    |
+220 |             ValueChange::Absolute(v) => {
+    |                          ^^^^^^^^ variant or associated item not found in `mpd_client::ValueChange`
+    |
+   ::: src/mpd/mpd_client.rs:57:1
+    |
+ 57 | pub enum ValueChange {
+    | -------------------- variant or associated item `Absolute` not found for this enum
+
+error[E0599]: no method named `stream` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/main.rs:125:20
+    |
+125 |             client.stream().expect("MPD backend required").write_all(command.as_bytes())?;
+    |                    ^^^^^^ field, not a method
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `stream` not found for this struct
+    |
+help: remove the arguments
+    |
+125 -             client.stream().expect("MPD backend required").write_all(command.as_bytes())?;
+125 +             client.stream.expect("MPD backend required").write_all(command.as_bytes())?;
+    |
+help: there is a method `read` with a similar name
+    |
+125 -             client.stream().expect("MPD backend required").write_all(command.as_bytes())?;
+125 +             client.read().expect("MPD backend required").write_all(command.as_bytes())?;
+    |
+
+error[E0599]: no method named `stream` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/main.rs:126:20
+    |
+126 |             client.stream().expect("MPD backend required").write_all(b"\n")?;
+    |                    ^^^^^^ field, not a method
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `stream` not found for this struct
+    |
+help: remove the arguments
+    |
+126 -             client.stream().expect("MPD backend required").write_all(b"\n")?;
+126 +             client.stream.expect("MPD backend required").write_all(b"\n")?;
+    |
+help: there is a method `read` with a similar name
+    |
+126 -             client.stream().expect("MPD backend required").write_all(b"\n")?;
+126 +             client.read().expect("MPD backend required").write_all(b"\n")?;
+    |
+
+error[E0599]: no method named `stream` found for struct `mpd::client::Client<'name>` in the current scope
+   --> src/main.rs:127:20
+    |
+127 |             client.stream().expect("MPD backend required").flush()?;
+    |                    ^^^^^^ field, not a method
+    |
+   ::: src/mpd/client.rs:30:1
+    |
+ 30 | pub struct Client<'name> {
+    | ------------------------ method `stream` not found for this struct
+    |
+help: remove the arguments
+    |
+127 -             client.stream().expect("MPD backend required").flush()?;
+127 +             client.stream.expect("MPD backend required").flush()?;
+    |
+help: there is a method `read` with a similar name
+    |
+127 -             client.stream().expect("MPD backend required").flush()?;
+127 +             client.read().expect("MPD backend required").flush()?;
+    |
+
+error[E0599]: no method named `expect` found for mutable reference `&mut impl BufRead` in the current scope
+   --> src/main.rs:131:31
+    |
+131 |                 client.read().expect("MPD backend required").read_line(&mut buf)?;
+    |                               ^^^^^^ method not found in `&mut impl BufRead`
+
+warning: unused variable: `command`
+  --> src/player/backend.rs:93:32
+   |
+93 |     fn supports_command(&self, command: &str) -> bool {
+   |                                ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_command`
+   |
+   = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `state`
+  --> src/player/mpd_backend.rs:45:25
+   |
+45 |     fn pause(&mut self, state: bool) -> Result<()> {
+   |                         ^^^^^ help: if this is intentional, prefix it with an underscore: `_state`
+
+warning: unused variable: `command`
+   --> src/player/mpd_backend.rs:276:32
+    |
+276 |     fn supports_command(&self, command: &str) -> bool {
+    |                                ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_command`
+
+error[E0507]: cannot move out of `*tag` which is behind a shared reference
+   --> src/player/mpd_backend.rs:287:18
+    |
+287 |             tag: *tag,
+    |                  ^^^^ move occurs because `*tag` has type `mpd_client::Tag`, which does not implement the `Copy` trait
+    |
+help: consider cloning the value if the performance cost is acceptable
+    |
+287 -             tag: *tag,
+287 +             tag: tag.clone(),
+    |
+
+Some errors have detailed explanations: E0061, E0282, E0283, E0308, E0507, E0560, E0599.
+For more information about an error, try `rustc --explain E0061`.
+warning: `rmpc` (bin "rmpc") generated 10 warnings
+error: could not compile `rmpc` (bin "rmpc") due to 35 previous errors; 10 warnings emitted
