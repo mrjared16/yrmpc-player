@@ -46,6 +46,7 @@ mod tests {
 mod config;
 mod core;
 mod ctx;
+mod domain;
 mod mpd;
 mod player;
 mod shared;
