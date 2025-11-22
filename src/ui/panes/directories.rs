@@ -9,10 +9,10 @@ use crate::{
     config::tabs::PaneType,
     ctx::Ctx,
     mpd::{
-        client::Client,
         commands::Song,
         mpd_client::{Filter, FilterKind, MpdClient, Tag},
     },
+    player::Client,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent, mpd_client_ext::Enqueue},
     ui::{
         UiEvent,
@@ -173,13 +173,10 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
     ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| {
             Ok(match item {
-                DirOrSong::Dir { full_path, playlist: false, .. } => {
-                    client.find(&[Filter::new_with_kind(
-                        Tag::File,
-                        &full_path,
-                        FilterKind::StartsWith,
-                    )])?
-                }
+                DirOrSong::Dir { full_path, playlist: false, .. } => client.find(
+                    &[Filter::new_with_kind(Tag::File, &full_path, FilterKind::StartsWith)],
+                    None,
+                )?,
                 DirOrSong::Dir { name, playlist: true, .. } => {
                     client.list_playlist_info(&name, None)?
                 }
@@ -222,7 +219,6 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
                                     });
                                 }
                             }
-                            .0
                             .into_iter()
                             .filter_map(|v| v.into_dir_or_song(playlist_display_mode))
                             .sorted_by(|a, b| {

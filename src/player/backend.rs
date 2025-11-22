@@ -1,4 +1,3 @@
-use std::collections::HashMap;
 
 use anyhow::Result;
 
@@ -7,7 +6,7 @@ use crate::mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Versio
 /// Trait for music player backends (MPD, MPV, etc.)
 ///
 /// This trait abstracts different music player backends to allow rmpc
-/// to work with multiple players (MPD, MPV, Spotify, etc.)
+/// to work with multiple players (MPD, MPV, etc.)
 pub trait MusicBackend: Send + Sync {
     // ===== Playback Control =====
 
@@ -51,9 +50,9 @@ pub trait MusicBackend: Send + Sync {
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
     fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
     fn search(&mut self, filter: &[Filter]) -> Result<Vec<Song>>;
-    fn find(&mut self, filter: &[(Tag, String)], window: Option<(u32, u32)>) -> Result<Vec<Song>>;
-    fn list_tag(&mut self, tag: Tag, filter: Option<&[(Tag, String)]>) -> Result<Vec<String>>;
-    fn count(&mut self, filter: &[(Tag, String)]) -> Result<(usize, std::time::Duration)>;
+    fn find(&mut self, filter: &[Filter], window: Option<(u32, u32)>) -> Result<Vec<Song>>;
+    fn list_tag(&mut self, tag: Tag, filter: Option<&[Filter]>) -> Result<Vec<String>>;
+    fn count(&mut self, filter: &[Filter]) -> Result<(usize, std::time::Duration)>;
 
     // ===== Playlist Management =====
 
@@ -65,7 +64,7 @@ pub trait MusicBackend: Send + Sync {
     fn rename_playlist(&mut self, old_name: &str, new_name: &str) -> Result<()>;
     fn add_to_playlist(&mut self, playlist: &str, uri: &str) -> Result<()>;
     fn delete_from_playlist(&mut self, playlist: &str, position: u32) -> Result<()>;
-    fn move_in_playlist(&mut self, playlist: &str, from: u32, to: u32) -> Result<()>;
+    fn move_in_playlist(&mut self, playlist: &str, from: SingleOrRange, to: u32) -> Result<()>;
 
     // ===== Sticker Support =====
 
@@ -91,7 +90,7 @@ pub trait MusicBackend: Send + Sync {
     fn backend_name(&self) -> &'static str;
 
     /// Returns whether this backend supports a specific command
-    fn supports_command(&self, command: &str) -> bool {
+    fn supports_command(&self, _command: &str) -> bool {
         // Default: assume all commands are supported
         // Backends can override this
         true

@@ -32,10 +32,10 @@ use crate::{
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     mpd::{
         QueuePosition,
-        client::Client,
         commands::Song,
         mpd_client::{MpdClient, SingleOrRange},
     },
+    player::Client,
     shared::{
         ext::{btreeset_ranges::BTreeSetRanges, rect::RectExt},
         key_event::KeyEvent,
@@ -192,7 +192,7 @@ impl QueuePane {
                             .title("Select a playlist")
                             .on_confirm(move |ctx, selected, _idx| {
                                 ctx.command(move |client| {
-                                    client.add_to_playlist_multiple(&selected, items)?;
+                                    client.add_to_playlist_multiple(&selected, &items, None)?;
                                     Ok(())
                                 });
                                 Ok(())
@@ -653,10 +653,9 @@ impl Pane for QueuePane {
                                     client.add_to_playlist(
                                         &selected,
                                         &format!("file://{song_file}"),
-                                        None,
                                     )?;
                                 } else {
-                                    client.add_to_playlist(&selected, &song_file, None)?;
+                                    client.add_to_playlist(&selected, &song_file)?;
                                 }
                                 status_info!("Song added to playlist {}", selected);
                                 Ok(())
@@ -685,10 +684,9 @@ impl Pane for QueuePane {
                                         client.add_to_playlist(
                                             &selected,
                                             &format!("file://{song_file}"),
-                                            None,
                                         )?;
                                     } else {
-                                        client.add_to_playlist(&selected, &song_file, None)?;
+                                        client.add_to_playlist(&selected, &song_file)?;
                                     }
                                 }
                                 status_info!("{} songs added to playlist {}", songs_len, selected);
@@ -997,7 +995,7 @@ impl Pane for QueuePane {
                     let new_idx = idx.saturating_sub(1);
                     let id = selected.id;
                     ctx.command(move |client| {
-                        client.move_id(id, QueuePosition::Absolute(new_idx))?;
+                        client.move_id(id, new_idx as u32)?;
                         Ok(())
                     });
                     self.queue.select_idx(new_idx, ctx.config.scrolloff);
@@ -1016,7 +1014,7 @@ impl Pane for QueuePane {
                     let new_idx = (idx + 1).min(self.queue.len() - 1);
                     let id = selected.id;
                     ctx.command(move |client| {
-                        client.move_id(id, QueuePosition::Absolute(new_idx))?;
+                        client.move_id(id, new_idx as u32)?;
                         Ok(())
                     });
                     self.queue.select_idx(new_idx, ctx.config.scrolloff);

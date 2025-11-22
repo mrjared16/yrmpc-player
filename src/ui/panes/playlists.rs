@@ -11,10 +11,10 @@ use crate::{
     config::tabs::PaneType,
     ctx::Ctx,
     mpd::{
-        client::Client,
         commands::Song,
         mpd_client::{MpdClient, SingleOrRange},
     },
+    player::Client,
     shared::{
         cmp::StringCompare,
         ext::btreeset_ranges::BTreeSetRanges,

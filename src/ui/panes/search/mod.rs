@@ -24,12 +24,11 @@ use crate::{
     core::command::{create_env, run_external},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     mpd::{
-        client::Client,
         commands::Song,
         mpd_client::{Filter, MpdClient, MpdCommand},
-        proto_client::ProtoClient,
         version::Version,
     },
+    player::Client,
     shared::{
         key_event::KeyEvent,
         macros::{modal, status_error, status_info, status_warn},
@@ -202,7 +201,7 @@ impl SearchPane {
 
         let stickers_supported = ctx.stickers_supported.into();
         let fold_case = self.inputs.fold_case();
-        let strip_diacritics = self.inputs.strip_diacritics();
+        let _strip_diacritics = self.inputs.strip_diacritics();
         let liked_filter = self.inputs.liked_filter();
 
         let rating_filter = if self.inputs.is_rating_filter_active() {
@@ -266,7 +265,7 @@ impl SearchPane {
                         client.send_lsinfo(Some(&uri))?;
                     }
                     client.send_execute_cmd_list()?;
-                    let data: Vec<Song> = client.read_response()?;
+                    let data: Vec<Song> = client.read_songs_response()?;
 
                     Ok(MpdQueryResult::SearchResult { data })
                 },
@@ -287,9 +286,10 @@ impl SearchPane {
                         .collect_vec();
 
                     let data = if fold_case {
-                        client.search(&filter, strip_diacritics)
+
+                        client.search(&filter)
                     } else {
-                        client.find(&filter)
+                        client.find(&filter, None)
                     }?;
 
                     let data = if stickers_supported && rating_filter.is_some() {
@@ -863,7 +863,7 @@ impl SearchPane {
                         });
 
                         let song_files =
-                            self.items(true).map(|(_, item)| item.file.clone()).collect();
+                            self.items(true).map(|(_, item)| item.file.clone()).collect_vec();
                         section.add_item("Add all to playlist", move |ctx| {
                             let playlists = ctx.query_sync(move |client| {
                                 Ok(client
@@ -882,7 +882,7 @@ impl SearchPane {
                                     .on_confirm(move |ctx, selected, _idx| {
                                         ctx.command(move |client| {
                                             client
-                                                .add_to_playlist_multiple(&selected, song_files)?;
+                                                .add_to_playlist_multiple(&selected, &song_files, None)?;
                                             Ok(())
                                         });
                                         Ok(())
@@ -896,7 +896,7 @@ impl SearchPane {
                 Some(section)
             })
             .list_section(ctx, |mut section| {
-                let song_files = self.items(false).map(|(_, item)| item.file.clone()).collect();
+                let song_files = self.items(false).map(|(_, item)| item.file.clone()).collect_vec();
                 section.add_item("Create playlist", move |ctx| {
                     modal!(
                         ctx,
@@ -906,8 +906,9 @@ impl SearchPane {
                             .input_label("Playlist name:")
                             .on_confirm(move |ctx, value| {
                                 let value = value.to_owned();
+                                let files = song_files.clone();
                                 ctx.command(move |client| {
-                                    client.create_playlist(&value, song_files)?;
+                                    client.create_playlist(&value, files)?;
                                     Ok(())
                                 });
                                 Ok(())
@@ -916,7 +917,7 @@ impl SearchPane {
                     Ok(())
                 });
 
-                let song_files = self.items(false).map(|(_, item)| item.file.clone()).collect();
+                let song_files = self.items(false).map(|(_, item)| item.file.clone()).collect_vec();
                 section.add_item("Add to playlist", move |ctx| {
                     let playlists = ctx.query_sync(move |client| {
                         Ok(client.list_playlists()?.into_iter().map(|p| p.name).collect_vec())
@@ -930,7 +931,7 @@ impl SearchPane {
                             .title("Select a playlist")
                             .on_confirm(move |ctx, selected, _idx| {
                                 ctx.command(move |client| {
-                                    client.add_to_playlist_multiple(&selected, song_files)?;
+                                    client.add_to_playlist_multiple(&selected, &song_files, None)?;
                                     Ok(())
                                 });
                                 Ok(())

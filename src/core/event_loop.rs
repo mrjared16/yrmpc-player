@@ -626,7 +626,10 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
             ctx.query()
                 .id(GLOBAL_VOLUME_UPDATE)
                 .replace_id("volume")
-                .query(move |client| Ok(MpdQueryResult::Volume(client.volume()?)));
+                .query(move |client| {
+                    let status = client.get_status()?;
+                    Ok(MpdQueryResult::Volume(status.volume))
+                });
         }
         IdleEvent::Mixer => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
@@ -656,7 +659,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
             ctx.query()
                 .id(GLOBAL_QUEUE_UPDATE)
                 .replace_id("playlist")
-                .query(move |client| Ok(MpdQueryResult::Queue(client.playlist_info()?)));
+                .query(move |client| Ok(MpdQueryResult::Queue(Some(client.playlist_info()?))));
             if ctx.config.reflect_changes_to_playlist {
                 // Do not replace because we want to update currently loaded playlist if any
                 ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status_from_playlist").query(

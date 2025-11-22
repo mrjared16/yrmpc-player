@@ -14,10 +14,10 @@ use crate::{
     },
     ctx::Ctx,
     mpd::{
-        client::Client,
         commands::Song,
         mpd_client::{Filter, FilterKind, MpdClient, Tag},
     },
+    player::Client,
     shared::{
         cmp::StringCompare,
         key_event::KeyEvent,
@@ -182,7 +182,7 @@ impl Pane for TagBrowserPane {
             let target = self.target_pane.clone();
             ctx.query().id(INIT).replace_id(INIT).target(target).query(move |client| {
                 let result = client.list_tag(root_tag, None).context("Cannot list artists")?;
-                Ok(MpdQueryResult::LsInfo { data: result.0, path: None })
+                Ok(MpdQueryResult::LsInfo { data: result, path: None })
             });
 
             self.initialized = true;
@@ -199,7 +199,7 @@ impl Pane for TagBrowserPane {
                 self.stack = DirStack::default();
                 ctx.query().id(INIT).replace_id(INIT).target(target).query(move |client| {
                     let result = client.list_tag(root_tag, None).context("Cannot list artists")?;
-                    Ok(MpdQueryResult::LsInfo { data: result.0, path: None })
+                    Ok(MpdQueryResult::LsInfo { data: result, path: None })
                 });
             }
             UiEvent::Reconnected => {
@@ -318,11 +318,10 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => match path.as_slice() {
                     [_artist] => album_songs,
-                    [] => client.find(&[Self::root_tag_filter(
-                        root_tag,
-                        separator.as_deref(),
-                        &name,
-                    )])?,
+                    [] => client.find(
+                        &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
+                        None,
+                    )?,
                     _ => Vec::new(),
                 },
                 DirOrSong::Song(song) => vec![song.clone()],
@@ -349,8 +348,8 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
                     move |client| {
                         let separator = separator.map(|v| v.as_ref().to_owned());
                         let separator = separator.as_deref();
-                        let all_songs: Vec<Song> =
-                            client.find(&[Self::root_tag_filter(root_tag, separator, &current)])?;
+                        let all_songs: Vec<Song> = client
+                            .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?;
                         Ok(MpdQueryResult::SongsList {
                             data: all_songs,
                             path: Some(current.into()),

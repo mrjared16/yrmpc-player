@@ -155,7 +155,7 @@ impl Ctx {
                         if let Err(err) = client.sticker("", "test") {
                             status_error!(
                                 "Stickers are not supported by MPD server: '{}'",
-                                err.detail_or_display()
+                                err
                             );
                         } else {
                             status_error!("Stickers are not supported by MPD server");

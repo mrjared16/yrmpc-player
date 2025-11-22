@@ -807,7 +807,8 @@ where
                                 ctx.command(move |client| {
                                     client.add_to_playlist_multiple(
                                         &selected,
-                                        items.into_iter().map(|s| s.file).collect_vec(),
+                                        &items.into_iter().map(|s| s.file).collect_vec(),
+                                        None,
                                     )?;
                                     Ok(())
                                 });

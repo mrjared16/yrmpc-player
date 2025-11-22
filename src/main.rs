@@ -189,8 +189,8 @@ fn main() -> Result<()> {
                 Client::init(config.address.clone(), config.password.clone(), "debug", None, false)
                     .and_then(|mut client| -> Result<_, _> {
                         let version = client.version();
-                        let commands = client.commands().map(|c| c.0)?;
-                        let not_commands = client.not_commands().map(|c| c.0)?;
+                        let commands = client.commands()?;
+                        let not_commands = client.not_commands()?;
                         Ok((version, commands, not_commands))
                     });
 

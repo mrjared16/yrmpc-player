@@ -444,7 +444,7 @@ pub fn add_to_playlist_or_show_modal(
         DuplicateStrategy::NonDuplicate if !duplicate_songs.is_empty() => {
             // add only non duplicate songs
             ctx.command(move |client| {
-                client.add_to_playlist_multiple(&playlist_name, non_duplicate_songs)?;
+                client.add_to_playlist_multiple(&playlist_name, &non_duplicate_songs, None)?;
                 Ok(())
             });
         }
@@ -465,7 +465,7 @@ pub fn add_to_playlist_or_show_modal(
         | DuplicateStrategy::Ask => {
             // add all songs
             ctx.command(move |client| {
-                client.add_to_playlist_multiple(&playlist_name, all_songs)?;
+                client.add_to_playlist_multiple(&playlist_name, &all_songs, None)?;
                 Ok(())
             });
         }
@@ -509,7 +509,7 @@ fn create_duplicate_songs_modal<'a>(
                     "Add anyway",
                     Box::new(|ctx| {
                         ctx.command(move |client| {
-                            client.add_to_playlist_multiple(&playlist_name2, all_songs)?;
+                            client.add_to_playlist_multiple(&playlist_name2, &all_songs, None)?;
                             Ok(())
                         });
                         Ok(())
@@ -519,7 +519,7 @@ fn create_duplicate_songs_modal<'a>(
                     "Add non duplicates",
                     Box::new(|ctx| {
                         ctx.command(move |client| {
-                            client.add_to_playlist_multiple(&playlist_name, non_duplicate_songs)?;
+                            client.add_to_playlist_multiple(&playlist_name, &non_duplicate_songs, None)?;
                             Ok(())
                         });
                         Ok(())
@@ -575,11 +575,14 @@ pub fn delete_from_playlist_or_show_confirmation(
     let Some(songs_in_playlist) =
         ctx.query_sync(move |client| match client.list_playlist_info(&pl_name, None) {
             Ok(val) => Ok(Some(val.into_iter().map(|s| s.file).collect_vec())),
-            Err(MpdError::Mpd(MpdFailureResponse { code: ErrorCode::NoExist, .. })) => {
-                status_warn!("Cannot remove song(s) from playlist, playlist does not exist");
-                Ok(None)
+            Err(e) => {
+                if let Some(MpdError::Mpd(MpdFailureResponse { code: ErrorCode::NoExist, .. })) = e.downcast_ref::<MpdError>() {
+                    status_warn!("Cannot remove song(s) from playlist, playlist does not exist");
+                    Ok(None)
+                } else {
+                    Err(e)
+                }
             }
-            Err(err) => Err(err.into()),
         })?
     else {
         return Ok(());

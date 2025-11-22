@@ -1,6 +1,6 @@
 use std::{collections::HashMap, sync::Arc};
 
-use anyhow::{Context, Result};
+use anyhow::Result;
 use parking_lot::Mutex;
 
 use super::{backend::MusicBackend, mpv_ipc::MpvIpc};
@@ -333,19 +333,15 @@ impl MusicBackend for MpvBackend {
         Ok(Vec::new())
     }
 
-    fn find(
-        &mut self,
-        _filter: &[(Tag, String)],
-        _window: Option<(u32, u32)>,
-    ) -> Result<Vec<Song>> {
+    fn find(&mut self, _filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
         Ok(vec![])
     }
 
-    fn list_tag(&mut self, _tag: Tag, _filter: Option<&[(Tag, String)]>) -> Result<Vec<String>> {
+    fn list_tag(&mut self, _tag: Tag, _filter: Option<&[Filter]>) -> Result<Vec<String>> {
         Ok(vec![])
     }
 
-    fn count(&mut self, _filter: &[(Tag, String)]) -> Result<(usize, std::time::Duration)> {
+    fn count(&mut self, _filter: &[Filter]) -> Result<(usize, std::time::Duration)> {
         Ok((0, std::time::Duration::from_secs(0)))
     }
 
@@ -369,6 +365,10 @@ impl MusicBackend for MpvBackend {
         Ok(())
     }
 
+    fn supports_command(&self, _name: &str) -> bool {
+        false
+    }
+
     fn delete_playlist(&mut self, _name: &str) -> Result<()> {
         Ok(())
     }
@@ -385,7 +385,7 @@ impl MusicBackend for MpvBackend {
         Ok(())
     }
 
-    fn move_in_playlist(&mut self, _playlist: &str, _from: u32, _to: u32) -> Result<()> {
+    fn move_in_playlist(&mut self, _playlist: &str, _from: SingleOrRange, _to: u32) -> Result<()> {
         Ok(())
     }
 
@@ -435,9 +435,5 @@ impl MusicBackend for MpvBackend {
 
     fn backend_name(&self) -> &'static str {
         "MPV"
-    }
-
-    fn supports_command(&self, _command: &str) -> bool {
-        false // MPV doesn't support MPD commands
     }
 }

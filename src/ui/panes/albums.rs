@@ -9,10 +9,10 @@ use crate::{
     config::tabs::PaneType,
     ctx::Ctx,
     mpd::{
-        client::Client,
         commands::Song,
         mpd_client::{Filter, MpdClient, Tag},
     },
+    player::Client,
     shared::{cmp::StringCompare, key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
@@ -61,7 +61,7 @@ impl Pane for AlbumsPane {
         if !self.initialized {
             ctx.query().id(INIT).replace_id(INIT).target(PaneType::Albums).query(move |client| {
                 let result = client.list_tag(Tag::Album, None).context("Cannot list tags")?;
-                Ok(MpdQueryResult::LsInfo { data: result.0, path: None })
+                Ok(MpdQueryResult::LsInfo { data: result, path: None })
             });
             self.initialized = true;
         }
@@ -76,7 +76,7 @@ impl Pane for AlbumsPane {
                     move |client| {
                         let result =
                             client.list_tag(Tag::Album, None).context("Cannot list tags")?;
-                        Ok(MpdQueryResult::LsInfo { data: result.0, path: None })
+                        Ok(MpdQueryResult::LsInfo { data: result, path: None })
                     },
                 );
             }
@@ -162,7 +162,9 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
         item: DirOrSong,
     ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| match item {
-            DirOrSong::Dir { name, .. } => Ok(client.find(&[Filter::new(Tag::Album, &name)])?),
+            DirOrSong::Dir { name, .. } => {
+                Ok(client.find(&[Filter::new(Tag::Album, &name)], None)?)
+            }
             DirOrSong::Song(song) => Ok(vec![song.clone()]),
         }
     }
@@ -184,7 +186,7 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
                     .target(PaneType::Albums)
                     .query(move |client| {
                         let data = client
-                            .find(&[Filter::new(Tag::Album, current)])?
+                            .find(&[Filter::new(Tag::Album, current)], None)?
                             .into_iter()
                             .sorted_by(|a, b| {
                                 a.with_custom_sort(&sort_order)

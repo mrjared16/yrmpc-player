@@ -61,7 +61,7 @@ impl OutputsModal {
             match kind {
                 PartitionedOutputKind::OtherPartition => {
                     client.move_output(&name)?;
-                    let new_outputs = client.outputs()?.0;
+                    let new_outputs = client.outputs()?;
                     if let Some(output) = new_outputs.iter().find(|output| output.name == name) {
                         client.enable_output(output.id)?;
                     }

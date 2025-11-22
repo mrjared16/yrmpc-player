@@ -53,14 +53,14 @@ impl Pane for HeaderPane {
             MouseEventKind::ScrollUp => {
                 let volume_step = ctx.config.volume_step.into();
                 ctx.command(move |client| {
-                    client.volume(ValueChange::Increase(volume_step))?;
+                    client.set_volume(ValueChange::Increase(volume_step))?;
                     Ok(())
                 });
             }
             MouseEventKind::ScrollDown => {
                 let volume_step = ctx.config.volume_step.into();
                 ctx.command(move |client| {
-                    client.volume(ValueChange::Decrease(volume_step))?;
+                    client.set_volume(ValueChange::Decrease(volume_step))?;
                     Ok(())
                 });
             }

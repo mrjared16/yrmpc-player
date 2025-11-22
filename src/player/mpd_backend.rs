@@ -1,4 +1,4 @@
-use std::{borrow::Cow, collections::HashMap};
+use std::collections::HashMap;
 
 use anyhow::Result;
 
@@ -6,7 +6,6 @@ use super::backend::MusicBackend;
 use crate::mpd::{
     client::Client as MpdClient,
     commands::{
-        Count,
         Decoder,
         LsInfoEntry,
         OnOffOneshot,
@@ -22,8 +21,7 @@ use crate::mpd::{
         Volume,
         lsinfo::Dir,
     },
-    mpd_client::{Filter, FilterKind, MpdClient as MpdClientTrait, SingleOrRange},
-    version::Version,
+    mpd_client::{Filter, MpdClient as MpdClientTrait, SingleOrRange},
 };
 
 /// MPD backend implementation
@@ -65,7 +63,7 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         self.client.play().map_err(Into::into)
     }
 
-    fn pause(&mut self, state: bool) -> Result<()> {
+    fn pause(&mut self, _state: bool) -> Result<()> {
         // MPD's pause() toggles, so we need to check current state first
         // For now, just call pause() which toggles
         // TODO: Check current state and only call if needed
@@ -150,12 +148,12 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(status.volume.0 as u8)
     }
 
-    fn set_volume(&mut self, volume: ValueChange) -> Result<()> {
+    fn set_volume(&mut self, _delta: ValueChange) -> Result<()> {
         // Convert ValueChange to Volume for MPD
-        match volume {
+        match _delta {
             ValueChange::Set(v) => self.client.set_volume(Volume(v as u32)).map_err(Into::into),
             ValueChange::Increase(delta) | ValueChange::Decrease(delta) => {
-                self.client.volume(volume).map_err(Into::into)
+                self.client.volume(_delta).map_err(Into::into)
             }
         }
     }
@@ -229,25 +227,21 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         self.client.search(filter, false).map_err(Into::into)
     }
 
-    fn find(&mut self, filter: &[(Tag, String)], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
+    fn find(&mut self, filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
         // MPD client find() doesn't support window directly in this version wrapper
         // TODO: Implement window support if critical
-        let filters = convert_filter(filter);
-        self.client.find(&filters).map_err(Into::into)
+        self.client.find(filter).map_err(Into::into)
     }
 
-    fn list_tag(&mut self, tag: Tag, filter: Option<&[(Tag, String)]>) -> Result<Vec<String>> {
-        let filters = filter.map(convert_filter);
-        let filters_ref = filters.as_deref();
+    fn list_tag(&mut self, tag: Tag, filter: Option<&[Filter]>) -> Result<Vec<String>> {
         // list_tag returns MpdList which wraps Vec<String>
-        Ok(self.client.list_tag(tag, filters_ref).map_err(|e| anyhow::Error::from(e))?.0)
+        Ok(self.client.list_tag(tag, filter).map_err(|e| anyhow::Error::from(e))?.0)
     }
 
-    fn count(&mut self, filter: &[(Tag, String)]) -> Result<(usize, std::time::Duration)> {
-        let filters = convert_filter(filter);
+    fn count(&mut self, filter: &[Filter]) -> Result<(usize, std::time::Duration)> {
         let count = self
             .client
-            .count(&filters)
+            .count(filter)
             .map_err(|e: crate::mpd::errors::MpdError| anyhow::Error::from(e))?;
         Ok((count.songs, count.playtime))
     }
@@ -288,9 +282,9 @@ impl<'name> MusicBackend for MpdBackend<'name> {
             .map_err(Into::into)
     }
 
-    fn move_in_playlist(&mut self, playlist: &str, from: u32, to: u32) -> Result<()> {
+    fn move_in_playlist(&mut self, playlist: &str, from: SingleOrRange, to: u32) -> Result<()> {
         self.client
-            .move_in_playlist(playlist, &SingleOrRange::single(from as usize), to as usize)
+            .move_in_playlist(playlist, &from, to as usize)
             .map_err(Into::into)
     }
 
@@ -364,20 +358,9 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         "MPD"
     }
 
-    fn supports_command(&self, command: &str) -> bool {
+    fn supports_command(&self, _command: &str) -> bool {
         // Check against supported commands if available
         // For now, just return true as MPD supports most things
         true
     }
-}
-
-fn convert_filter(filter: &[(Tag, String)]) -> Vec<Filter<'_>> {
-    filter
-        .iter()
-        .map(|(tag, value)| Filter {
-            tag: tag.clone(),
-            value: Cow::Borrowed(value),
-            kind: FilterKind::Contains, // Default to contains
-        })
-        .collect()
 }

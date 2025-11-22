@@ -37,7 +37,7 @@ use crate::{
     },
     ctx::{Ctx, FETCH_SONG_STICKERS, LIKE_STICKER, RATING_STICKER},
     mpd::{
-        commands::{State, idle::IdleEvent},
+        commands::{State, SeekPosition, idle::IdleEvent},
         errors::{ErrorCode, MpdError, MpdFailureResponse},
         mpd_client::{MpdClient, MpdCommand, ValueChange},
         proto_client::ProtoClient,
@@ -219,12 +219,17 @@ impl<'ui> Ui<'ui> {
                     ctx.command(move |client| {
                         match client.switch_to_partition(&name) {
                             Ok(()) => {}
-                            Err(MpdError::Mpd(MpdFailureResponse {
-                                code: ErrorCode::NoExist,
-                                ..
-                            })) if autocreate => {
-                                client.new_partition(&name)?;
-                                client.switch_to_partition(&name)?;
+                            Err(e) if autocreate => {
+                                match e.downcast_ref::<MpdError>() {
+                                    Some(MpdError::Mpd(MpdFailureResponse {
+                                        code: ErrorCode::NoExist,
+                                        ..
+                                    })) => {
+                                        client.new_partition(&name)?;
+                                        client.switch_to_partition(&name)?;
+                                    }
+                                    _ => return Err(e),
+                                }
                             }
                             err @ Err(_) => err?,
                         }
@@ -234,7 +239,7 @@ impl<'ui> Ui<'ui> {
                 GlobalAction::Partition { name: None, .. } => {
                     let result = ctx.query_sync(move |client| {
                         let partitions = client.list_partitions()?;
-                        Ok(partitions.0)
+                        Ok(partitions)
                     })?;
                     let modal = MenuModal::new(ctx)
                         .width(60)
@@ -375,7 +380,7 @@ impl<'ui> Ui<'ui> {
                         match rewind_to_start {
                             Some(value) => {
                                 if elapsed_sec >= value {
-                                    client.seek_current(ValueChange::Set(0))?;
+                                    client.seek_current(SeekPosition::Absolute(0.0))?;
                                 } else {
                                     client.prev_keep_state(keep_state, state)?;
                                 }
@@ -490,7 +495,7 @@ impl<'ui> Ui<'ui> {
                     if matches!(ctx.status.state, State::Play | State::Pause) =>
                 {
                     ctx.command(move |client| {
-                        client.seek_current(ValueChange::Increase(5))?;
+                        client.seek_current(SeekPosition::Relative(5.0))?;
                         Ok(())
                     });
                 }
@@ -498,7 +503,7 @@ impl<'ui> Ui<'ui> {
                     if matches!(ctx.status.state, State::Play | State::Pause) =>
                 {
                     ctx.command(move |client| {
-                        client.seek_current(ValueChange::Decrease(5))?;
+                        client.seek_current(SeekPosition::Relative(-5.0))?;
                         Ok(())
                     });
                 }
@@ -506,7 +511,7 @@ impl<'ui> Ui<'ui> {
                     if matches!(ctx.status.state, State::Play | State::Pause) =>
                 {
                     ctx.command(move |client| {
-                        client.seek_current(ValueChange::Set(0))?;
+                        client.seek_current(SeekPosition::Absolute(0.0))?;
                         Ok(())
                     });
                 }
@@ -568,7 +573,7 @@ impl<'ui> Ui<'ui> {
                     ctx.query()
                         .id(OPEN_DECODERS_MODAL)
                         .replace_id(OPEN_DECODERS_MODAL)
-                        .query(|client| Ok(MpdQueryResult::Decoders(client.decoders()?.0)));
+                        .query(|client| Ok(MpdQueryResult::Decoders(client.decoders()?)));
                 }
                 GlobalAction::ShowCurrentSongInfo => {
                     if let Some((_, current_song)) = ctx.find_current_song_in_queue() {

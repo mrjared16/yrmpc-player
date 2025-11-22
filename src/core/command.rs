@@ -11,12 +11,12 @@ use crate::{
     ctx::Ctx,
     mpd::{
         QueuePosition,
-        client::Client,
-        commands::{IdleEvent, State, mpd_config::MpdConfig, volume::Bound},
-        mpd_client::{Filter, MpdClient, MpdCommand, Tag, ValueChange},
+        commands::{IdleEvent, State, SeekPosition, mpd_config::MpdConfig, volume::Bound},
+        mpd_client::{Filter, MpdClient, MpdCommand, Tag},
         proto_client::ProtoClient,
         version::Version,
     },
+    player::client::Client,
     shared::{
         ext::duration::DurationExt,
         lrc::{LrcIndex, get_lrc_path},
@@ -102,26 +102,31 @@ impl Command {
             }
             Command::Queue => Ok(Box::new(|client| {
                 let queue = client.playlist_info()?;
-                if let Some(queue) = queue {
-                    println!("{}", serde_json::ser::to_string(&queue)?);
-                    Ok(())
-                } else {
-                    std::process::exit(1);
-                }
+                println!("{}", serde_json::ser::to_string(&queue)?);
+                Ok(())
             })),
             Command::ListAll { files } => Ok(Box::new(|client| {
                 let result = if files.is_empty() {
                     client.list_all(None)?
                 } else {
+                    let files_count = files.len();
                     client.send_start_cmd_list()?;
                     for file in files {
                         client.send_list_all(Some(&file))?;
                     }
                     client.send_execute_cmd_list()?;
-                    client.read_response()?
+                    // read_response returns Vec<IdleEvent>, we need to read the list_all response
+                    let mut all_entries = Vec::new();
+                    for _ in 0..files_count {
+                        all_entries.extend(client.list_all(None)?);
+                    }
+                    all_entries
                 };
 
-                result.into_files().for_each(|file| println!("{file}"));
+                result.into_iter().filter_map(|e| match e {
+                    crate::mpd::commands::LsInfoEntry::File(song, ..) => Some(song.file),
+                    _ => None,
+                }).for_each(|file| println!("{file}"));
                 Ok(())
             })),
             Command::Play { position: None } => Ok(Box::new(|client| Ok(client.play()?))),
@@ -156,7 +161,7 @@ impl Command {
                 match rewind_to_start {
                     Some(value) => {
                         if status.elapsed.as_secs() >= value {
-                            client.seek_current(ValueChange::Set(0))?;
+                            client.seek_current(SeekPosition::Absolute(0.0))?;
                         } else {
                             client.prev_keep_state(keep_state, status.state)?;
                         }
@@ -206,7 +211,14 @@ impl Command {
                 Ok(())
             })),
             Command::Seek { value } => {
-                Ok(Box::new(move |client| Ok(client.seek_current(value.parse()?)?)))
+                Ok(Box::new(move |client| {
+                    let pos: SeekPosition = if value.starts_with('+') || value.starts_with('-') {
+                        SeekPosition::Relative(value.parse()?)
+                    } else {
+                        SeekPosition::Absolute(value.parse()?)
+                    };
+                    Ok(client.seek_current(pos)?)
+                }))
             }
             Command::Clear => Ok(Box::new(|client| Ok(client.clear()?))),
             Command::Add { files, skip_ext_check, position }
@@ -370,7 +382,7 @@ impl Command {
                 Ok(())
             })),
             Command::ListPartitions => Ok(Box::new(|client| {
-                println!("{}", serde_json::ser::to_string(&client.list_partitions()?.0)?);
+                println!("{}", serde_json::ser::to_string(&client.list_partitions()?)?);
                 Ok(())
             })),
             Command::AlbumArt { output } => Ok(Box::new(move |client| {

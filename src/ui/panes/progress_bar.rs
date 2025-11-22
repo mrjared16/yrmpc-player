@@ -7,8 +7,8 @@ use super::Pane;
 use crate::{
     ctx::Ctx,
     mpd::{
-        commands::State,
-        mpd_client::{MpdClient, ValueChange},
+        commands::{SeekPosition, State},
+        mpd_client::MpdClient,
     },
     shared::{
         key_event::KeyEvent,
@@ -87,7 +87,8 @@ impl Pane for ProgressBarPane {
                     )
                     .as_secs();
                 ctx.command(move |client| {
-                    client.seek_current(ValueChange::Set(u32::try_from(second_to_seek_to)?))?;
+                    let pos = u32::try_from(second_to_seek_to)? as f64;
+                    client.seek_current(SeekPosition::Absolute(pos))?;
                     Ok(())
                 });
 
