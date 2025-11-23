@@ -47,6 +47,7 @@ mod config;
 mod core;
 mod ctx;
 mod domain;
+mod app_state;
 mod mpd;
 mod player;
 mod shared;

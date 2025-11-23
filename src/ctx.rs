@@ -2,6 +2,7 @@ use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},
     ops::AddAssign,
+    sync::{Arc, RwLock},
     time::{Duration, Instant},
 };
 
@@ -48,6 +49,8 @@ pub struct Ctx {
     pub(crate) config: std::sync::Arc<Config>,
     pub(crate) status: Status,
     pub(crate) queue: Vec<Song>,
+    /// Application state with in-memory queue management
+    pub(crate) app_state: Arc<RwLock<crate::app_state::AppState>>,
     #[cfg(test)]
     pub(crate) stickers: HashMap<String, HashMap<String, String>>,
     #[cfg(not(test))]
@@ -110,6 +113,7 @@ impl Ctx {
             config: std::sync::Arc::new(config),
             status,
             queue,
+            app_state: Arc::new(RwLock::new(crate::app_state::AppState::new())),
             stickers: HashMap::new(),
             active_tab,
             supported_commands,
