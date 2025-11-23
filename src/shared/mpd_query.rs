@@ -11,7 +11,7 @@ use crate::{
     domain::{Song, Status},
     mpd::{
         commands::{Decoder, IdleEvent, Volume},
-        mpd_client::MpdClient,
+        mpd_client::{Filter, Tag},
     },
     player::client::Client,
     shared::{events::ClientRequest, macros::try_skip},

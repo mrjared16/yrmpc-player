@@ -21,8 +21,6 @@ use crate::{
     mpd::{
         commands::idle::IdleEvent,
         errors::MpdError,
-        mpd_client::MpdClient,
-        proto_client::ProtoClient,
     },
     player::client::Client,
     shared::{

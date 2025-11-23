@@ -11,12 +11,11 @@ use crate::{
     MpdQueryResult,
     config::keys::CommonAction,
     ctx::Ctx,
-    mpd::mpd_client::MpdClient,
     shared::{
         id::{self, Id},
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
-        mpd_client_ext::{MpdClientExt, PartitionedOutput, PartitionedOutputKind},
+        mpd_client_ext::{PartitionedOutput, PartitionedOutputKind},
     },
     ui::{UiEvent, dirstack::DirState},
 };

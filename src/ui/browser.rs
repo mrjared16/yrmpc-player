@@ -15,7 +15,6 @@ use crate::{
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    mpd::mpd_client::MpdClient,
     player::Client,
     shared::{
         key_event::KeyEvent,

@@ -88,6 +88,12 @@ pub struct Config {
     pub cava: Cava,
     pub backend: PlayerBackend,
     pub mpv_socket: Option<String>,
+    pub youtube: YouTubeConfig,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+pub struct YouTubeConfig {
+    pub auth_file: Option<String>,
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -105,6 +111,8 @@ pub enum PlayerBackend {
     Mpd,
     #[serde(rename = "mpv")]
     Mpv,
+    #[serde(rename = "youtube")]
+    YouTube,
 }
 
 #[allow(clippy::struct_excessive_bools)]
@@ -187,6 +195,14 @@ pub struct ConfigFile {
     pub backend: PlayerBackend,
     #[serde(default)]
     pub mpv_socket: Option<String>,
+    #[serde(default)]
+    pub youtube: YouTubeConfigFile,
+}
+
+#[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
+pub struct YouTubeConfigFile {
+    #[serde(default)]
+    pub auth_file: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Copy, Clone, PartialEq, Eq)]
@@ -251,6 +267,7 @@ impl Default for ConfigFile {
             show_playlists_in_browser: ShowPlaylistsMode::default(),
             backend: PlayerBackend::default(),
             mpv_socket: None,
+            youtube: YouTubeConfigFile::default(),
         }
     }
 }
@@ -489,6 +506,9 @@ impl ConfigFile {
             cava: self.cava.into(),
             backend: self.backend,
             mpv_socket: self.mpv_socket.map(|v| tilde_expand(&v).into_owned()),
+            youtube: YouTubeConfig {
+                auth_file: self.youtube.auth_file.map(|v| tilde_expand(&v).into_owned()),
+            },
         };
 
         if skip_album_art_check {

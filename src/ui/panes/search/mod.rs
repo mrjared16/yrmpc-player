@@ -26,7 +26,7 @@ use crate::{
     domain::Song,
     ui::panes::browser::SongExt,
     mpd::{
-        mpd_client::{Filter, MpdClient, MpdCommand},
+        mpd_client::Filter,
         version::Version,
     },
     player::Client,

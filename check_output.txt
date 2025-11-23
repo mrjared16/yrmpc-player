@@ -1,679 +1,716 @@
-[1m[32m    Checking[0m rmpc v0.10.0 (<PROJECT_ROOT>/rmpc)
-[0m[1m[38;5;9merror[E0412][0m[0m[1m: cannot find type `IdleEvent` in this scope[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:365:51[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m365[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn read_response(&mut self) -> Result<Vec<IdleEvent>> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                   [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mnot found in this scope[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;14mhelp[0m[0m: consider importing this enum through its public re-export[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m1[0m[0m [0m[0m[38;5;10m+ use crate::mpd::commands::IdleEvent;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `std::collections::HashMap`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/player/backend.rs:1:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::collections::HashMap;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused imports: `Filter`, `Volume`, and `version::Version`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:23:13[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m23[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Volume,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^[0m
-[0m[1m[38;5;12m24[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        },[0m
-[0m[1m[38;5;12m25[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^[0m
-[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        proto_client::ProtoClient,[0m
-[0m[1m[38;5;12m27[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        version::Version,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `borrow::Cow`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpd_backend.rs:1:11[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::{borrow::Cow, collections::HashMap};[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused imports: `Count`, `FilterKind`, and `version::Version`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpd_backend.rs:9:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m9[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Count,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^[0m
-[0m[1m[38;5;12m...[0m
-[0m[1m[38;5;12m25[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd_client::{Filter, FilterKind, MpdClient as MpdClientTrait, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    version::Version,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `Context`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpv_backend.rs:3:14[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m3[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse anyhow::{Context, Result};[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `backend::MusicBackend`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mod.rs:8:9[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m8[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub use backend::MusicBackend;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_backend::MpdBackend`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mod.rs:10:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m10[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub use mpd_backend::MpdBackend;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpv_backend::MpvBackend`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mod.rs:11:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub use mpv_backend::MpvBackend;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `proto_client::ProtoClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/search/mod.rs:29:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m29[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        proto_client::ProtoClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/core/work.rs:70:66[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m70[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                client_tx.send(ClientRequest::Command(QueryCmd { callback })),[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                  [0m[0m[1m[38;5;9m^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `player::client::Client<'_>`, found `mpd::client::Client<'_>`[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `mpd::client::Client<'_>` and `player::client::Client<'_>` have similar names, but are actually distinct types[0m
-[0m[1m[38;5;10mnote[0m[0m: `mpd::client::Client<'_>` is defined in module `crate::mpd::client` of the current crate[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/mpd/client.rs:30:1[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct Client<'name> {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;10mnote[0m[0m: `player::client::Client<'_>` is defined in module `crate::player::client` of the current crate[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:35:1[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m35[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub enum Client<'name> {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:265:55[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m265[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.backend_mut().move_in_playlist(playlist, from, to)[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;12m----------------[0m[0m           [0m[0m[1m[38;5;9m^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `SingleOrRange`, found `u32`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/backend.rs:68:8[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m68[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn move_in_playlist(&mut self, playlist: &str, from: SingleOrRange, to: u32) -> Result<()>;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m                            [0m[0m[1m[38;5;12m----[0m
-
-[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `read_idle_response` found for struct `mpd::client::Client<'name>` in the current scope[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:367:40[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m367[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Client::Mpd(b) => b.client.read_idle_response().map_err(Into::into),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                        [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/mpd/client.rs:30:1[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct Client<'name> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;12mmethod `read_idle_response` not found for this struct[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;14mhelp[0m[0m: there is a method `read_response` with a similar name[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m367[0m[0m [0m[0m[38;5;9m- [0m[0m            Client::Mpd(b) => b.client.[0m[0m[38;5;9mread_idle_response[0m[0m().map_err(Into::into),[0m
-[0m[1m[38;5;12m367[0m[0m [0m[0m[38;5;10m+ [0m[0m            Client::Mpd(b) => b.client.[0m[0m[38;5;10mread_response[0m[0m().map_err(Into::into),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:573:31[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m571[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn list_partitions(&mut self) -> Result<Vec<String>> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[38;5;12m-------------------[0m[0m [0m[0m[1m[38;5;12mexpected `Result<Vec<std::string::String>, anyhow::Error>` because of return type[0m
-[0m[1m[38;5;12m572[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        match self {[0m
-[0m[1m[38;5;12m573[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Client::Mpd(b) => b.client.list_partitions().map_err(Into::into),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                               [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `Result<Vec<String>, Error>`, found `Result<MpdList, _>`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected enum `Result<[0m[0m[1m[35mVec<std::string::String>[0m[0m, [0m[0m[1m[35manyhow::Error[0m[0m>`[0m
-[0m               found enum `Result<[0m[0m[1m[35mMpdList[0m[0m, [0m[0m[1m[35m_[0m[0m>`[0m
-
-[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `send_playlist_add` found for struct `mpd::client::Client<'name>` in the current scope[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:646:40[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m646[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Client::Mpd(b) => b.client.send_playlist_add(playlist, uri).map_err(Into::into),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                        [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/mpd/client.rs:30:1[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct Client<'name> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;12mmethod `send_playlist_add` not found for this struct[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;14mhelp[0m[0m: there is a method `send_play` with a similar name, but with different arguments[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/mpd/mpd_client.rs:115:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m115[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn send_play(&mut self) -> MpdResult<()>;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;14m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/menu/mod.rs:578:17[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m576[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        ctx.query_sync(move |client| match client.list_playlist_info(&pl_name, None) {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                            [0m[0m[1m[38;5;12m-----------------------------------------[0m[0m [0m[0m[1m[38;5;12mthis expression has type `Result<Vec<current_song::Song>, anyhow::Error>`[0m
-[0m[1m[38;5;12m577[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Ok(val) => Ok(Some(val.into_iter().map(|s| s.file).collect_vec())),[0m
-[0m[1m[38;5;12m578[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            Err(MpdError::Mpd(MpdFailureResponse { code: ErrorCode::NoExist, .. })) => {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `Error`, found `MpdError`[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: arguments to this method are incorrect[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/playlists.rs:460:24[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m460[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                client.move_in_playlist(&playlist, &SingleOrRange::single(idx), new_idx)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m            [0m[0m[1m[38;5;12m---------------------------[0m[0m  [0m[0m[1m[38;5;12m-------[0m[0m [0m[0m[1m[38;5;12mexpected `u32`, found `usize`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                    [0m[0m[1m[38;5;12mexpected `u32`, found `&SingleOrRange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:264:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m264[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn move_in_playlist(&mut self, playlist: &str, from: u32, to: u32) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m                            [0m[0m[1m[38;5;12m---------[0m[0m  [0m[0m[1m[38;5;12m-------[0m
-[0m[1m[38;5;14mhelp[0m[0m: you can convert a `usize` to a `u32` and panic if the converted value doesn't fit[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m460[0m[0m [0m[0m[1m[38;5;12m| [0m[0m                client.move_in_playlist(&playlist, &SingleOrRange::single(idx), new_idx[0m[0m[38;5;10m.try_into().unwrap()[0m[0m)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                        [0m[0m[38;5;10m++++++++++++++++++++[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: arguments to this method are incorrect[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/playlists.rs:491:28[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m491[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.move_in_playlist(&playlist, &(range.into()), new_idx)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m                             [0m[0m[1m[38;5;12m-------[0m[0m [0m[0m[1m[38;5;12mexpected `u32`, found `usize`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: expected `u32`, found `&_`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/playlists.rs:491:56[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m491[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.move_in_playlist(&playlist, &(range.into()), new_idx)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m:   expected type `[0m[0m[1m[35mu32[0m[0m`[0m
-[0m            found reference `[0m[0m[1m[35m&_[0m[0m`[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:264:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m264[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn move_in_playlist(&mut self, playlist: &str, from: u32, to: u32) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m                            [0m[0m[1m[38;5;12m---------[0m[0m  [0m[0m[1m[38;5;12m-------[0m
-[0m[1m[38;5;14mhelp[0m[0m: consider removing the borrow[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m491[0m[0m [0m[0m[38;5;9m- [0m[0m                    client.move_in_playlist(&playlist, [0m[0m[38;5;9m&[0m[0m(range.into()), new_idx)?;[0m
-[0m[1m[38;5;12m491[0m[0m [0m[0m[38;5;10m+ [0m[0m                    client.move_in_playlist(&playlist, (range.into()), new_idx)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;14mhelp[0m[0m: you can convert a `usize` to a `u32` and panic if the converted value doesn't fit[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m491[0m[0m [0m[0m[1m[38;5;12m| [0m[0m                    client.move_in_playlist(&playlist, &(range.into()), new_idx[0m[0m[38;5;10m.try_into().unwrap()[0m[0m)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                [0m[0m[38;5;10m++++++++++++++++++++[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: `?` operator has incompatible types[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/progress_bar.rs:90:64[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m90[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.seek_current(SeekPosition::Absolute(u32::try_from(second_to_seek_to)?))?;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `f64`, found `u32`[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `?` operator cannot convert from `u32` to `f64`[0m
-[0m[1m[38;5;10mnote[0m[0m: return type inferred to be `f64` here[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/progress_bar.rs:90:64[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m90[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.seek_current(SeekPosition::Absolute(u32::try_from(second_to_seek_to)?))?;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: you can convert a `u32` to an `f64`, producing the floating point representation of the integer[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m90[0m[0m [0m[0m[1m[38;5;12m| [0m[0m                    client.seek_current(SeekPosition::Absolute(u32::try_from(second_to_seek_to)?[0m[0m[38;5;10m.into()[0m[0m))?;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                                                 [0m[0m[38;5;10m+++++++[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/search/mod.rs:911:68[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m911[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m...[0m[0m                   client.create_playlist(&value, &song_files)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m---------------[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `Vec<String>`, found `&Vec<String>`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected struct `Vec<_>`[0m
-[0m            found reference `[0m[0m[1m[35m&[0m[0mVec<_>`[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/shared/mpd_client_ext.rs:64:8[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m64[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn create_playlist(&mut self, name: &str, items: Vec<String>) -> Result<(), MpdError>;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^[0m[0m                        [0m[0m[1m[38;5;12m-----[0m
-[0m[1m[38;5;14mhelp[0m[0m: consider removing the borrow[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m911[0m[0m [0m[0m[38;5;9m- [0m[0m                                    client.create_playlist(&value, [0m[0m[38;5;9m&[0m[0msong_files)?;[0m
-[0m[1m[38;5;12m911[0m[0m [0m[0m[38;5;10m+ [0m[0m                                    client.create_playlist(&value, song_files)?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/volume.rs:97:28[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m97[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.volume(ValueChange::Set(new_volume))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m97[0m[0m [0m[0m[38;5;9m- [0m[0m                    client.volume([0m[0m[38;5;9mValueChange::Set(new_volume)[0m[0m)?;[0m
-[0m [0m[0m[1m[38;5;12m97[0m[0m [0m[0m[38;5;10m+ [0m[0m                    client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/volume.rs:109:28[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m109[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.volume(ValueChange::Increase(volume_step))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m109[0m[0m [0m[0m[38;5;9m- [0m[0m                    client.volume([0m[0m[38;5;9mValueChange::Increase(volume_step)[0m[0m)?;[0m
-[0m[1m[38;5;12m109[0m[0m [0m[0m[38;5;10m+ [0m[0m                    client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/volume.rs:119:28[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m119[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.volume(ValueChange::Decrease(volume_step))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m119[0m[0m [0m[0m[38;5;9m- [0m[0m                    client.volume([0m[0m[38;5;9mValueChange::Decrease(volume_step)[0m[0m)?;[0m
-[0m[1m[38;5;12m119[0m[0m [0m[0m[38;5;10m+ [0m[0m                    client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/volume.rs:135:28[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m135[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    client.volume(ValueChange::Set(new_volume))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m135[0m[0m [0m[0m[38;5;9m- [0m[0m                    client.volume([0m[0m[38;5;9mValueChange::Set(new_volume)[0m[0m)?;[0m
-[0m[1m[38;5;12m135[0m[0m [0m[0m[38;5;10m+ [0m[0m                    client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:222:33[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m220[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m                        match client.switch_to_partition(&name) {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                 [0m[0m[1m[38;5;12m---------------------------------[0m[0m [0m[0m[1m[38;5;12mthis expression has type `Result<(), anyhow::Error>`[0m
-[0m[1m[38;5;12m221[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m                            Ok(()) => {}[0m
-[0m[1m[38;5;12m222[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m                            Err(MpdError::Mpd(MpdFailureResponse {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m _________________________________^[0m
-[0m[1m[38;5;12m223[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m                                code: ErrorCode::NoExist,[0m
-[0m[1m[38;5;12m224[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m                                ..[0m
-[0m[1m[38;5;12m225[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m                            })) if autocreate => {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|______________________________^[0m[0m [0m[0m[1m[38;5;9mexpected `Error`, found `MpdError`[0m
-
-[0m[1m[38;5;9merror[E0609][0m[0m[1m: no field `0` on type `Vec<std::string::String>`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:237:39[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m237[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        Ok(partitions.0)[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                       [0m[0m[1m[38;5;9m^[0m[0m [0m[0m[1m[38;5;9munknown field[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:378:57[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m378[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m...[0m[0m                   client.seek_current(ValueChange::Set(0))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `SeekPosition`, found `ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:133:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m133[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn seek_current(&mut self, position: SeekPosition) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^[0m[0m            [0m[0m[1m[38;5;12m----------------------[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:462:32[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m462[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        client.volume(ValueChange::Increase(step.into()))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m462[0m[0m [0m[0m[38;5;9m- [0m[0m                        client.volume([0m[0m[38;5;9mValueChange::Increase(step.into())[0m[0m)?;[0m
-[0m[1m[38;5;12m462[0m[0m [0m[0m[38;5;10m+ [0m[0m                        client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0061][0m[0m[1m: this method takes 0 arguments but 1 argument was supplied[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:469:32[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m469[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        client.volume(ValueChange::Decrease(step.into()))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;12m----------------------------------[0m[0m [0m[0m[1m[38;5;12munexpected argument of type `mpd_client::ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:169:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m169[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn volume(&mut self) -> Result<u8> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^[0m
-[0m[1m[38;5;14mhelp[0m[0m: remove the extra argument[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m469[0m[0m [0m[0m[38;5;9m- [0m[0m                        client.volume([0m[0m[38;5;9mValueChange::Decrease(step.into())[0m[0m)?;[0m
-[0m[1m[38;5;12m469[0m[0m [0m[0m[38;5;10m+ [0m[0m                        client.volume()?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:493:45[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m493[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        client.seek_current(ValueChange::Increase(5))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `SeekPosition`, found `ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:133:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m133[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn seek_current(&mut self, position: SeekPosition) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^[0m[0m            [0m[0m[1m[38;5;12m----------------------[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:501:45[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m501[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        client.seek_current(ValueChange::Decrease(5))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `SeekPosition`, found `ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:133:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m133[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn seek_current(&mut self, position: SeekPosition) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^[0m[0m            [0m[0m[1m[38;5;12m----------------------[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:509:45[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m509[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                        client.seek_current(ValueChange::Set(0))?;[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `SeekPosition`, found `ValueChange`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:133:12[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m133[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn seek_current(&mut self, position: SeekPosition) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^[0m[0m            [0m[0m[1m[38;5;12m----------------------[0m
-
-[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/main.rs:291:20[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m [0m[0m[1m[38;5;12m291[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            result(&mut client)?;[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12m------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `mpd::client::Client<'_>`, found `player::client::Client<'_>`[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12marguments to this function are incorrect[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `player::client::Client<'_>` and `mpd::client::Client<'_>` have similar names, but are actually distinct types[0m
-[0m[1m[38;5;10mnote[0m[0m: `player::client::Client<'_>` is defined in module `crate::player::client` of the current crate[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:35:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m35[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub enum Client<'name> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;10mnote[0m[0m: `mpd::client::Client<'_>` is defined in module `crate::mpd::client` of the current crate[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/mpd/client.rs:30:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct Client<'name> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;10mnote[0m[0m: implementation defined here[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0m~/.rustup/toolchains/nightly-x86_64-unknown-linux-gnu/lib/rustlib/src/rust/library/alloc/src/boxed.rs:1981:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1981[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl<Args: Tuple, F: FnOnce<Args> + ?Sized, A: Allocator> FnOnce<Args> for Box<F, A> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/main.rs:26:11[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::{mpd_client::MpdClient, proto_client::SocketClient},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/core/client.rs:24:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m24[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::MpdClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `proto_client::ProtoClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/core/client.rs:25:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m25[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        proto_client::ProtoClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/core/event_loop.rs:21:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m21[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, SaveMode},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ctx.rs:26:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::MpdClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `proto_client::SocketClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/main.rs:26:34[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::{mpd_client::MpdClient, proto_client::SocketClient},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `proto_client::ProtoClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:43:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m43[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        proto_client::ProtoClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdCommand`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:42:33[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m42[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, MpdCommand, ValueChange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                 [0m[0m[1m[33m^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/mod.rs:42:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m42[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, MpdCommand, ValueChange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/queue.rs:36:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m36[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:25:30[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m25[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/directories.rs:13:42[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, FilterKind, MpdClient, Tag},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/header.rs:7:23[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m7[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::mpd_client::{MpdClient, ValueChange},[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m                       [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/shared/mpd_query.rs:13:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::MpdClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/browser.rs:17:27[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m17[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::{commands::Song, mpd_client::MpdClient},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/volume.rs:10:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m10[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, ValueChange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/tag_browser.rs:18:42[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m18[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, FilterKind, MpdClient, Tag},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/progress_bar.rs:11:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::MpdClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/playlists.rs:15:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdCommand`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/search/mod.rs:28:41[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m28[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, MpdClient, MpdCommand},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                         [0m[0m[1m[33m^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/search/mod.rs:28:30[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m28[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, MpdClient, MpdCommand},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/menu/mod.rs:20:22[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, MpdCommand, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdCommand`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/menu/mod.rs:20:33[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{MpdClient, MpdCommand, SingleOrRange},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                 [0m[0m[1m[33m^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `proto_client::ProtoClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/menu/mod.rs:21:9[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m21[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        proto_client::ProtoClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd::mpd_client::MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/outputs.rs:14:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m14[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::mpd_client::MpdClient,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClientExt`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/modals/outputs.rs:19:26[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client_ext::{MpdClientExt, PartitionedOutput, PartitionedOutputKind},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[33m^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `mpd::mpd_client::MpdClient`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/album_art.rs:9:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m9[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mpd::mpd_client::MpdClient,[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `MpdClient`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/albums.rs:13:30[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        mpd_client::{Filter, MpdClient, Tag},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[33m^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `limit`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/mpd/mpd_client.rs:389:32[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m389[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn binary_limit(&mut self, limit: u64) -> MpdResult<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[33m^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_limit`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `command`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/backend.rs:94:32[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m94[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn supports_command(&self, command: &str) -> bool {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[33m^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_command`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `target_position`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/client.rs:449:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m449[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        target_position: Option<usize>,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_target_position`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `state`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpd_backend.rs:68:25[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m68[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn pause(&mut self, state: bool) -> Result<()> {[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                         [0m[0m[1m[33m^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_state`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `delta`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpd_backend.rs:157:35[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m157[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            ValueChange::Increase(delta) | ValueChange::Decrease(delta) => {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[33m^^^^^[0m[0m                          [0m[0m[1m[33m^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;14mhelp[0m[0m: if this is intentional, prefix it with an underscore[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m157[0m[0m [0m[0m[1m[38;5;12m| [0m[0m            ValueChange::Increase([0m[0m[38;5;10m_[0m[0mdelta) | ValueChange::Decrease([0m[0m[38;5;10m_[0m[0mdelta) => {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[38;5;10m+[0m[0m                               [0m[0m[38;5;10m+[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `command`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpd_backend.rs:363:32[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m363[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn supports_command(&self, command: &str) -> bool {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[33m^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_command`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `name`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/player/mpv_backend.rs:362:42[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_name`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `strip_diacritics`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/ui/panes/search/mod.rs:205:13[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m205[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let strip_diacritics = self.inputs.strip_diacritics();[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_strip_diacritics`[0m
-
-[0m[1mSome errors have detailed explanations: E0061, E0308, E0412, E0599, E0609.[0m
-[0m[1mFor more information about an error, try `rustc --explain E0061`.[0m
-[1m[33mwarning[0m[1m:[0m `rmpc` (bin "rmpc") generated 45 warnings
-[1m[31merror[0m[1m:[0m could not compile `rmpc` (bin "rmpc") due to 24 previous errors; 45 warnings emitted
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:106:5
+    |
+106 |     LibrarySaved,
+    |     ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:109:5
+    |
+109 |     LibraryAdd,
+    |     ^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:106:5
+    |
+106 |     LibrarySaved,
+    |     ^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:119:32
+    |
+119 |             LibraryStatusIcon::LibrarySaved => {
+    |                                ^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:123:32
+    |
+123 |             LibraryStatusIcon::LibraryAdd => {
+    |                                ^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
+ --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:5:69
+  |
+5 | ...ESCRIPTION_SHELF_RUNS, STRAPLINE_TEXT, TITLE_TEXT,
+  |                           ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:554:47
+    |
+554 | ...take_value_pointers(&[STRAPLINE_TEXT, FACEPILE_TEXT])?;
+    |                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+ --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:2:55
+  |
+2 | ...ARY_SECTION_LIST_ITEM, STRAPLINE_RUNS, TAB_CONTENT, THUMBNAILS,
+  |                           ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:277:74
+    |
+277 | ...ate_pointer(concatcp!(STRAPLINE_RUNS, "/0"))?;
+    |                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:237:29
+    |
+237 |             .borrow_pointer(STRAPLINE_RUNS)?
+    |                             ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `parse::artist::AlbumResult::album_type`: Future deprecation see https://github.com/nick42d/youtui/issues/211
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/artist.rs:361:9
+    |
+361 |         album_type,
+    |         ^^^^^^^^^^
+
+warning: `ytmapi-rs` (lib) generated 12 warnings (1 duplicate)
+    Checking rmpc v0.10.0 (<PROJECT_ROOT>/rmpc)
+error[E0432]: unresolved imports `crate::domain::Output`, `crate::domain::Playlist`, `crate::domain::SaveMode`, `crate::domain::SeekPosition`, `crate::domain::ValueChange`, `crate::domain::Decoder`, `crate::domain::Tag`, `crate::domain::LsInfoEntry`
+   --> src/player/youtube_backend.rs:13:19
+    |
+ 13 |     OnOffOneshot, Output, Playlist, QueuePosition, SaveMode, SeekPosition, Song, Status, ValueChange,
+    |                   ^^^^^^  ^^^^^^^^                 ^^^^^^^^  ^^^^^^^^^^^^                ^^^^^^^^^^^ no `ValueChange` in `domain`
+    |                   |       |                        |         |
+    |                   |       |                        |         no `SeekPosition` in `domain`
+    |                   |       |                        |         help: a similar name exists in the module: `QueuePosition`
+    |                   |       |                        no `SaveMode` in `domain`
+    |                   |       no `Playlist` in `domain`
+    |                   no `Output` in `domain`
+ 14 |     Decoder, Tag, LsInfoEntry, PlaybackState,
+    |     ^^^^^^^  ^^^  ^^^^^^^^^^^ no `LsInfoEntry` in `domain`
+    |     |        |
+    |     |        no `Tag` in `domain`
+    |     no `Decoder` in `domain`
+    |
+    = help: consider importing one of these items instead:
+            crate::mpd::commands::IdleEvent::Output
+            crate::mpd::commands::Output
+            crate::ui::UiEvent::Output
+            std::process::Output
+    = help: consider importing one of these items instead:
+            crate::config::keys::actions::DeleteKind::Playlist
+            crate::config::keys::actions::SaveKind::Playlist
+            crate::mpd::commands::IdleEvent::Playlist
+            crate::mpd::commands::Playlist
+            crate::mpd::commands::list_all::ListAllEntry::Playlist
+            crate::mpd::commands::lsinfo::Playlist
+            crate::player::youtube_backend::MpdLsInfoEntry::Playlist
+            crate::shared::mpd_client_ext::Enqueue::Playlist
+            crate::shared::mpd_client_ext::MpdDelete::Playlist
+            rusty_ytdl::search::Playlist
+            rusty_ytdl::search::SearchResult::Playlist
+            rusty_ytdl::search::SearchType::Playlist
+            ytmapi_rs::parse::BasicSearchResultCommunityPlaylist::Playlist
+            ytmapi_rs::parse::TopResultType::Playlist
+note: variant `crate::shared::ytdlp::YtDlpPlaylistOrHost::Playlist` exists but is inaccessible
+   --> src/shared/ytdlp.rs:258:5
+    |
+258 |     Playlist(YtDlpPlaylist),
+    |     ^^^^^^^^^^^^^^^^^^^^^^^ not accessible
+    = help: consider importing this enum instead:
+            crate::mpd::mpd_client::SaveMode
+    = help: consider importing this enum instead:
+            crate::mpd::commands::SeekPosition
+    = help: consider importing this enum instead:
+            crate::mpd::mpd_client::ValueChange
+    = help: consider importing this struct through its public re-export instead:
+            crate::mpd::commands::Decoder
+    = help: consider importing this enum instead:
+            crate::mpd::mpd_client::Tag
+note: these variants exist but are inaccessible
+   --> src/ui/modals/add_random_modal.rs:45:5
+    |
+ 45 |     Tag,
+    |     ^^^ `crate::ui::modals::add_random_modal::InputAreas::Tag`: not accessible
+...
+ 52 |     Tag,
+    |     ^^^ `crate::ui::modals::add_random_modal::InputType::Tag`: not accessible
+    = help: consider importing this enum through its public re-export instead:
+            crate::mpd::commands::LsInfoEntry
+
+error[E0433]: failed to resolve: use of undeclared type `RwLock`
+   --> src/main.rs:357:38
+    |
+357 |             let app_state = Arc::new(RwLock::new(AppState::new()));
+    |                                      ^^^^^^ use of undeclared type `RwLock`
+    |
+help: consider importing one of these items
+    |
+  1 + use std::sync::RwLock;
+    |
+  1 + use std::sync::nonpoison::RwLock;
+    |
+  1 + use parking_lot::RwLock;
+    |
+  1 + use tokio::sync::RwLock;
+    |
+
+warning: unused import: `anyhow`
+ --> src/player/youtube_backend.rs:5:22
+  |
+5 | use anyhow::{Result, anyhow};
+  |                      ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `Decoder as MpdDecoder`, `LsInfoEntry as MpdLsInfoEntry`, and `Output as MpdOutput`
+  --> src/player/youtube_backend.rs:17:16
+   |
+17 |     commands::{LsInfoEntry as MpdLsInfoEntry, Output as MpdOutput, Decoder as MpdDecoder},
+   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
+
+error[E0053]: method `single` has an incompatible type for trait
+   --> src/player/youtube_backend.rs:258:35
+    |
+258 |     fn single(&mut self, _single: OnOffOneshot) -> Result<()> { Ok(()) }
+    |                                   ^^^^^^^^^^^^ expected `mpd::commands::status::OnOffOneshot`, found `domain::status::OnOffOneshot`
+    |
+note: type in trait
+   --> src/player/backend.rs:46:34
+    |
+ 46 |     fn single(&mut self, single: OnOffOneshot) -> Result<()>;
+    |                                  ^^^^^^^^^^^^
+    = note: expected signature `fn(&mut YouTubeBackend, mpd::commands::status::OnOffOneshot) -> Result<_, _>`
+               found signature `fn(&mut YouTubeBackend, domain::status::OnOffOneshot) -> Result<_, _>`
+help: change the parameter type to match the trait
+    |
+258 |     fn single(&mut self, _single: mpd::commands::status::OnOffOneshot) -> Result<()> { Ok(()) }
+    |                                   +++++++++++++++++++++++
+
+error[E0053]: method `consume` has an incompatible type for trait
+   --> src/player/youtube_backend.rs:259:37
+    |
+259 |     fn consume(&mut self, _consume: OnOffOneshot) -> Result<()> { Ok(()) }
+    |                                     ^^^^^^^^^^^^ expected `mpd::commands::status::OnOffOneshot`, found `domain::status::OnOffOneshot`
+    |
+note: type in trait
+   --> src/player/backend.rs:47:36
+    |
+ 47 |     fn consume(&mut self, consume: OnOffOneshot) -> Result<()>;
+    |                                    ^^^^^^^^^^^^
+    = note: expected signature `fn(&mut YouTubeBackend, mpd::commands::status::OnOffOneshot) -> Result<_, _>`
+               found signature `fn(&mut YouTubeBackend, domain::status::OnOffOneshot) -> Result<_, _>`
+help: change the parameter type to match the trait
+    |
+259 |     fn consume(&mut self, _consume: mpd::commands::status::OnOffOneshot) -> Result<()> { Ok(()) }
+    |                                     +++++++++++++++++++++++
+
+error[E0062]: field `backend` specified more than once
+   --> src/config/mod.rs:269:13
+    |
+268 |             backend: PlayerBackend::default(),
+    |             --------------------------------- first use of `backend`
+269 |             backend: PlayerBackend::default(),
+    |             ^^^^^^^ used more than once
+
+error[E0062]: field `backend` specified more than once
+   --> src/config/mod.rs:509:13
+    |
+508 |             backend: self.backend,
+    |             --------------------- first use of `backend`
+509 |             backend: self.backend,
+    |             ^^^^^^^ used more than once
+
+error[E0277]: `YouTubeBackend` doesn't implement `std::fmt::Debug`
+  --> src/player/client.rs:39:13
+   |
+35 | #[derive(Debug)]
+   |          ----- in this derive macro expansion
+...
+39 |     YouTube(YouTubeBackend),
+   |             ^^^^^^^^^^^^^^ the trait `std::fmt::Debug` is not implemented for `YouTubeBackend`
+   |
+   = note: add `#[derive(Debug)]` to `YouTubeBackend` or manually `impl std::fmt::Debug for YouTubeBackend`
+help: consider annotating `YouTubeBackend` with `#[derive(Debug)]`
+  --> src/player/youtube_backend.rs:24:1
+   |
+24 + #[derive(Debug)]
+25 | pub struct YouTubeBackend {
+   |
+
+error[E0599]: no method named `get_next` found for struct `std::sync::RwLockReadGuard<'_, AppState>` in the current scope
+   --> src/player/youtube_backend.rs:168:35
+    |
+168 |         let next_song = app_state.get_next();
+    |                                   ^^^^^^^^ method not found in `std::sync::RwLockReadGuard<'_, AppState>`
+
+error[E0308]: mismatched types
+   --> src/player/youtube_backend.rs:181:56
+    |
+181 |             songid: current_song.as_ref().and_then(|s| s.id),
+    |                                                        ^^^^ expected `Option<_>`, found `u32`
+    |
+    = note: expected enum `std::option::Option<_>`
+               found type `u32`
+help: try wrapping the expression in `Some`
+    |
+181 |             songid: current_song.as_ref().and_then(|s| Some(s.id)),
+    |                                                        +++++    +
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/main.rs:26:11
+   |
+26 |     mpd::{mpd_client::MpdClient, proto_client::SocketClient},
+   |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/core/client.rs:24:9
+   |
+24 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/core/client.rs:25:9
+   |
+25 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/core/command.rs:15:30
+   |
+15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/core/command.rs:15:41
+   |
+15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
+   |                                         ^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/core/command.rs:16:9
+   |
+16 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/core/event_loop.rs:22:22
+   |
+22 |         mpd_client::{MpdClient, SaveMode},
+   |                      ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/ctx.rs:27:9
+   |
+27 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/ui/mod.rs:44:9
+   |
+44 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/mod.rs:43:33
+   |
+43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
+   |                                 ^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/mod.rs:43:22
+   |
+43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
+   |                      ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/player/client.rs:26:30
+   |
+26 |         mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},
+   |                              ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/ui/panes/progress_bar.rs:12:9
+   |
+12 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/directories.rs:13:42
+   |
+13 |         mpd_client::{Filter, FilterKind, MpdClient, Tag},
+   |                                          ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/playlists.rs:14:23
+   |
+14 |     mpd::mpd_client::{MpdClient, SingleOrRange},
+   |                       ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/shared/mpd_query.rs:14:9
+   |
+14 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+  --> src/ui/browser.rs:18:5
+   |
+18 |     mpd::mpd_client::MpdClient,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+ --> src/ui/panes/volume.rs:8:23
+  |
+8 |     mpd::mpd_client::{MpdClient, ValueChange},
+  |                       ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/tag_browser.rs:17:43
+   |
+17 |     mpd::mpd_client::{Filter, FilterKind, MpdClient, Tag},
+   |                                           ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+ --> src/ui/panes/header.rs:7:23
+  |
+7 |     mpd::mpd_client::{MpdClient, ValueChange},
+  |                       ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/panes/search/mod.rs:29:41
+   |
+29 |         mpd_client::{Filter, MpdClient, MpdCommand},
+   |                                         ^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/search/mod.rs:29:30
+   |
+29 |         mpd_client::{Filter, MpdClient, MpdCommand},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/modals/menu/mod.rs:20:22
+   |
+20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
+   |                      ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/modals/menu/mod.rs:20:33
+   |
+20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
+   |                                 ^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/ui/modals/menu/mod.rs:21:9
+   |
+21 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+  --> src/ui/modals/outputs.rs:14:5
+   |
+14 |     mpd::mpd_client::MpdClient,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClientExt`
+  --> src/ui/modals/outputs.rs:19:26
+   |
+19 |         mpd_client_ext::{MpdClientExt, PartitionedOutput, PartitionedOutputKind},
+   |                          ^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+ --> src/ui/panes/album_art.rs:9:5
+  |
+9 |     mpd::mpd_client::MpdClient,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/albums.rs:13:30
+   |
+13 |         mpd_client::{Filter, MpdClient, Tag},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/queue.rs:36:22
+   |
+36 |         mpd_client::{MpdClient, SingleOrRange},
+   |                      ^^^^^^^^^
+
+warning: unused variable: `limit`
+   --> src/mpd/mpd_client.rs:389:32
+    |
+389 |     fn binary_limit(&mut self, limit: u64) -> MpdResult<()> {
+    |                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_limit`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delta`
+   --> src/player/mpd_backend.rs:176:35
+    |
+176 |             ValueChange::Increase(delta) | ValueChange::Decrease(delta) => {
+    |                                   ^^^^^                          ^^^^^
+    |
+help: if this is intentional, prefix it with an underscore
+    |
+176 |             ValueChange::Increase(_delta) | ValueChange::Decrease(_delta) => {
+    |                                   +                               +
+
+warning: unused variable: `name`
+   --> src/player/mpv_backend.rs:330:42
+    |
+330 |     fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {
+    |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `uri`
+   --> src/player/youtube_backend.rs:205:23
+    |
+205 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+    |                       ^^^ help: if this is intentional, prefix it with an underscore: `_uri`
+
+warning: unused variable: `position`
+   --> src/player/youtube_backend.rs:205:34
+    |
+205 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+    |                                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_position`
+
+warning: unused variable: `id`
+   --> src/player/youtube_backend.rs:223:27
+    |
+223 |     fn play_id(&mut self, id: u32) -> Result<()> {
+    |                           ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:875:15
+    |
+875 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+877 ~             crate::player::Client::Mpv(_) => Ok(()),
+878 ~             &mut player::client::Client::YouTube(_) => todo!(), // Not applicable for MPV
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:888:15
+    |
+888 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+895 ~             },
+896 +             &mut player::client::Client::YouTube(_) => todo!()
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:900:15
+    |
+900 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+902 ~             crate::player::Client::Mpv(_) => Ok(()),
+903 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:911:15
+    |
+911 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+915 ~             crate::player::Client::Mpv(_) => Ok(()),
+916 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:923:15
+    |
+923 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+925 ~             crate::player::Client::Mpv(_) => Ok(Vec::new()),
+926 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:930:15
+    |
+930 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+935 ~             },
+936 +             &mut player::client::Client::YouTube(_) => todo!()
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:940:15
+    |
+940 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+945 ~             },
+946 +             &mut player::client::Client::YouTube(_) => todo!()
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:950:15
+    |
+950 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+955 ~             },
+956 +             &mut player::client::Client::YouTube(_) => todo!()
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:963:15
+    |
+963 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+965 ~             crate::player::Client::Mpv(_) => Ok(HashMap::new()),
+966 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:975:15
+    |
+975 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+977 ~             crate::player::Client::Mpv(_) => Ok(()),
+978 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
+   --> src/shared/mpd_client_ext.rs:982:15
+    |
+982 |         match self {
+    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
+    |
+note: `player::client::Client<'_>` defined here
+   --> src/player/client.rs:36:10
+    |
+ 36 | pub enum Client<'name> {
+    |          ^^^^^^
+...
+ 39 |     YouTube(YouTubeBackend),
+    |     ------- not covered
+    = note: the matched value is of type `&mut player::client::Client<'_>`
+help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
+    |
+984 ~             crate::player::Client::Mpv(_) => Ok(()),
+985 ~             &mut player::client::Client::YouTube(_) => todo!(),
+    |
+
+warning: unused variable: `elapsed`
+  --> src/ui/panes/lyrics.rs:40:13
+   |
+40 |         let elapsed = ctx.status.elapsed;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elapsed`
+
+Some errors have detailed explanations: E0004, E0053, E0062, E0277, E0308, E0432, E0433, E0599.
+For more information about an error, try `rustc --explain E0004`.
+warning: `rmpc` (bin "rmpc") generated 39 warnings
+error: could not compile `rmpc` (bin "rmpc") due to 20 previous errors; 39 warnings emitted

@@ -19,7 +19,7 @@ use crate::{
     domain::PlaybackState as State,
     mpd::{
         commands::{IdleEvent, volume::Volume},
-        mpd_client::{MpdClient, SaveMode},
+        mpd_client::SaveMode,
     },
     shared::{
         events::{AppEvent, WorkDone},

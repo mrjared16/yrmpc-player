@@ -14,7 +14,7 @@ use crate::{
     },
     ctx::Ctx,
     domain::Song,
-    mpd::mpd_client::{Filter, FilterKind, MpdClient, Tag},
+    mpd::mpd_client::{Filter, FilterKind, Tag},
     player::Client,
     shared::{
         cmp::StringCompare,

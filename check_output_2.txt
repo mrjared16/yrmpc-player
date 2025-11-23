@@ -1,0 +1,360 @@
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:106:5
+    |
+106 |     LibrarySaved,
+    |     ^^^^^^^^^^^^
+    |
+    = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:109:5
+    |
+109 |     LibraryAdd,
+    |     ^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:106:5
+    |
+106 |     LibrarySaved,
+    |     ^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:119:32
+    |
+119 |             LibraryStatusIcon::LibrarySaved => {
+    |                                ^^^^^^^^^^^^
+
+warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`: Future deprecation see https://github.com/nick42d/youtui/issues/271
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:123:32
+    |
+123 |             LibraryStatusIcon::LibraryAdd => {
+    |                                ^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
+ --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:5:69
+  |
+5 | ...ESCRIPTION_SHELF_RUNS, STRAPLINE_TEXT, TITLE_TEXT,
+  |                           ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:554:47
+    |
+554 | ...take_value_pointers(&[STRAPLINE_TEXT, FACEPILE_TEXT])?;
+    |                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+ --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:2:55
+  |
+2 | ...ARY_SECTION_LIST_ITEM, STRAPLINE_RUNS, TAB_CONTENT, THUMBNAILS,
+  |                           ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:277:74
+    |
+277 | ...ate_pointer(concatcp!(STRAPLINE_RUNS, "/0"))?;
+    |                          ^^^^^^^^^^^^^^
+
+warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:237:29
+    |
+237 |             .borrow_pointer(STRAPLINE_RUNS)?
+    |                             ^^^^^^^^^^^^^^
+
+warning: use of deprecated field `parse::artist::AlbumResult::album_type`: Future deprecation see https://github.com/nick42d/youtui/issues/211
+   --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/artist.rs:361:9
+    |
+361 |         album_type,
+    |         ^^^^^^^^^^
+
+warning: `ytmapi-rs` (lib) generated 12 warnings (1 duplicate)
+    Checking rmpc v0.10.0 (<PROJECT_ROOT>/rmpc)
+warning: unused import: `anyhow`
+ --> src/player/youtube_backend.rs:5:22
+  |
+5 | use anyhow::{Result, anyhow};
+  |                      ^^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+error[E0308]: mismatched types
+   --> src/player/youtube_backend.rs:178:21
+    |
+178 |             single: OnOffOneshot::Off,
+    |                     ^^^^^^^^^^^^^^^^^ expected `domain::status::OnOffOneshot`, found `mpd::commands::status::OnOffOneshot`
+    |
+    = note: `mpd::commands::status::OnOffOneshot` and `domain::status::OnOffOneshot` have similar names, but are actually distinct types
+note: `mpd::commands::status::OnOffOneshot` is defined in module `crate::mpd::commands::status` of the current crate
+   --> src/mpd/commands/status.rs:103:1
+    |
+103 | pub enum OnOffOneshot {
+    | ^^^^^^^^^^^^^^^^^^^^^
+note: `domain::status::OnOffOneshot` is defined in module `crate::domain::status` of the current crate
+   --> src/domain/status.rs:32:1
+    |
+ 32 | pub enum OnOffOneshot {
+    | ^^^^^^^^^^^^^^^^^^^^^
+help: call `Into::into` on this expression to convert `mpd::commands::status::OnOffOneshot` into `domain::status::OnOffOneshot`
+    |
+178 |             single: OnOffOneshot::Off.into(),
+    |                                      +++++++
+
+error[E0308]: mismatched types
+   --> src/player/youtube_backend.rs:179:22
+    |
+179 |             consume: OnOffOneshot::Off,
+    |                      ^^^^^^^^^^^^^^^^^ expected `domain::status::OnOffOneshot`, found `mpd::commands::status::OnOffOneshot`
+    |
+    = note: `mpd::commands::status::OnOffOneshot` and `domain::status::OnOffOneshot` have similar names, but are actually distinct types
+note: `mpd::commands::status::OnOffOneshot` is defined in module `crate::mpd::commands::status` of the current crate
+   --> src/mpd/commands/status.rs:103:1
+    |
+103 | pub enum OnOffOneshot {
+    | ^^^^^^^^^^^^^^^^^^^^^
+note: `domain::status::OnOffOneshot` is defined in module `crate::domain::status` of the current crate
+   --> src/domain/status.rs:32:1
+    |
+ 32 | pub enum OnOffOneshot {
+    | ^^^^^^^^^^^^^^^^^^^^^
+help: call `Into::into` on this expression to convert `mpd::commands::status::OnOffOneshot` into `domain::status::OnOffOneshot`
+    |
+179 |             consume: OnOffOneshot::Off.into(),
+    |                                       +++++++
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/main.rs:26:11
+   |
+26 |     mpd::{mpd_client::MpdClient, proto_client::SocketClient},
+   |           ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/core/client.rs:24:9
+   |
+24 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/core/client.rs:25:9
+   |
+25 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/core/command.rs:15:30
+   |
+15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/core/command.rs:15:41
+   |
+15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
+   |                                         ^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/core/command.rs:16:9
+   |
+16 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/core/event_loop.rs:22:22
+   |
+22 |         mpd_client::{MpdClient, SaveMode},
+   |                      ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/ctx.rs:27:9
+   |
+27 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proto_client::SocketClient`
+  --> src/main.rs:26:34
+   |
+26 |     mpd::{mpd_client::MpdClient, proto_client::SocketClient},
+   |                                  ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/ui/mod.rs:44:9
+   |
+44 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/mod.rs:43:33
+   |
+43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
+   |                                 ^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/mod.rs:43:22
+   |
+43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
+   |                      ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/player/client.rs:26:30
+   |
+26 |         mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},
+   |                              ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/ui/panes/progress_bar.rs:12:9
+   |
+12 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/directories.rs:13:42
+   |
+13 |         mpd_client::{Filter, FilterKind, MpdClient, Tag},
+   |                                          ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/playlists.rs:14:23
+   |
+14 |     mpd::mpd_client::{MpdClient, SingleOrRange},
+   |                       ^^^^^^^^^
+
+warning: unused import: `mpd_client::MpdClient`
+  --> src/shared/mpd_query.rs:14:9
+   |
+14 |         mpd_client::MpdClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+  --> src/ui/browser.rs:18:5
+   |
+18 |     mpd::mpd_client::MpdClient,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+ --> src/ui/panes/volume.rs:8:23
+  |
+8 |     mpd::mpd_client::{MpdClient, ValueChange},
+  |                       ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/tag_browser.rs:17:43
+   |
+17 |     mpd::mpd_client::{Filter, FilterKind, MpdClient, Tag},
+   |                                           ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+ --> src/ui/panes/header.rs:7:23
+  |
+7 |     mpd::mpd_client::{MpdClient, ValueChange},
+  |                       ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/panes/search/mod.rs:29:41
+   |
+29 |         mpd_client::{Filter, MpdClient, MpdCommand},
+   |                                         ^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/search/mod.rs:29:30
+   |
+29 |         mpd_client::{Filter, MpdClient, MpdCommand},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/modals/menu/mod.rs:20:22
+   |
+20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
+   |                      ^^^^^^^^^
+
+warning: unused import: `MpdCommand`
+  --> src/ui/modals/menu/mod.rs:20:33
+   |
+20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
+   |                                 ^^^^^^^^^^
+
+warning: unused import: `proto_client::ProtoClient`
+  --> src/ui/modals/menu/mod.rs:21:9
+   |
+21 |         proto_client::ProtoClient,
+   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+  --> src/ui/modals/outputs.rs:14:5
+   |
+14 |     mpd::mpd_client::MpdClient,
+   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClientExt`
+  --> src/ui/modals/outputs.rs:19:26
+   |
+19 |         mpd_client_ext::{MpdClientExt, PartitionedOutput, PartitionedOutputKind},
+   |                          ^^^^^^^^^^^^
+
+warning: unused import: `mpd::mpd_client::MpdClient`
+ --> src/ui/panes/album_art.rs:9:5
+  |
+9 |     mpd::mpd_client::MpdClient,
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/albums.rs:13:30
+   |
+13 |         mpd_client::{Filter, MpdClient, Tag},
+   |                              ^^^^^^^^^
+
+warning: unused import: `MpdClient`
+  --> src/ui/panes/queue.rs:36:22
+   |
+36 |         mpd_client::{MpdClient, SingleOrRange},
+   |                      ^^^^^^^^^
+
+warning: unused variable: `limit`
+   --> src/mpd/mpd_client.rs:389:32
+    |
+389 |     fn binary_limit(&mut self, limit: u64) -> MpdResult<()> {
+    |                                ^^^^^ help: if this is intentional, prefix it with an underscore: `_limit`
+    |
+    = note: `#[warn(unused_variables)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused variable: `delta`
+   --> src/player/mpd_backend.rs:176:35
+    |
+176 |             ValueChange::Increase(delta) | ValueChange::Decrease(delta) => {
+    |                                   ^^^^^                          ^^^^^
+    |
+help: if this is intentional, prefix it with an underscore
+    |
+176 |             ValueChange::Increase(_delta) | ValueChange::Decrease(_delta) => {
+    |                                   +                               +
+
+warning: unused variable: `name`
+   --> src/player/mpv_backend.rs:330:42
+    |
+330 |     fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {
+    |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
+
+warning: unused variable: `uri`
+   --> src/player/youtube_backend.rs:206:23
+    |
+206 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+    |                       ^^^ help: if this is intentional, prefix it with an underscore: `_uri`
+
+warning: unused variable: `position`
+   --> src/player/youtube_backend.rs:206:34
+    |
+206 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+    |                                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_position`
+
+warning: unused variable: `id`
+   --> src/player/youtube_backend.rs:224:27
+    |
+224 |     fn play_id(&mut self, id: u32) -> Result<()> {
+    |                           ^^ help: if this is intentional, prefix it with an underscore: `_id`
+
+warning: unused variable: `elapsed`
+  --> src/ui/panes/lyrics.rs:40:13
+   |
+40 |         let elapsed = ctx.status.elapsed;
+   |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elapsed`
+
+For more information about this error, try `rustc --explain E0308`.
+warning: `rmpc` (bin "rmpc") generated 39 warnings
+error: could not compile `rmpc` (bin "rmpc") due to 2 previous errors; 39 warnings emitted

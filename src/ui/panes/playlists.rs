@@ -11,7 +11,7 @@ use crate::{
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
-    mpd::mpd_client::{MpdClient, SingleOrRange},
+    mpd::mpd_client::SingleOrRange,
     player::Client,
     shared::{
         cmp::StringCompare,

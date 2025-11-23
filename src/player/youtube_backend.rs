@@ -1,0 +1,612 @@
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::Duration;
+
+use anyhow::{Result, anyhow};
+use parking_lot::Mutex;
+use tokio::runtime::Runtime;
+use ytmapi_rs::{
+    YtMusic, auth::BrowserToken, 
+    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery}, 
+    common::{YoutubeID, VideoID}
+};
+use lru::LruCache;
+use std::num::NonZeroUsize;
+use std::time::Instant;
+use rusty_ytdl::Video;
+use chrono::Utc;
+
+use crate::config::YouTubeConfig;
+use crate::app_state::AppState;
+use crate::domain::{QueuePosition, Song, Status, PlaybackState};
+use crate::mpd::{
+    commands::{
+        LsInfoEntry, Output, Decoder, Playlist, SaveMode, SeekPosition, ValueChange,
+        status::OnOffOneshot,
+    },
+    mpd_client::{Filter, SingleOrRange, Tag},
+    version::Version,
+};
+use super::backend::MusicBackend;
+use super::mpv_ipc::MpvIpc;
+
+#[derive(Debug)]
+pub struct YouTubeBackend {
+    rt: Runtime,
+    // Option because we might initialize it later or it might fail
+    api: Arc<Mutex<Option<YtMusic<BrowserToken>>>>,
+    mpv: Arc<Mutex<MpvIpc>>,
+    app_state: Arc<RwLock<AppState>>,
+    stream_cache: Arc<Mutex<LruCache<String, (String, Instant)>>>,
+}
+
+impl YouTubeBackend {
+    pub fn new(
+        app_state: Arc<RwLock<AppState>>,
+        mpv_socket: &std::path::Path,
+        config: YouTubeConfig,
+    ) -> Result<Self> {
+        let rt = Runtime::new()?;
+        let mpv = MpvIpc::connect(mpv_socket)?;
+        
+        let mut backend = Self {
+            rt,
+            api: Arc::new(Mutex::new(None)),
+            mpv: Arc::new(Mutex::new(mpv)),
+            app_state,
+            stream_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))),
+        };
+
+        if let Some(auth_file) = config.auth_file {
+            if let Err(e) = backend.load_cookies(&auth_file) {
+                log::error!("Failed to load YouTube cookies from {}: {}", auth_file, e);
+            } else {
+                log::info!("Successfully loaded YouTube cookies from {}", auth_file);
+            }
+        }
+        
+        Ok(backend)
+    }
+
+    pub fn load_cookies(&mut self, path: &str) -> Result<()> {
+        let api = self.block_on(async {
+            YtMusic::from_cookie_file(std::path::Path::new(path)).await
+        })?;
+        *self.api.lock() = Some(api);
+        Ok(())
+    }
+
+    pub fn enter_idle(&mut self) -> Result<()> {
+        // MPV sends events asynchronously
+        Ok(())
+    }
+
+    pub fn read_response(&mut self) -> Result<Vec<crate::mpd::commands::IdleEvent>> {
+        let mut mpv = self.mpv.lock();
+        match mpv.receive_message() {
+            Ok(resp) => {
+                if let Some(event) = resp.event {
+                    match event.as_str() {
+                        "property-change" => Ok(vec![crate::mpd::commands::IdleEvent::Player]),
+                        "pause" | "unpause" | "metadata-update" | "seek" | "file-loaded" => {
+                            Ok(vec![crate::mpd::commands::IdleEvent::Player])
+                        }
+                        _ => Ok(vec![]),
+                    }
+                } else {
+                    Ok(vec![])
+                }
+            }
+            Err(_) => Ok(vec![]),
+        }
+    }
+
+    pub fn reconnect(&mut self) -> Result<()> {
+        // TODO: Reconnect MPV IPC if needed
+        Ok(())
+    }
+
+    pub fn try_clone_stream(&self) -> Result<std::os::unix::net::UnixStream> {
+        let mpv = self.mpv.lock();
+        mpv.try_clone_stream()
+    }
+
+    /// Helper to run async Tokio code in the sync context
+    fn block_on<F: std::future::Future>(&self, future: F) -> F::Output {
+        self.rt.block_on(future)
+    }
+
+    /// Extract stream URL for a YouTube video ID
+    /// Uses LRU cache with 1-hour TTL to minimize API calls
+    /// Includes retry logic for transient failures
+    fn get_stream_url(&self, video_id: &str) -> Result<String> {
+        self.get_stream_url_with_retry(video_id, 2)
+    }
+
+    /// Extract stream URL with retry logic
+    fn get_stream_url_with_retry(&self, video_id: &str, max_retries: u32) -> Result<String> {
+        // Check cache first (1-hour TTL)
+        {
+            let mut cache = self.stream_cache.lock();
+            if let Some((url, timestamp)) = cache.get(video_id) {
+                if timestamp.elapsed() < Duration::from_secs(3600) {
+                    return Ok(url.clone());
+                }
+            }
+        }
+
+        let mut last_error = None;
+        for attempt in 0..=max_retries {
+            if attempt > 0 {
+                // Exponential backoff: 500ms, 1s, 2s, ...
+                let backoff_ms = 500 * (1 << (attempt - 1));
+                std::thread::sleep(Duration::from_millis(backoff_ms));
+            }
+
+            // Extract stream URL using rusty_ytdl
+            let video_id_owned = video_id.to_string();
+            match self.block_on(async move {
+                let video = Video::new(video_id_owned)?;
+                video.get_info().await
+            }) {
+                Ok(info) => {
+                    // Select highest bitrate audio-only format
+                    if let Some(format) = info.formats
+                        .iter()
+                        .filter(|f| f.has_audio && !f.has_video)
+                        .max_by_key(|f| f.bitrate)
+                    {
+                        let url = format.url.clone();
+                        self.stream_cache.lock().put(video_id.to_string(), (url.clone(), Instant::now()));
+                        return Ok(url);
+                    } else {
+                        return Err(anyhow!("No audio stream found for video ID: {}", video_id));
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e);
+                   // Continue to retry
+                }
+            }
+        }
+
+        Err(last_error.map(anyhow::Error::from).unwrap_or_else(|| anyhow!("Failed to extract stream after {} retries", max_retries)))
+    }
+
+    /// Clear stream cache (useful for 403 errors where URLs expire)
+    fn clear_stream_cache(&mut self) {
+        self.stream_cache.lock().clear();
+    }
+
+    /// Activate radio mode: fetch recommendations when queue is empty
+    /// Uses GetWatchPlaylist API with last played track as seed
+    pub fn activate_radio(&mut self, seed_video_id: Option<String>) -> Result<()> {
+        let api_opt = self.api.lock().clone();
+        if api_opt.is_none() {
+            return Err(anyhow!("YouTube API not initialized"));
+        }
+        let api = api_opt.unwrap();
+
+        // Determine seed: use provided or last currentfrom queue
+        let seed = if let Some(id) = seed_video_id {
+            id
+        } else {
+            let app_state = self.app_state.read().unwrap();
+            app_state.get_current()
+                .or_else(|| app_state.get_queue().back())
+                .map(|item| item.song.file.clone())
+                .ok_or(anyhow!("No seed track for radio"))?
+        };
+
+        // Fetch recommendations using GetWatchPlaylist
+        let tracks = self.block_on(async move {
+            let query = GetWatchPlaylistQuery::new_from_video_id(VideoID::from_raw(seed.as_str()));
+            let tracks = api.query(query).await?;
+            Ok::<Vec<_>, anyhow::Error>(tracks.into_iter().take(10).collect())
+        })?;
+
+        // Convert and add to queue
+        for track in tracks {
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![track.title]);
+            // Note: WatchPlaylistTrack has different fields than SearchResultSong
+            // artist info is in a different structure
+
+            let song = Song {
+                id: None,
+                file: track.video_id.get_raw().to_string(),
+                duration: None, // WatchPlaylistTrack doesn't have duration
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            };
+
+            self.app_state.write().unwrap().add(song, None);
+        }
+
+        Ok(())
+    }
+    /// Uses MPV's `loadfile append` to queue upcoming tracks
+    fn ensure_prebuffered(&mut self, count: usize) -> Result<()> {
+        let app_state = self.app_state.read().unwrap();
+        let current_idx = app_state.get_current_index();
+        
+        if current_idx.is_none() {
+            return Ok(());
+        }
+        let current_idx = current_idx.unwrap();
+        
+        // Get MPV's current playlist count
+        let mut mpv = self.mpv.lock();
+        let playlist_count: i64 = serde_json::from_value(
+            mpv.get_property("playlist-count").unwrap_or(serde_json::json!(0))
+        ).unwrap_or(0);
+        drop(mpv);
+        
+        // Calculate how many more tracks we need to buffer
+        let buffered_ahead = (playlist_count as usize).saturating_sub(1); // -1 for current track
+        let need_to_buffer = count.saturating_sub(buffered_ahead);
+        
+        // Buffer upcoming tracks
+        for i in (buffered_ahead + 1)..=(buffered_ahead + need_to_buffer) {
+            if let Some(item) = app_state.get_queue().get(current_idx + i) {
+                let url = self.get_stream_url(&item.song.file)?;
+                self.mpv.lock().send_command(vec!["loadfile", &url, "append"])?;
+            } else {
+                break; // No more tracks in queue
+            }
+        }
+        
+        Ok(())
+    }
+}
+
+impl MusicBackend for YouTubeBackend {
+    fn backend_name(&self) -> &'static str {
+        "YouTube"
+    }
+
+    // ===== Playback Control =====
+
+    fn play(&mut self) -> Result<()> {
+        let mut mpv = self.mpv.lock();
+        mpv.set_property("pause", serde_json::json!(false))
+    }
+
+    fn pause(&mut self, state: bool) -> Result<()> {
+        let mut mpv = self.mpv.lock();
+        mpv.set_property("pause", serde_json::json!(state))
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        let mut mpv = self.mpv.lock();
+        mpv.send_command(vec!["stop"])?;
+        Ok(())
+    }
+
+    fn next(&mut self) -> Result<()> {
+        // Check if MPV has next track in playlist (gapless scenario)
+        let mut mpv = self.mpv.lock();
+        let playlist_count: i64 = serde_json::from_value(
+            mpv.get_property("playlist-count").unwrap_or(serde_json::json!(0))
+        ).unwrap_or(0);
+        let playlist_pos: i64 = serde_json::from_value(
+            mpv.get_property("playlist-pos").unwrap_or(serde_json::json!(-1))
+        ).unwrap_or(-1);
+        drop(mpv);
+        
+        // If MPV has buffered next track, use playlist-next for instant transition
+        if playlist_pos >= 0 && playlist_pos + 1 < playlist_count {
+            self.mpv.lock().send_command(vec!["playlist-next"])?;
+            
+            // Update AppState to match
+            let next_song = {
+                let app_state = self.app_state.read().unwrap();
+                app_state.get_next().cloned()
+            };
+            if let Some(item) = next_song {
+                self.app_state.write().unwrap().set_current_by_id(item.id)?;
+            }
+            
+            // Ensure we maintain 2 tracks ahead
+            self.ensure_prebuffered(2)?;
+            Ok(())
+        } else {
+            // MPV playlist empty, load next track manually
+            let next_song = {
+                let app_state = self.app_state.read().unwrap();
+                app_state.get_next().cloned()
+            };
+
+            if let Some(item) = next_song {
+                let url = self.get_stream_url(&item.song.file)?;
+                self.app_state.write().unwrap().set_current_by_id(item.id)?;
+                self.mpv.lock().send_command(vec!["loadfile", &url, "replace"])?;
+                self.ensure_prebuffered(2)?;
+                Ok(())
+            } else {
+                Err(anyhow!("No next song in queue"))
+            }
+        }
+    }
+
+    fn previous(&mut self) -> Result<()> {
+        // For YouTube, we implement as "restart current song"
+        // since there's no concept of "previous" in a YouTube playlist
+        let current_song = {
+            let app_state = self.app_state.read().unwrap();
+            app_state.get_current().cloned()
+        };
+
+        if let Some(item) = current_song {
+            let url = self.get_stream_url(&item.song.file)?;
+            self.mpv.lock().send_command(vec!["seek", "0", "absolute"])?;
+            Ok(())
+        } else {
+            Err(anyhow!("No current song playing"))
+        }
+    }
+
+    fn seek_current(&mut self, position: SeekPosition) -> Result<()> {
+        let mut mpv = self.mpv.lock();
+        match position {
+            SeekPosition::Absolute(secs) => {
+                mpv.send_command(vec!["seek", &secs.to_string(), "absolute"])?;
+            }
+            SeekPosition::Relative(secs) => {
+                mpv.send_command(vec!["seek", &secs.to_string(), "relative"])?;
+            }
+        }
+        Ok(())
+    }
+
+    // ===== Status Queries =====
+
+    fn get_status(&mut self) -> Result<Status> {
+        let mut mpv = self.mpv.lock();
+        
+        // Basic status from MPV
+        let paused: bool = serde_json::from_value(mpv.get_property("pause")?)?;
+        let volume: f64 = serde_json::from_value(mpv.get_property("volume")?)?;
+        let time_pos: f64 = mpv.get_property("time-pos").ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or(0.0);
+        let duration: f64 = mpv.get_property("duration").ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or(0.0);
+
+        // Get queue info from AppState
+        let app_state = self.app_state.read().unwrap();
+        let current_song = app_state.get_current();
+        let next_song = app_state.get_next();
+        
+        Ok(Status {
+            state: if paused { PlaybackState::Pause } else { PlaybackState::Play },
+            volume: volume as u8,
+            elapsed: Some(Duration::from_secs_f64(time_pos)),
+            duration: Some(Duration::from_secs_f64(duration)),
+            repeat: false, // TODO
+            random: false, // TODO
+            single: crate::domain::OnOffOneshot::Off,
+            consume: crate::domain::OnOffOneshot::Off,
+            playlist: Some(app_state.get_version()),
+            playlistlength: app_state.get_queue().len() as u32,
+            songid: current_song.as_ref().and_then(|s| s.song.id),
+            next_songid: next_song.as_ref().and_then(|s| s.song.id),
+            song_position: app_state.get_current_index().map(|i| i as u32),
+            bitrate: None,
+            error: None,
+            updating_db: None,
+            xfade: None,
+            partition: String::from("default"),
+            lastloadedplaylist: None,
+        })
+    }
+
+    fn playlist_info(&mut self) -> Result<Vec<Song>> {
+        let app_state = self.app_state.read().unwrap();
+        Ok(app_state.get_queue().iter().map(|item| item.song.clone()).collect())
+    }
+
+    fn current_song(&mut self) -> Result<Option<Song>> {
+        let app_state = self.app_state.read().unwrap();
+        Ok(app_state.get_current().map(|item| item.song.clone()))
+    }
+
+    // ===== Queue Management =====
+
+    fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+        let uri = uri.to_string();
+        
+        // Determine if it's a search query or ID/URL
+        let is_url = uri.starts_with("http");
+        let is_id = uri.len() == 11 && !uri.contains(' ');
+        let is_search = !is_url && !is_id;
+
+        let song = if is_search {
+            let api_opt = self.api.lock().clone();
+            if let Some(api) = api_opt {
+                let result = self.block_on(async move {
+                    let query = SearchQuery::new(uri).with_filter(SongsFilter);
+                    let results = api.query(query).await?;
+                    results.into_iter().next().ok_or(anyhow!("No songs found"))
+                })?;
+                
+                // Parse duration "MM:SS" or "HH:MM:SS"
+                let duration = result.duration.split(':').try_fold(0u64, |acc, part| {
+                    part.parse::<u64>().map(|v| acc * 60 + v)
+                }).ok().map(Duration::from_secs);
+
+                let mut metadata = HashMap::new();
+                metadata.insert("title".to_string(), vec![result.title]);
+                metadata.insert("artist".to_string(), vec![result.artist]);
+                if let Some(album) = result.album {
+                    metadata.insert("album".to_string(), vec![album.name]);
+                }
+
+                Song {
+                    id: None,
+                    file: result.video_id.get_raw().to_string(),
+                    duration,
+                    metadata,
+                    last_modified: None,
+                    added: Some(Utc::now()),
+                }
+            } else {
+                return Err(anyhow!("YouTube API not initialized"));
+            }
+        } else {
+             let video_id = if is_url {
+                uri.split("v=").nth(1).and_then(|s| s.split('&').next()).unwrap_or(&uri).to_string()
+            } else {
+                uri
+            };
+            
+            let info = self.block_on(async move {
+                let video = Video::new(video_id)?;
+                video.get_info().await
+            })?;
+            
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![info.video_details.title]);
+            if let Some(author) = info.video_details.author {
+                metadata.insert("artist".to_string(), vec![author.name]);
+            }
+
+            Song {
+                id: None,
+                file: info.video_details.video_id,
+                duration: Some(Duration::from_secs(info.video_details.length_seconds.parse().unwrap_or(0))),
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            }
+        };
+
+        self.app_state.write().unwrap().add(song, position);
+        Ok(())
+    }
+
+    fn delete_id(&mut self, id: u32) -> Result<()> {
+        self.app_state.write().unwrap().delete_id(id)
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.app_state.write().unwrap().clear();
+        Ok(())
+    }
+
+    fn move_id(&mut self, from: u32, to: u32) -> Result<()> {
+        self.app_state.write().unwrap().move_id(from, to)
+    }
+
+    fn play_id(&mut self, id: u32) -> Result<()> {
+        let app_state = self.app_state.read().unwrap();
+        let item = app_state.find_by_id(id).ok_or(anyhow!("Song not found"))?;
+        let video_id = item.song.file.clone();
+        drop(app_state); // Release read lock
+
+        let url = self.get_stream_url(&video_id)?;
+        
+        self.app_state.write().unwrap().set_current_by_id(id)?;
+        self.mpv.lock().send_command(vec!["loadfile", &url, "replace"])?;
+        
+        // Prebuffer next 2 tracks for gapless playback
+        self.ensure_prebuffered(2)?;
+        self.mpv.lock().set_property("pause", serde_json::json!(false))?;
+        
+        Ok(())
+    }
+
+    // ===== Volume Control =====
+
+    fn volume(&mut self) -> Result<u8> {
+        let mut mpv = self.mpv.lock();
+        let vol: f64 = serde_json::from_value(mpv.get_property("volume")?)?;
+        Ok(vol as u8)
+    }
+
+    fn set_volume(&mut self, volume: ValueChange) -> Result<()> {
+        let mut mpv = self.mpv.lock();
+        match volume {
+            ValueChange::Set(v) => {
+                mpv.set_property("volume", serde_json::json!(v as f64))?;
+            }
+            ValueChange::Increase(delta) => {
+                let current: f64 = serde_json::from_value(mpv.get_property("volume")?)?;
+                mpv.set_property("volume", serde_json::json!(current + delta as f64))?;
+            }
+            ValueChange::Decrease(delta) => {
+                let current: f64 = serde_json::from_value(mpv.get_property("volume")?)?;
+                mpv.set_property("volume", serde_json::json!(current - delta as f64))?;
+            }
+        }
+        Ok(())
+    }
+
+    // ===== Playback Options =====
+
+    fn repeat(&mut self, _repeat: bool) -> Result<()> { Ok(()) }
+    fn random(&mut self, _random: bool) -> Result<()> { Ok(()) }
+    fn single(&mut self, _single: OnOffOneshot) -> Result<()> { Ok(()) }
+    fn consume(&mut self, _consume: OnOffOneshot) -> Result<()> { Ok(()) }
+    fn crossfade(&mut self, _seconds: u32) -> Result<()> { Ok(()) }
+    fn shuffle(&mut self, _range: Option<SingleOrRange>) -> Result<()> { Ok(()) }
+
+    // ===== Library Browsing =====
+
+    fn lsinfo(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
+        // TODO: Implement browsing
+        Ok(vec![])
+    }
+
+    fn list_all(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
+        Ok(vec![])
+    }
+
+    fn search(&mut self, _filter: &[Filter]) -> Result<Vec<Song>> {
+        // TODO: Implement search
+        Ok(vec![])
+    }
+
+    fn find(&mut self, _filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
+        Ok(vec![])
+    }
+
+    fn list_tag(&mut self, _tag: Tag, _filter: Option<&[Filter]>) -> Result<Vec<String>> {
+        Ok(vec![])
+    }
+
+    fn count(&mut self, _filter: &[Filter]) -> Result<(usize, Duration)> {
+        Ok((0, Duration::from_secs(0)))
+    }
+
+    // ===== Playlist Management =====
+
+    fn list_playlists(&mut self) -> Result<Vec<Playlist>> { Ok(vec![]) }
+    fn playlist_info_name(&mut self, _name: &str) -> Result<Vec<Song>> { Ok(vec![]) }
+    fn load_playlist(&mut self, _name: &str, _position: Option<QueuePosition>) -> Result<()> { Ok(()) }
+    fn save_queue_as_playlist(&mut self, _name: &str, _mode: Option<SaveMode>) -> Result<()> { Ok(()) }
+    fn delete_playlist(&mut self, _name: &str) -> Result<()> { Ok(()) }
+    fn rename_playlist(&mut self, _old_name: &str, _new_name: &str) -> Result<()> { Ok(()) }
+    fn add_to_playlist(&mut self, _playlist: &str, _uri: &str) -> Result<()> { Ok(()) }
+    fn delete_from_playlist(&mut self, _playlist: &str, _position: u32) -> Result<()> { Ok(()) }
+    fn move_in_playlist(&mut self, _playlist: &str, _from: SingleOrRange, _to: u32) -> Result<()> { Ok(()) }
+
+    // ===== Sticker Support =====
+
+    fn list_stickers(&mut self, _uri: &str) -> Result<HashMap<String, String>> { Ok(HashMap::new()) }
+    fn set_sticker(&mut self, _uri: &str, _key: &str, _value: &str) -> Result<()> { Ok(()) }
+    fn delete_sticker(&mut self, _uri: &str, _key: &str) -> Result<()> { Ok(()) }
+
+    // ===== Database Management =====
+
+    fn update(&mut self, _path: Option<&str>) -> Result<u32> { Ok(0) }
+    fn rescan(&mut self, _path: Option<&str>) -> Result<u32> { Ok(0) }
+
+    // ===== System Info =====
+
+    fn version(&self) -> Version {
+        Version { major: 0, minor: 1, patch: 0 }
+    }
+
+    fn outputs(&mut self) -> Result<Vec<Output>> { Ok(vec![]) }
+    fn decoders(&mut self) -> Result<Vec<Decoder>> { Ok(vec![]) }
+    fn partitions(&mut self) -> Result<Vec<String>> { Ok(vec![]) }
+}

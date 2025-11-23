@@ -12,8 +12,7 @@ use crate::{
     mpd::{
         QueuePosition,
         commands::{IdleEvent, SeekPosition, mpd_config::MpdConfig},
-        mpd_client::{Filter, MpdClient, MpdCommand, Tag},
-        proto_client::ProtoClient,
+        mpd_client::{Filter, Tag},
         version::Version,
     },
     player::client::Client,

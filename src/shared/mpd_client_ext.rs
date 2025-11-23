@@ -874,7 +874,7 @@ impl MpdClientExt for crate::player::Client<'_> {
     fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.play_position_safe(queue_len),
-            crate::player::Client::Mpv(_) => Ok(()), // Not applicable for MPV
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(()), // Not applicable for MPV/YouTube
         }
     }
 
@@ -889,8 +889,8 @@ impl MpdClientExt for crate::player::Client<'_> {
             crate::player::Client::Mpd(b) => {
                 b.client.enqueue_multiple(items, autoplay_idx, position, replace)
             }
-            crate::player::Client::Mpv(_) => {
-                log::debug!("enqueue_multiple not fully supported in MPV backend");
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => {
+                log::debug!("enqueue_multiple not fully supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -899,7 +899,7 @@ impl MpdClientExt for crate::player::Client<'_> {
     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.delete_multiple(items),
-            crate::player::Client::Mpv(_) => Ok(()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -912,7 +912,7 @@ impl MpdClientExt for crate::player::Client<'_> {
             crate::player::Client::Mpd(b) => {
                 b.client.add_to_playlist_multiple(playlist_name, song_paths)
             }
-            crate::player::Client::Mpv(_) => Ok(()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -922,15 +922,15 @@ impl MpdClientExt for crate::player::Client<'_> {
     ) -> Result<Vec<PartitionedOutput>, MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.list_partitioned_outputs(current_partition),
-            crate::player::Client::Mpv(_) => Ok(Vec::new()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(Vec::new()),
         }
     }
 
     fn create_playlist(&mut self, name: &str, items: Vec<String>) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.create_playlist(name, items),
-            crate::player::Client::Mpv(_) => {
-                log::debug!("Playlists not supported in MPV backend");
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => {
+                log::debug!("Playlists not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -939,8 +939,8 @@ impl MpdClientExt for crate::player::Client<'_> {
     fn next_keep_state(&mut self, keep: bool, state: State) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.next_keep_state(keep, state),
-            crate::player::Client::Mpv(_) => {
-                // Simple next for MPV
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => {
+                // Simple next for MPV/YouTube
                 self.next().map_err(|e| MpdError::Generic(e.to_string()))
             }
         }
@@ -949,8 +949,8 @@ impl MpdClientExt for crate::player::Client<'_> {
     fn prev_keep_state(&mut self, keep: bool, state: State) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.prev_keep_state(keep, state),
-            crate::player::Client::Mpv(_) => {
-                // Simple previous for MPV
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => {
+                // Simple previous for MPV/YouTube
                 self.previous().map_err(|e| MpdError::Generic(e.to_string()))
             }
         }
@@ -962,7 +962,7 @@ impl MpdClientExt for crate::player::Client<'_> {
     ) -> Result<HashMap<String, HashMap<String, String>>, MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.fetch_song_stickers(song_uris),
-            crate::player::Client::Mpv(_) => Ok(HashMap::new()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(HashMap::new()),
         }
     }
 
@@ -974,14 +974,14 @@ impl MpdClientExt for crate::player::Client<'_> {
     ) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.set_sticker_multiple(key, value, items),
-            crate::player::Client::Mpv(_) => Ok(()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(()),
         }
     }
 
     fn delete_sticker_multiple(&mut self, key: &str, items: Vec<Enqueue>) -> Result<(), MpdError> {
         match self {
             crate::player::Client::Mpd(b) => b.client.delete_sticker_multiple(key, items),
-            crate::player::Client::Mpv(_) => Ok(()),
+            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => Ok(()),
         }
     }
 }

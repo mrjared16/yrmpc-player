@@ -40,8 +40,7 @@ use crate::{
     mpd::{
         commands::{SeekPosition, idle::IdleEvent},
         errors::{ErrorCode, MpdError, MpdFailureResponse},
-        mpd_client::{MpdClient, MpdCommand, ValueChange},
-        proto_client::ProtoClient,
+        mpd_client::ValueChange,
         version::Version,
     },
     shared::{

@@ -2,7 +2,7 @@ use core::{config_watcher::ERROR_CONFIG_MODAL_ID, scheduler::Scheduler};
 use std::{
     fs::File,
     io::{BufRead, Read, Write},
-    sync::Arc,
+    sync::{Arc, RwLock},
     time::Duration,
 };
 
@@ -23,7 +23,6 @@ use crate::{
         ConfigFile,
         cli::{Args, Command},
     },
-    mpd::{mpd_client::MpdClient, proto_client::SocketClient},
     player::client::Client,
     shared::{
         dependencies::{DEPENDENCIES, FFMPEG, FFPROBE, PYTHON3, PYTHON3MUTAGEN, UEBERZUGPP, YTDLP},
@@ -48,6 +47,7 @@ mod core;
 mod ctx;
 mod domain;
 mod app_state;
+use app_state::AppState;
 mod mpd;
 mod player;
 mod shared;
@@ -353,16 +353,25 @@ fn main() -> Result<()> {
             }
             event_tx.send(AppEvent::RequestRender).context("Failed to render first frame")?;
 
+            let app_state = Arc::new(RwLock::new(AppState::new()));
+
             let mut client = Client::init_with_backend(
                 config.backend,
                 config.address.clone(),
                 config.password.clone(),
                 config.mpv_socket.clone(),
+                config.youtube.clone(),
                 "command",
                 args.partition.partition,
                 args.partition.autocreate,
+                app_state.clone(),
             )
             .context("Failed to connect to backend")?;
+
+            if matches!(config.backend, crate::config::PlayerBackend::Mpd) {
+                let queue = client.playlist_info()?;
+                app_state.write().unwrap().replace_queue(queue);
+            }
             client.set_read_timeout(Some(config.mpd_read_timeout))?;
             client.set_write_timeout(Some(config.mpd_write_timeout))?;
 
@@ -375,6 +384,7 @@ fn main() -> Result<()> {
                 worker_tx.clone(),
                 client_tx.clone(),
                 Scheduler::new((event_tx.clone(), client_tx.clone())),
+                app_state,
             )
             .context("Failed to create app context")?;
 

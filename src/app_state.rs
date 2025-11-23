@@ -203,6 +203,11 @@ impl AppState {
         self.current_index.and_then(|idx| self.queue.get(idx))
     }
 
+    /// Get the next item in the queue
+    pub fn get_next(&self) -> Option<&QueueItem> {
+        self.current_index.and_then(|idx| self.queue.get(idx + 1))
+    }
+
     /// Get the current index
     pub fn get_current_index(&self) -> Option<usize> {
         self.current_index

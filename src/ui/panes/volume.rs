@@ -5,7 +5,7 @@ use super::Pane;
 use crate::{
     config::tabs::VolumeType,
     ctx::Ctx,
-    mpd::mpd_client::{MpdClient, ValueChange},
+    mpd::mpd_client::ValueChange,
     shared::{
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},

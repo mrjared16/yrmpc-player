@@ -10,7 +10,7 @@ use crate::{
     ctx::Ctx,
     domain::Song,
     mpd::{
-        mpd_client::{Filter, FilterKind, MpdClient, Tag},
+        mpd_client::{Filter, FilterKind, Tag},
     },
     player::Client,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent, mpd_client_ext::Enqueue},

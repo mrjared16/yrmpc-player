@@ -24,7 +24,6 @@ use crate::{
     core::scheduler::{Scheduler, time_provider::DefaultTimeProvider},
     domain::{PlaybackState as State, Song, Status},
     mpd::{
-        mpd_client::MpdClient,
         version::Version,
     },
     player::client::Client,
@@ -86,6 +85,7 @@ impl Ctx {
         work_sender: Sender<WorkRequest>,
         client_request_sender: Sender<ClientRequest>,
         mut scheduler: Scheduler<(Sender<AppEvent>, Sender<ClientRequest>), DefaultTimeProvider>,
+        app_state: Arc<RwLock<crate::app_state::AppState>>,
     ) -> Result<Self> {
         let supported_commands: HashSet<String> = client.supported_commands();
         let stickers_supported = if supported_commands.contains("sticker") {
@@ -98,8 +98,7 @@ impl Ctx {
         let status = client.get_status()?;
         let queue = client.playlist_info()?;
         
-        // Initialize AppState with current MPD queue
-        let app_state = Arc::new(RwLock::new(crate::app_state::AppState::new()));
+        // Sync AppState with current backend queue
         app_state.write().unwrap().replace_queue(queue.clone());
 
         if !supported_commands.contains("albumart") || !supported_commands.contains("readpicture") {

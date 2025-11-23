@@ -3,8 +3,9 @@ use std::collections::{HashMap, HashSet};
 use anyhow::Result;
 
 use crate::{
-    config::PlayerBackend,
+    config::{PlayerBackend, YouTubeConfig},
     domain::QueuePosition,
+    app_state::AppState,
     mpd::{
         MpdClient,
         commands::{
@@ -22,18 +23,20 @@ use crate::{
             ValueChange,
             list_mounts::Mount,
         },
-        mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},
+        mpd_client::{Filter, MpdCommand, SingleOrRange},
         proto_client::ProtoClient,
     },
-    player::{backend::MusicBackend, mpd_backend::MpdBackend, mpv_backend::MpvBackend},
+    player::{backend::MusicBackend, mpd_backend::MpdBackend, mpv_backend::MpvBackend, youtube_backend::YouTubeBackend},
     shared::mpd_client_ext::{MpdClientExt, PartitionedOutput},
 };
+use std::sync::{Arc, RwLock};
 
 /// Unified client that can use either MPD or MPV backend
 #[derive(Debug)]
 pub enum Client<'name> {
     Mpd(MpdBackend<'name>),
     Mpv(MpvBackend),
+    YouTube(YouTubeBackend),
 }
 
 impl<'name> Client<'name> {
@@ -71,9 +74,11 @@ impl<'name> Client<'name> {
         addr: crate::config::MpdAddress,
         password: Option<crate::config::address::MpdPassword>,
         mpv_socket: Option<String>,
+        youtube_config: YouTubeConfig,
         name: &'name str,
         partition: Option<String>,
         autocreate_partition: bool,
+        app_state: Arc<RwLock<AppState>>,
     ) -> Result<Self> {
         match backend {
             PlayerBackend::Mpd => {
@@ -90,6 +95,11 @@ impl<'name> Client<'name> {
                 let socket = mpv_socket.unwrap_or_else(|| "/tmp/rmpc-mpv.sock".to_string());
                 Client::new_mpv(&socket)
             }
+            PlayerBackend::YouTube => {
+                let socket = mpv_socket.unwrap_or_else(|| "/tmp/rmpc-mpv.sock".to_string());
+                let backend = YouTubeBackend::new(app_state, std::path::Path::new(&socket), youtube_config)?;
+                Ok(Client::YouTube(backend))
+            }
         }
     }
 
@@ -98,6 +108,7 @@ impl<'name> Client<'name> {
         match self {
             Client::Mpd(b) => b as &mut dyn MusicBackend,
             Client::Mpv(b) => b as &mut dyn MusicBackend,
+            Client::YouTube(b) => b as &mut dyn MusicBackend,
         }
     }
 
@@ -106,6 +117,7 @@ impl<'name> Client<'name> {
         match self {
             Client::Mpd(b) => b as &dyn MusicBackend,
             Client::Mpv(b) => b as &dyn MusicBackend,
+            Client::YouTube(b) => b as &dyn MusicBackend,
         }
     }
 
@@ -172,14 +184,14 @@ impl<'name> Client<'name> {
     pub fn play_pos(&mut self, pos: usize) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.play_pos(pos).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
     pub fn unpause(&mut self) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.unpause().map_err(Into::into),
-            Client::Mpv(_) => self.pause_state(false),
+            Client::Mpv(_) | Client::YouTube(_) => self.pause_state(false),
         }
     }
 
@@ -190,28 +202,28 @@ impl<'name> Client<'name> {
     pub fn find_one(&mut self, filter: &[Filter]) -> Result<Option<crate::domain::Song>> {
         match self {
             Client::Mpd(b) => Ok(b.client.find_one(filter)?.map(Into::into)),
-            Client::Mpv(_) => Ok(None),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(None),
         }
     }
 
     pub fn disable_output(&mut self, id: u32) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.disable_output(id).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
     pub fn delete_all_stickers(&mut self, uri: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.delete_all_stickers(uri).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
     pub fn config(&self) -> Option<crate::mpd::commands::mpd_config::MpdConfig> {
         match self {
             Client::Mpd(b) => b.client.config.clone(),
-            Client::Mpv(_) => None,
+            Client::Mpv(_) | Client::YouTube(_) => None,
         }
     }
 
@@ -314,7 +326,7 @@ impl<'name> Client<'name> {
     pub fn move_in_playlist(&mut self, playlist: &str, from: &SingleOrRange, to: usize) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.move_in_playlist(playlist, from, to).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -333,14 +345,14 @@ impl<'name> Client<'name> {
     pub fn update(&mut self, path: Option<&str>) -> Result<crate::mpd::commands::Update> {
         match self {
             Client::Mpd(b) => b.client.update(path).map_err(Into::into),
-            Client::Mpv(_) => Ok(crate::mpd::commands::Update { job_id: 0 }),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(crate::mpd::commands::Update { job_id: 0 }),
         }
     }
 
     pub fn rescan(&mut self, path: Option<&str>) -> Result<crate::mpd::commands::Update> {
         match self {
             Client::Mpd(b) => b.client.rescan(path).map_err(Into::into),
-            Client::Mpv(_) => Ok(crate::mpd::commands::Update { job_id: 0 }),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(crate::mpd::commands::Update { job_id: 0 }),
         }
     }
 
@@ -364,7 +376,7 @@ impl<'name> Client<'name> {
     pub fn supported_commands(&self) -> HashSet<String> {
         match self {
             Client::Mpd(b) => b.client.supported_commands.clone(),
-            Client::Mpv(_) => HashSet::new(),
+            Client::Mpv(_) | Client::YouTube(_) => HashSet::new(),
         }
     }
 
@@ -380,7 +392,7 @@ impl<'name> Client<'name> {
     pub fn as_mpd_mut(&mut self) -> Option<&mut crate::mpd::client::Client<'name>> {
         match self {
             Client::Mpd(b) => Some(&mut b.client),
-            Client::Mpv(_) => None,
+            Client::Mpv(_) | Client::YouTube(_) => None,
         }
     }
 
@@ -388,7 +400,7 @@ impl<'name> Client<'name> {
     pub fn stream(&mut self) -> Option<&mut crate::mpd::client::TcpOrUnixStream> {
         match self {
             Client::Mpd(b) => Some(&mut b.client.stream),
-            Client::Mpv(_) => None,
+            Client::Mpv(_) | Client::YouTube(_) => None,
         }
     }
 
@@ -396,7 +408,7 @@ impl<'name> Client<'name> {
     pub fn read(&mut self) -> Option<&mut std::io::BufReader<crate::mpd::client::TcpOrUnixStream>> {
         match self {
             Client::Mpd(b) => Some(&mut b.client.rx),
-            Client::Mpv(_) => None,
+            Client::Mpv(_) | Client::YouTube(_) => None,
         }
     }
 
@@ -411,6 +423,10 @@ impl<'name> Client<'name> {
                 let stream = b.try_clone_stream()?;
                 Ok(Box::new(stream))
             }
+            Client::YouTube(b) => {
+                let stream = b.try_clone_stream()?;
+                Ok(Box::new(stream))
+            }
         }
     }
 
@@ -418,6 +434,7 @@ impl<'name> Client<'name> {
         match self {
             Client::Mpd(b) => b.client.enter_idle().map_err(Into::into),
             Client::Mpv(b) => b.enter_idle(),
+            Client::YouTube(b) => b.enter_idle(),
         }
     }
 
@@ -425,8 +442,10 @@ impl<'name> Client<'name> {
         match self {
             Client::Mpd(b) => b.client.idle(mask).map_err(Into::into),
             Client::Mpv(b) => {
-                // MPV doesn't support idle masks in the same way, but we can simulate waiting
-                // For now, just delegate to enter_idle if mask is None, or ignore mask
+                b.enter_idle()?;
+                b.read_response()
+            }
+            Client::YouTube(b) => {
                 b.enter_idle()?;
                 b.read_response()
             }
@@ -437,6 +456,7 @@ impl<'name> Client<'name> {
         match self {
             Client::Mpd(b) => b.client.read_response().map_err(Into::into),
             Client::Mpv(b) => b.read_response(),
+            Client::YouTube(b) => b.read_response(),
         }
     }
 
@@ -447,20 +467,21 @@ impl<'name> Client<'name> {
                 Ok(())
             }
             Client::Mpv(b) => b.reconnect(),
+            Client::YouTube(b) => b.reconnect(),
         }
     }
 
     pub fn set_read_timeout(&mut self, duration: Option<std::time::Duration>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.set_read_timeout(duration).map_err(Into::into),
-            Client::Mpv(_) => Ok(()), // MPV doesn't have timeout settings
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // MPV doesn't have timeout settings
         }
     }
 
     pub fn set_write_timeout(&mut self, duration: Option<std::time::Duration>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.set_write_timeout(duration).map_err(Into::into),
-            Client::Mpv(_) => Ok(()), // MPV doesn't have timeout settings
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // MPV doesn't have timeout settings
         }
     }
 
@@ -468,7 +489,7 @@ impl<'name> Client<'name> {
     pub fn commands(&mut self) -> Result<crate::mpd::commands::list::MpdList> {
         match self {
             Client::Mpd(b) => b.client.commands().map_err(Into::into),
-            Client::Mpv(_) => Ok(crate::mpd::commands::list::MpdList::default()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(crate::mpd::commands::list::MpdList::default()),
         }
     }
 
@@ -476,7 +497,7 @@ impl<'name> Client<'name> {
     pub fn not_commands(&mut self) -> Result<crate::mpd::commands::list::MpdList> {
         match self {
             Client::Mpd(b) => b.client.not_commands().map_err(Into::into),
-            Client::Mpv(_) => Ok(crate::mpd::commands::list::MpdList::default()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(crate::mpd::commands::list::MpdList::default()),
         }
     }
 
@@ -488,28 +509,28 @@ impl<'name> Client<'name> {
             Client::Mpd(b) => {
                 b.client.list_partitioned_outputs(current_partition).map_err(Into::into)
             }
-            Client::Mpv(_) => Ok(Vec::new()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(Vec::new()),
         }
     }
 
     pub fn move_output(&mut self, output_name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.move_output(output_name).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
     pub fn enable_output(&mut self, id: u32) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.enable_output(id).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
     pub fn toggle_output(&mut self, id: u32) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.toggle_output(id).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -523,7 +544,7 @@ impl<'name> Client<'name> {
             Client::Mpd(b) => {
                 b.client.add_to_playlist_multiple(playlist, uris.to_vec()).map_err(Into::into)
             }
-            Client::Mpv(_) => Ok(()), // Not supported yet
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // Not supported yet
         }
     }
 
@@ -535,7 +556,7 @@ impl<'name> Client<'name> {
     pub fn sticker(&mut self, uri: &str, key: &str) -> Result<Option<Sticker>> {
         match self {
             Client::Mpd(b) => b.client.sticker(uri, key).map_err(Into::into),
-            Client::Mpv(_) => Ok(None),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(None),
         }
     }
 
@@ -545,7 +566,7 @@ impl<'name> Client<'name> {
     pub fn pause_toggle(&mut self) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.pause_toggle().map_err(Into::into),
-            Client::Mpv(_) => {
+            Client::Mpv(_) | Client::YouTube(_) => {
                 // For MPV, we can implement this by getting the pause property and toggling it
                 // But for now, let's just return Ok to satisfy the compiler, or log it.
                 // Actually, let's try to implement it if possible, or just stub it.
@@ -563,8 +584,8 @@ impl<'name> Client<'name> {
     ) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.move_in_queue(from, to.into()).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("move_in_queue not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("move_in_queue not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -576,8 +597,8 @@ impl<'name> Client<'name> {
     ) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.delete_from_queue(range).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("delete_from_queue not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("delete_from_queue not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -594,7 +615,7 @@ impl<'name> Client<'name> {
                 .list_playlist_info(playlist, range)
                 .map(|songs| songs.into_iter().map(Into::into).collect())
                 .map_err(Into::into),
-            Client::Mpv(_) => {
+            Client::Mpv(_) | Client::YouTube(_) => {
                 // MPV doesn't support playlists, return empty
                 Ok(Vec::new())
             }
@@ -610,8 +631,8 @@ impl<'name> Client<'name> {
     ) -> Result<crate::mpd::commands::stickers::StickersWithFile> {
         match self {
             Client::Mpd(b) => b.client.find_stickers(uri, name, filter).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("find_stickers not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("find_stickers not supported in MPV/YouTube backend");
                 Ok(crate::mpd::commands::stickers::StickersWithFile(Vec::new()))
             }
         }
@@ -621,8 +642,8 @@ impl<'name> Client<'name> {
     pub fn switch_to_partition(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.switch_to_partition(name).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("Partitions not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("Partitions not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -632,8 +653,8 @@ impl<'name> Client<'name> {
     pub fn new_partition(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.new_partition(name).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("Partitions not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("Partitions not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -643,8 +664,8 @@ impl<'name> Client<'name> {
     pub fn list_partitions(&mut self) -> Result<Vec<String>> {
         match self {
             Client::Mpd(b) => b.client.list_partitions().map(|l| l.0).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("Partitions not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("Partitions not supported in MPV/YouTube backend");
                 Ok(Vec::new())
             }
         }
@@ -654,8 +675,8 @@ impl<'name> Client<'name> {
     pub fn delete_partition(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.delete_partition(name).map_err(Into::into),
-            Client::Mpv(_) => {
-                log::debug!("Partitions not supported in MPV backend");
+            Client::Mpv(_) | Client::YouTube(_) => {
+                log::debug!("Partitions not supported in MPV/YouTube backend");
                 Ok(())
             }
         }
@@ -665,7 +686,7 @@ impl<'name> Client<'name> {
     pub fn send_new_partition(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_new_partition(name).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -673,7 +694,7 @@ impl<'name> Client<'name> {
     pub fn send_switch_to_partition(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_switch_to_partition(name).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -681,7 +702,7 @@ impl<'name> Client<'name> {
     pub fn send_start_cmd_list(&mut self) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_start_cmd_list().map_err(Into::into),
-            Client::Mpv(_) => Ok(()), // MPV doesn't need command batching
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // MPV doesn't need command batching
         }
     }
 
@@ -689,7 +710,7 @@ impl<'name> Client<'name> {
     pub fn send_execute_cmd_list(&mut self) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_execute_cmd_list().map_err(Into::into),
-            Client::Mpv(_) => Ok(()), // MPV doesn't need command batching
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // MPV doesn't need command batching
         }
     }
 
@@ -697,7 +718,7 @@ impl<'name> Client<'name> {
     pub fn read_ok(&mut self) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.read_ok().map_err(Into::into),
-            Client::Mpv(_) => Ok(()), // MPV doesn't need OK responses
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // MPV doesn't need OK responses
         }
     }
 
@@ -705,7 +726,7 @@ impl<'name> Client<'name> {
     pub fn send_add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_add(uri, position.map(Into::into)).map_err(Into::into),
-            Client::Mpv(_) => {
+            Client::Mpv(_) | Client::YouTube(_) => {
                 // For MPV, just add directly
                 self.add(uri, position)
             }
@@ -719,7 +740,7 @@ impl<'name> Client<'name> {
                 b.client.add_to_playlist(playlist, uri, None)?;
                 Ok(())
             }
-            Client::Mpv(_) => Ok(()), // Playlists not supported
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()), // Playlists not supported
         }
     }
 
@@ -727,7 +748,7 @@ impl<'name> Client<'name> {
     pub fn read_songs_response(&mut self) -> Result<Vec<Song>> {
         match self {
             Client::Mpd(b) => b.client.read_response().map_err(Into::into),
-            Client::Mpv(_) => Ok(Vec::new()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(Vec::new()),
         }
     }
 
@@ -735,7 +756,7 @@ impl<'name> Client<'name> {
     pub fn send_lsinfo(&mut self, uri: Option<&str>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_lsinfo(uri).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -747,7 +768,7 @@ impl<'name> Client<'name> {
     ) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_delete_from_playlist(playlist, range).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -755,7 +776,7 @@ impl<'name> Client<'name> {
     pub fn find_album_art(&mut self, uri: &str) -> Result<Option<Vec<u8>>> {
         match self {
             Client::Mpd(b) => b.client.find_album_art(uri).map_err(Into::into),
-            Client::Mpv(_) => Ok(None),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(None),
         }
     }
 
@@ -763,7 +784,7 @@ impl<'name> Client<'name> {
     pub fn send_list_all(&mut self, path: Option<&str>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_list_all(path).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -771,7 +792,7 @@ impl<'name> Client<'name> {
     pub fn mount(&mut self, name: &str, path: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.mount(name, path).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -779,7 +800,7 @@ impl<'name> Client<'name> {
     pub fn unmount(&mut self, name: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.unmount(name).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -787,7 +808,7 @@ impl<'name> Client<'name> {
     pub fn list_mounts(&mut self) -> Result<Vec<Mount>> {
         match self {
             Client::Mpd(b) => b.client.list_mounts().map(|m| m.0).map_err(Into::into),
-            Client::Mpv(_) => Ok(Vec::new()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(Vec::new()),
         }
     }
 
@@ -795,7 +816,7 @@ impl<'name> Client<'name> {
     pub fn send_message(&mut self, channel: &str, message: &str) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_message(channel, message).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -803,7 +824,7 @@ impl<'name> Client<'name> {
     pub fn add_random_tag(&mut self, count: usize, tag: Tag) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.add_random_tag(count, tag).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -811,7 +832,7 @@ impl<'name> Client<'name> {
     pub fn add_random_songs(&mut self, count: usize, filter: Option<&[Filter]>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.add_random_songs(count, filter).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 
@@ -819,7 +840,7 @@ impl<'name> Client<'name> {
     pub fn send_find_add(&mut self, filter: &[Filter], position: Option<QueuePosition>) -> Result<()> {
         match self {
             Client::Mpd(b) => b.client.send_find_add(filter, position.map(Into::into)).map_err(Into::into),
-            Client::Mpv(_) => Ok(()),
+            Client::Mpv(_) | Client::YouTube(_) => Ok(()),
         }
     }
 }

@@ -9,7 +9,6 @@ use crate::{
     domain::PlaybackState as State,
     mpd::{
         commands::SeekPosition,
-        mpd_client::MpdClient,
     },
     shared::{
         key_event::KeyEvent,

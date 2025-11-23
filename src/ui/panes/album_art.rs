@@ -6,7 +6,6 @@ use crate::{
     MpdQueryResult,
     config::{album_art::ImageMethod, tabs::PaneType},
     ctx::Ctx,
-    mpd::mpd_client::MpdClient,
     shared::key_event::KeyEvent,
     ui::{UiEvent, image::facade::AlbumArtFacade},
 };

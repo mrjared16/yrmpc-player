@@ -33,7 +33,7 @@ use crate::{
     domain::{Song, QueuePosition},
     ui::panes::browser::SongExt,
     mpd::{
-        mpd_client::{MpdClient, SingleOrRange},
+        mpd_client::SingleOrRange,
     },
     player::Client,
     shared::{

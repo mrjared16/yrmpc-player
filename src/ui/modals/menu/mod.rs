@@ -17,8 +17,7 @@ use crate::{
     mpd::{
         client::Client,
         errors::{ErrorCode, MpdError, MpdFailureResponse},
-        mpd_client::{MpdClient, MpdCommand, SingleOrRange},
-        proto_client::ProtoClient,
+        mpd_client::SingleOrRange,
     },
     shared::{
         cmp::StringCompare,

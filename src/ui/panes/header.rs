@@ -4,7 +4,7 @@ use ratatui::{Frame, prelude::Rect};
 use super::Pane;
 use crate::{
     ctx::Ctx,
-    mpd::mpd_client::{MpdClient, ValueChange},
+    mpd::mpd_client::ValueChange,
     shared::{
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
