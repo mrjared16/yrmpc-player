@@ -23,8 +23,9 @@ use crate::{
     },
     core::command::{create_env, run_external},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
+    domain::Song,
+    ui::panes::browser::SongExt,
     mpd::{
-        commands::Song,
         mpd_client::{Filter, MpdClient, MpdCommand},
         version::Version,
     },
@@ -265,7 +266,7 @@ impl SearchPane {
                         client.send_lsinfo(Some(&uri))?;
                     }
                     client.send_execute_cmd_list()?;
-                    let data: Vec<Song> = client.read_songs_response()?;
+                    let data: Vec<Song> = client.read_songs_response()?.into_iter().map(Into::into).collect();
 
                     Ok(MpdQueryResult::SearchResult { data })
                 },

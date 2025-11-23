@@ -5,10 +5,7 @@ use super::Pane;
 use crate::{
     config::tabs::VolumeType,
     ctx::Ctx,
-    mpd::{
-        commands::volume::Bound,
-        mpd_client::{MpdClient, ValueChange},
-    },
+    mpd::mpd_client::{MpdClient, ValueChange},
     shared::{
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
@@ -38,7 +35,7 @@ impl Pane for VolumePane {
                 }
 
                 let symbols = &config.symbols;
-                let filled_len = (f64::from(area.width - 1) * f64::from(*ctx.status.volume.value())
+                let filled_len = (f64::from(area.width - 1) * f64::from(ctx.status.volume)
                     / 100.0) as u16;
 
                 for i in 0..area.width {

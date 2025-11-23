@@ -54,7 +54,7 @@ impl Pane for PropertyPane<'_> {
             .scroll_speed(self.scroll_speed)
             .align(self.align)
             .line(line)
-            .progress(ctx.status.elapsed)
+            .progress(ctx.status.elapsed.unwrap_or_default())
             .build();
         frame.render_widget(scrolling_line, area);
 

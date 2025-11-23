@@ -11,7 +11,7 @@ use unicase::UniCase;
 use walkdir::WalkDir;
 
 use super::{Lrc, parse_metadata_only};
-use crate::{mpd::commands::Song, shared::macros::try_cont};
+use crate::shared::macros::try_cont;
 
 /// Index of LRC files for fast song-to-lyrics matching.
 ///
@@ -80,7 +80,7 @@ impl LrcIndex {
         LrcIndexEntry::read(BufReader::new(file), path).context("Failed to index an entry")
     }
 
-    pub fn find_lrc_for_song(&self, song: &Song) -> Result<Option<Lrc>> {
+    pub fn find_lrc_for_song(&self, song: &crate::domain::Song) -> Result<Option<Lrc>> {
         if let Some(entry) = self.find_entry(song) {
             Ok(Some(std::fs::read_to_string(&entry.path)?.parse()?))
         } else {
@@ -106,12 +106,11 @@ impl LrcIndex {
         }
     }
 
-    fn find_entry(&self, song: &Song) -> Option<&LrcIndexEntry> {
-        // TODO xxx.last() is called here to not change existing behavior. Consider
-        // supporting all the tag entries
-        let artist = song.metadata.get("artist").map(|v| v.last())?;
-        let title = song.metadata.get("title").map(|v| v.last())?;
-        let album = song.metadata.get("album").map(|v| v.last());
+    fn find_entry(&self, song: &crate::domain::Song) -> Option<&LrcIndexEntry> {
+        // Get metadata from domain::Song (which has Vec<String> values)
+        let artist = song.metadata.get("artist").and_then(|v| v.first()).map(|s| s.as_str())?;
+        let title = song.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str())?;
+        let album = song.metadata.get("album").and_then(|v| v.first()).map(|s| s.as_str());
 
         let mut results = self
             .index

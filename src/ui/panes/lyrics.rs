@@ -42,9 +42,9 @@ impl Pane for LyricsPane {
             .lines
             .iter()
             .enumerate()
-            .filter(|line| elapsed >= line.1.time(offset))
+            .filter(|line| ctx.status.elapsed.unwrap_or_default() >= line.1.time(offset))
             .min_by(|a, b| {
-                a.1.time(offset).abs_diff(elapsed).cmp(&b.1.time(offset).abs_diff(elapsed))
+                a.1.time(offset).abs_diff(ctx.status.elapsed.unwrap_or_default()).cmp(&b.1.time(offset).abs_diff(ctx.status.elapsed.unwrap_or_default()))
             })
             .map_or((0, false), |result| (result.0, true));
 
@@ -137,7 +137,7 @@ impl Pane for LyricsPane {
         {
             self.last_requested_line_idx = current_line_idx + 1;
             ctx.scheduler
-                .schedule(line.time(offset).saturating_sub(ctx.status.elapsed), run_status_update);
+                .schedule(line.time(offset).saturating_sub(ctx.status.elapsed.unwrap_or_default()), run_status_update);
         }
 
         Ok(())

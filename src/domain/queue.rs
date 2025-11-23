@@ -36,3 +36,30 @@ impl QueuePosition {
         }
     }
 }
+
+/// Conversion from domain QueuePosition to MPD QueuePosition
+impl From<QueuePosition> for crate::mpd::queue_position::QueuePosition {
+    fn from(pos: QueuePosition) -> Self {
+        match pos {
+            QueuePosition::Absolute(n) => crate::mpd::queue_position::QueuePosition::Absolute(n),
+            QueuePosition::Relative(offset) if offset >= 0 => {
+                crate::mpd::queue_position::QueuePosition::RelativeAdd(offset as usize)
+            }
+            QueuePosition::Relative(offset) => {
+                crate::mpd::queue_position::QueuePosition::RelativeSub(offset.abs() as usize)
+            }
+            QueuePosition::End => crate::mpd::queue_position::QueuePosition::Absolute(usize::MAX),
+            QueuePosition::Next => crate::mpd::queue_position::QueuePosition::RelativeAdd(1),
+        }
+    }
+}
+
+impl From<crate::mpd::QueuePosition> for QueuePosition {
+    fn from(pos: crate::mpd::QueuePosition) -> Self {
+        match pos {
+            crate::mpd::QueuePosition::Absolute(idx) => QueuePosition::Absolute(idx),
+            crate::mpd::QueuePosition::RelativeAdd(offset) => QueuePosition::Relative(offset as i32),
+            crate::mpd::QueuePosition::RelativeSub(offset) => QueuePosition::Relative(-(offset as i32)),
+        }
+    }
+}

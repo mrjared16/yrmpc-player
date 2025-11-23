@@ -21,8 +21,9 @@ use super::dir_or_song::DirOrSong;
 use crate::{
     config::theme::properties::{Property, SongProperty},
     ctx::Ctx,
-    mpd::commands::Song,
+    domain::Song,
     shared::mpd_query::PreviewGroup,
+    ui::panes::browser::SongExt,
 };
 
 pub trait DirStackItem {
@@ -69,7 +70,7 @@ impl DirStackItem for DirOrSong {
             DirOrSong::Dir { name, .. } => if name.is_empty() { "Untitled" } else { name.as_str() }
                 .to_lowercase()
                 .contains(&filter.to_lowercase()),
-            DirOrSong::Song(s) => s.matches(song_format, filter, ctx),
+            DirOrSong::Song(s) => SongExt::matches(s, song_format, filter, ctx),
         }
     }
 
@@ -144,7 +145,7 @@ impl DirStackItem for Song {
     }
 
     fn matches(&self, song_format: &[Property<SongProperty>], ctx: &Ctx, filter: &str) -> bool {
-        self.matches(song_format, filter, ctx)
+        SongExt::matches(self, song_format, filter, ctx)
     }
 
     fn to_list_item<'a>(

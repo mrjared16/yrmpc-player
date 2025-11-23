@@ -14,7 +14,8 @@ use crate::{
         actions::{AddKind, AutoplayKind, DeleteKind, Position, RateKind, SaveKind},
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
-    mpd::{commands::Song, mpd_client::MpdClient},
+    domain::Song,
+    mpd::mpd_client::MpdClient,
     player::Client,
     shared::{
         key_event::KeyEvent,

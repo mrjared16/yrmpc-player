@@ -21,8 +21,8 @@ use crate::{
         tabs::{PaneType, TabName},
     },
     core::scheduler::{Scheduler, time_provider::DefaultTimeProvider},
+    domain::{PlaybackState as State, Song, Status},
     mpd::{
-        commands::{Song, State, Status},
         mpd_client::MpdClient,
         version::Version,
     },
@@ -92,7 +92,7 @@ impl Ctx {
         };
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
 
-        let status = client.status()?;
+        let status = client.get_status()?;
         let queue = client.playlist_info()?;
 
         if !supported_commands.contains("albumart") || !supported_commands.contains("readpicture") {
@@ -238,7 +238,7 @@ impl Ctx {
 
         self.status
             .songid
-            .and_then(|id| self.queue.iter().enumerate().find(|(_, song)| song.id == id))
+            .and_then(|id| self.queue.iter().enumerate().find(|(_, song)| song.id == Some(id)))
     }
 
     pub(crate) fn find_lrc(&self) -> Result<Option<Lrc>> {

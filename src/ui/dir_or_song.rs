@@ -6,10 +6,8 @@ use crate::{
         sort_mode::{SortMode, SortOptions},
         theme::{TagResolutionStrategy, properties::SongProperty},
     },
-    mpd::commands::{
-        Song,
-        lsinfo::{Dir, LsInfoEntry},
-    },
+    domain::Song, ui::panes::browser::SongExt,
+    mpd::commands::lsinfo::{Dir, LsInfoEntry},
     shared::cmp::StringCompare,
 };
 
@@ -53,7 +51,7 @@ impl DirOrSong {
     pub fn last_modified(&self) -> chrono::DateTime<chrono::Utc> {
         match self {
             DirOrSong::Dir { last_modified, .. } => *last_modified,
-            DirOrSong::Song(song) => song.last_modified,
+            DirOrSong::Song(song) => song.last_modified.unwrap_or_default(),
         }
     }
 }
@@ -234,7 +232,7 @@ impl LsInfoEntry {
         show_playlists_mode: ShowPlaylistsMode,
     ) -> Option<DirOrSong> {
         match self {
-            LsInfoEntry::File(song) => Some(DirOrSong::Song(song)),
+            LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
             LsInfoEntry::Dir(Dir { name, full_path, last_modified }) => {
                 Some(DirOrSong::Dir { name, full_path, last_modified, playlist: false })
             }
@@ -427,8 +425,8 @@ impl CmpByProp {
             }
             SongProperty::Position => {
                 // last() is fine because position should never have multiple values
-                let self_pos = a.metadata.get("pos").map(|v| v.last());
-                let other_pos = b.metadata.get("pos").map(|v| v.last());
+                let self_pos = a.metadata.get("pos").and_then(|v| v.last().map(|s| s.clone()));
+                let other_pos = b.metadata.get("pos").and_then(|v| v.last().map(|s| s.clone()));
                 CmpByProp::opt_str_parse::<_, usize>(
                     self_pos,
                     other_pos,
@@ -469,7 +467,7 @@ mod ordtest {
             sort_mode::{SortMode, SortOptions},
             theme::properties::SongProperty,
         },
-        mpd::commands::{Song, metadata_tag::MetadataTag},
+        domain::Song,
     };
 
     static LAST_ID: AtomicU32 = AtomicU32::new(1);
@@ -489,7 +487,7 @@ mod ordtest {
             duration: Some(Duration::from_secs(1)),
             metadata: metadata
                 .iter()
-                .map(|(k, v)| ((*k).to_string(), MetadataTag::Single((*v).to_string())))
+                .map(|(k, v)| ((*k).to_string(), vec![(*v).to_string()]))
                 .collect(),
             last_modified: mtime.parse().unwrap(),
             added: None,

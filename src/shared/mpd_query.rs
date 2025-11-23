@@ -8,8 +8,9 @@ use ratatui::{style::Style, widgets::ListItem};
 use super::{events::AppEvent, mpd_client_ext::PartitionedOutput};
 use crate::{
     config::tabs::PaneType,
+    domain::{Song, Status},
     mpd::{
-        commands::{Decoder, IdleEvent, Song, Status, Volume},
+        commands::{Decoder, IdleEvent, Volume},
         mpd_client::MpdClient,
     },
     player::client::Client,

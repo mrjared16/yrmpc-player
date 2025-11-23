@@ -12,7 +12,7 @@ use crate::{
         theme::properties::{Property, PropertyKind},
     },
     ctx::Ctx,
-    mpd::commands::Song,
+    domain::Song,
 };
 
 pub struct Header<'a> {

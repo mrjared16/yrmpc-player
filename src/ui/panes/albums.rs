@@ -8,8 +8,8 @@ use crate::{
     MpdQueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
+    domain::Song,
     mpd::{
-        commands::Song,
         mpd_client::{Filter, MpdClient, Tag},
     },
     player::Client,

@@ -1,15 +1,10 @@
-use std::{
-    borrow::Cow,
-    collections::{HashMap, VecDeque},
-    time::Duration,
-};
+use std::collections::HashMap;
 
 use album_art::AlbumArtPane;
 use albums::AlbumsPane;
 use anyhow::{Context, Result};
 use cava::CavaPane;
 use directories::DirectoriesPane;
-use either::Either;
 use header::HeaderPane;
 use lyrics::LyricsPane;
 use playlists::PlaylistsPane;
@@ -18,10 +13,7 @@ use property::PropertyPane;
 use queue::QueuePane;
 use ratatui::{
     Frame,
-    layout::Layout,
     prelude::Rect,
-    text::{Line, Span},
-    widgets::Block,
 };
 use search::SearchPane;
 use strum::Display;
@@ -31,36 +23,16 @@ use volume::VolumePane;
 
 #[cfg(debug_assertions)]
 use self::{frame_count::FrameCountPane, logs::LogsPane};
-use super::{
-    UiEvent,
-    widgets::{scan_status::ScanStatus, volume::Volume},
-};
+use super::UiEvent;
 use crate::{
     MpdQueryResult,
     config::{
         keys::CommonAction,
-        tabs::{Pane as ConfigPane, PaneType, SizedPaneOrSplit},
-        theme::{
-            SymbolsConfig,
-            TagResolutionStrategy,
-            properties::{
-                Property,
-                PropertyKind,
-                PropertyKindOrText,
-                SongProperty,
-                StatusProperty,
-                Transform,
-                WidgetProperty,
-            },
-        },
+        tabs::PaneType,
     },
     ctx::Ctx,
-    mpd::{
-        commands::{Song, State, status::OnOffOneshot, volume::Bound},
-        mpd_client::Tag,
-    },
+    mpd::mpd_client::Tag,
     shared::{
-        ext::{duration::DurationExt, num::NumExt, span::SpanExt},
         key_event::KeyEvent,
         mouse_event::MouseEvent,
     },
@@ -301,16 +273,73 @@ pub(crate) trait Pane {
 
 pub(crate) mod browser {
 
+    use std::borrow::Cow;
     use itertools::Itertools;
     use ratatui::{
         style::Style,
         text::{Line, Span},
     };
 
-    use crate::{ctx::Ctx, mpd::commands::Song, shared::mpd_query::PreviewGroup};
+    use crate::{
+        config::theme::{
+            SymbolsConfig, TagResolutionStrategy,
+            properties::{Property, SongProperty, PropertyKindOrText, Transform},
+        },
+        ctx::Ctx,
+        domain::{Song, PlaybackState as State},
+        shared::{
+            ext::{duration::DurationExt, span::SpanExt, num::NumExt},
+            mpd_query::PreviewGroup,
+        },
+    };
+    use std::time::Duration;
+    use itertools::Either;
+    use crate::config::theme::properties::{PropertyKind, StatusProperty, WidgetProperty};
+    use crate::domain::OnOffOneshot;
+    use ratatui::{layout::{Rect, Layout}, widgets::Block};
+    use crate::config::tabs::{Pane as ConfigPane, SizedPaneOrSplit};
+    use anyhow::Result;
+    use std::collections::VecDeque;
+    
+    use crate::ui::widgets::scan_status::ScanStatus;
 
-    impl Song {
-        pub(crate) fn to_preview(
+    pub trait SongExt {
+        fn to_preview(
+            &self,
+            key_style: Style,
+            group_style: Style,
+            ctx: &Ctx,
+        ) -> Vec<PreviewGroup>;
+
+        fn title_str(&self, separator: &str) -> Cow<'_, str>;
+        fn artist_str(&self, separator: &str) -> Cow<'_, str>;
+        fn file_name(&self) -> Option<Cow<'_, str>>;
+        fn file_ext(&self) -> Option<Cow<'_, str>>;
+        fn format<'song>(
+            &'song self,
+            property: &SongProperty,
+            tag_separator: &str,
+            strategy: TagResolutionStrategy,
+        ) -> Option<Cow<'song, str>>;
+        fn matches<'a>(
+            &self,
+            formats: impl IntoIterator<Item = &'a Property<SongProperty>>,
+            filter: &str,
+            ctx: &Ctx,
+        ) -> bool;
+        fn as_line_ellipsized<'song, 'stickers: 'song>(
+            &'song self,
+            format: &Property<SongProperty>,
+            max_len: usize,
+            symbols: &SymbolsConfig,
+            tag_separator: &str,
+            strategy: TagResolutionStrategy,
+            ctx: &'stickers Ctx,
+        ) -> Option<Line<'song>>;
+    }
+
+    impl SongExt for Song {
+        fn to_preview(
             &self,
             key_style: Style,
             group_style: Style,
@@ -342,7 +371,7 @@ pub(crate) mod browser {
             }
 
             if let Some(title) = self.metadata.get("title") {
-                title.for_each(|item| {
+                title.iter().for_each(|item| {
                     info_group.push(
                         Line::from(vec![
                             start_of_line_spacer.clone(),
@@ -355,7 +384,7 @@ pub(crate) mod browser {
                 });
             }
             if let Some(artist) = self.metadata.get("artist") {
-                artist.for_each(|item| {
+                artist.iter().for_each(|item| {
                     info_group.push(
                         Line::from(vec![
                             start_of_line_spacer.clone(),
@@ -369,7 +398,7 @@ pub(crate) mod browser {
             }
 
             if let Some(album) = self.metadata.get("album") {
-                album.for_each(|item| {
+                album.iter().for_each(|item| {
                     info_group.push(
                         Line::from(vec![
                             start_of_line_spacer.clone(),
@@ -399,7 +428,7 @@ pub(crate) mod browser {
                     start_of_line_spacer.clone(),
                     Span::styled("Last Modified", key_style),
                     separator.clone(),
-                    Span::from(self.last_modified.to_string()),
+                    Span::from(self.last_modified.map(|d| d.to_string()).unwrap_or_default()),
                 ])
                 .into(),
             );
@@ -425,7 +454,7 @@ pub(crate) mod browser {
                 })
                 .sorted_by_key(|(key, _)| *key)
             {
-                v.for_each(|item| {
+                v.iter().for_each(|item| {
                     tags_group.push(
                         Line::from(vec![
                             start_of_line_spacer.clone(),
@@ -464,67 +493,64 @@ pub(crate) mod browser {
 
             result
         }
-    }
-}
 
-impl Song {
-    pub fn title_str(&self, separator: &str) -> Cow<'_, str> {
-        self.metadata.get("title").map_or(Cow::Borrowed("Untitled"), |v| v.join(separator))
-    }
-
-    pub fn artist_str(&self, separator: &str) -> Cow<'_, str> {
-        self.metadata.get("artist").map_or(Cow::Borrowed("Unknown"), |v| v.join(separator))
-    }
-
-    pub fn file_name(&self) -> Option<Cow<'_, str>> {
-        std::path::Path::new(&self.file).file_stem().map(|file_name| file_name.to_string_lossy())
-    }
-
-    pub fn file_ext(&self) -> Option<Cow<'_, str>> {
-        std::path::Path::new(&self.file).extension().map(|ext| ext.to_string_lossy())
-    }
-
-    pub fn format<'song>(
-        &'song self,
-        property: &SongProperty,
-        tag_separator: &str,
-        strategy: TagResolutionStrategy,
-    ) -> Option<Cow<'song, str>> {
-        match property {
-            SongProperty::Filename => self.file_name(),
-            SongProperty::FileExtension => self.file_ext(),
-            SongProperty::File => Some(Cow::Borrowed(self.file.as_str())),
-            SongProperty::Title => {
-                self.metadata.get("title").map(|v| strategy.resolve(v, tag_separator))
-            }
-            SongProperty::Artist => {
-                self.metadata.get("artist").map(|v| strategy.resolve(v, tag_separator))
-            }
-            SongProperty::Album => {
-                self.metadata.get("album").map(|v| strategy.resolve(v, tag_separator))
-            }
-            SongProperty::Duration => self.duration.map(|d| Cow::Owned(d.to_string())),
-            SongProperty::Other(name) => {
-                self.metadata.get(name).map(|v| strategy.resolve(v, tag_separator))
-            }
-            SongProperty::Disc => self.metadata.get("disc").map(|v| Cow::Borrowed(v.last())),
-            SongProperty::Position => self.metadata.get("pos").map(|v| {
-                v.last()
-                    .parse::<usize>()
-                    .map(|v| Cow::Owned((v + 1).to_string()))
-                    .unwrap_or_default()
-            }),
-            SongProperty::Track => self.metadata.get("track").map(|v| {
-                Cow::Owned(
-                    v.last()
-                        .parse::<u32>()
-                        .map_or_else(|_| v.last().to_owned(), |v| format!("{v:0>2}")),
-                )
-            }),
+        fn title_str(&self, separator: &str) -> Cow<'_, str> {
+            self.metadata.get("title").map_or(Cow::Borrowed("Untitled"), |v| Cow::Owned(v.join(separator)))
         }
-    }
 
-    pub fn matches<'a>(
+        fn artist_str(&self, separator: &str) -> Cow<'_, str> {
+            self.metadata.get("artist").map_or(Cow::Borrowed("Unknown"), |v| Cow::Owned(v.join(separator)))
+        }
+
+        fn file_name(&self) -> Option<Cow<'_, str>> {
+            std::path::Path::new(&self.file).file_stem().map(|file_name| file_name.to_string_lossy())
+        }
+
+        fn file_ext(&self) -> Option<Cow<'_, str>> {
+            std::path::Path::new(&self.file).extension().map(|ext| ext.to_string_lossy())
+        }
+
+        fn format<'song>(
+            &'song self,
+            property: &SongProperty,
+            tag_separator: &str,
+            strategy: TagResolutionStrategy,
+        ) -> Option<Cow<'song, str>> {
+            match property {
+                SongProperty::Filename => self.file_name(),
+                SongProperty::FileExtension => self.file_ext(),
+                SongProperty::File => Some(Cow::Borrowed(self.file.as_str())),
+                SongProperty::Title => {
+                    self.metadata.get("title").map(|v| strategy.resolve_vec(v, tag_separator))
+                }
+                SongProperty::Artist => {
+                    self.metadata.get("artist").map(|v| strategy.resolve_vec(v, tag_separator))
+                }
+                SongProperty::Album => {
+                    self.metadata.get("album").map(|v| strategy.resolve_vec(v, tag_separator))
+                }
+                SongProperty::Duration => self.duration.map(|d| Cow::Owned(d.to_string())),
+                SongProperty::Other(name) => {
+                    self.metadata.get(name).map(|v| strategy.resolve_vec(v, tag_separator))
+                }
+                SongProperty::Disc => self.metadata.get("disc").map(|v| v.last().map(|s| Cow::Borrowed(s.as_str())).unwrap_or_default()),
+                SongProperty::Position => self.metadata.get("pos").and_then(|v| {
+                    v.last()
+                        .and_then(|s| s.parse::<usize>().ok())
+                        .map(|v| Cow::Owned((v + 1).to_string()))
+                }),
+                SongProperty::Track => self.metadata.get("track").map(|v| {
+                    Cow::Owned(
+                        v.last()
+                            .and_then(|s| s.parse::<u32>().ok())
+                            .map(|v| format!("{v:0>2}"))
+                            .unwrap_or_else(|| v.last().map(|s| s.to_string()).unwrap_or_default()),
+                    )
+                }),
+            }
+        }
+
+        fn matches<'a>(
         &self,
         formats: impl IntoIterator<Item = &'a Property<SongProperty>>,
         filter: &str,
@@ -573,21 +599,8 @@ impl Song {
         return false;
     }
 
-    fn default_as_line_ellipsized<'song, 'stickers: 'song>(
-        &'song self,
-        format: &Property<SongProperty>,
-        max_len: usize,
-        symbols: &SymbolsConfig,
-        tag_separator: &str,
-        strategy: TagResolutionStrategy,
-        ctx: &'stickers Ctx,
-    ) -> Option<Line<'song>> {
-        format.default.as_ref().and_then(|f| {
-            self.as_line_ellipsized(f.as_ref(), max_len, symbols, tag_separator, strategy, ctx)
-        })
-    }
 
-    pub fn as_line_ellipsized<'song, 'stickers: 'song>(
+    fn as_line_ellipsized<'song, 'stickers: 'song>(
         &'song self,
         format: &Property<SongProperty>,
         max_len: usize,
@@ -604,11 +617,13 @@ impl Song {
             PropertyKindOrText::Sticker(key) => ctx
                 .song_stickers(&self.file)
                 .and_then(|s| s.get(key))
-                .map(|sticker| Line::styled(sticker.ellipsize(max_len, symbols), style))
+                .map(|value| {
+                    Line::styled(value.ellipsize(max_len, symbols).to_string(), style)
+                })
                 .or_else(|| {
-                    format.default.as_ref().and_then(|format| {
+                    format.default.as_ref().and_then(|f| {
                         self.as_line_ellipsized(
-                            format.as_ref(),
+                            f.as_ref(),
                             max_len,
                             symbols,
                             tag_separator,
@@ -617,89 +632,66 @@ impl Song {
                         )
                     })
                 }),
-            PropertyKindOrText::Property(property) => {
-                self.format(property, tag_separator, strategy).map_or_else(
-                    || {
-                        self.default_as_line_ellipsized(
-                            format,
+            PropertyKindOrText::Property(property) => self
+                .format(property, tag_separator, strategy)
+                .map(|value| {
+                    Line::styled(value.ellipsize(max_len, symbols).to_string(), style)
+                })
+                .or_else(|| {
+                    format.default.as_ref().and_then(|f| {
+                        self.as_line_ellipsized(
+                            f.as_ref(),
                             max_len,
                             symbols,
                             tag_separator,
                             strategy,
                             ctx,
                         )
-                    },
-                    |v| Some(Line::styled(v.ellipsize(max_len, symbols).into_owned(), style)),
-                )
-            }
+                    })
+                }),
             PropertyKindOrText::Group(group) => {
-                let mut buf = Line::default().style(style);
-                for grformat in group {
-                    if let Some(res) = self.as_line_ellipsized(
-                        grformat,
+                let mut line = Line::default();
+                for property in group {
+                    if let Some(part) = self.as_line_ellipsized(
+                        property,
                         max_len,
                         symbols,
                         tag_separator,
                         strategy,
                         ctx,
                     ) {
-                        for span in res.spans {
-                            let span_style = span.style;
-                            buf.push_span(span.style(res.style).patch_style(span_style));
+                        for span in part.spans {
+                            line.spans.push(span);
                         }
-                    } else {
-                        return format.default.as_ref().and_then(|format| {
-                            self.as_line_ellipsized(
-                                format,
-                                max_len,
-                                symbols,
-                                tag_separator,
-                                strategy,
-                                ctx,
-                            )
-                        });
                     }
                 }
-                return Some(buf);
-            }
+                Some(line)
+            },
             PropertyKindOrText::Transform(Transform::Replace { content, replacements }) => self
                 .as_line_ellipsized(content, max_len, symbols, tag_separator, strategy, ctx)
                 .and_then(|line| {
-                    let mut content = String::new();
+                    let mut text_content = String::new();
                     for span in &line.spans {
-                        content.push_str(span.content.as_ref());
+                        text_content.push_str(span.content.as_ref());
                     }
 
-                    if let Some(replacement) = replacements.get(&content) {
-                        return self
-                            .as_line_ellipsized(
-                                replacement,
-                                max_len,
-                                symbols,
-                                tag_separator,
-                                strategy,
-                                ctx,
-                            )
-                            .or_else(|| {
-                                replacement.default.as_ref().and_then(|format| {
-                                    self.as_line_ellipsized(
-                                        format,
-                                        max_len,
-                                        symbols,
-                                        tag_separator,
-                                        strategy,
-                                        ctx,
-                                    )
-                                })
-                            });
+                    if let Some(replacement) = replacements.get(&text_content) {
+                        return self.as_line_ellipsized(
+                            replacement,
+                            max_len,
+                            symbols,
+                            tag_separator,
+                            strategy,
+                            ctx,
+                        );
                     }
 
                     Some(line)
                 })
                 .or_else(|| {
-                    format.default.as_ref().and_then(|format| {
+                    format.default.as_ref().and_then(|f| {
                         self.as_line_ellipsized(
-                            format,
+                            f.as_ref(),
                             max_len,
                             symbols,
                             tag_separator,
@@ -715,18 +707,20 @@ impl Song {
                         let mut remaining_len = *length;
                         let push_fn =
                             if *from_start { VecDeque::push_front } else { VecDeque::push_back };
-                        let truncate_fn =
-                            if *from_start { Span::truncate_start } else { Span::truncate_end };
                         let spans_len = line.spans.len();
 
-                        for i in 0..spans_len {
+                        for i in 0..line.spans.len() {
                             if remaining_len == 0 {
                                 break;
                             }
                             let i = if *from_start { spans_len - 1 - i } else { i };
                             let mut span = std::mem::take(&mut line.spans[i]);
 
-                            let remaining = truncate_fn(&mut span, remaining_len);
+                            let remaining = if *from_start {
+                                span.truncate_start(remaining_len)
+                            } else {
+                                span.truncate_end(remaining_len)
+                            };
                             push_fn(&mut buf, span);
                             remaining_len = remaining_len.saturating_sub(remaining);
                         }
@@ -735,9 +729,9 @@ impl Song {
                         line
                     })
                     .or_else(|| {
-                        format.default.as_ref().and_then(|format| {
+                        format.default.as_ref().and_then(|f| {
                             self.as_line_ellipsized(
-                                format,
+                                f.as_ref(),
                                 max_len,
                                 symbols,
                                 tag_separator,
@@ -749,7 +743,7 @@ impl Song {
             }
         }
     }
-}
+    }
 
 impl Property<SongProperty> {
     fn default(
@@ -905,16 +899,16 @@ impl Property<PropertyKind> {
                     .unwrap_or(style),
                 ))),
                 StatusProperty::Duration => {
-                    Some(Either::Left(Span::styled(status.duration.to_string(), style)))
+                Some(Either::Left(Span::styled(status.duration.map(|d| d.to_string()).unwrap_or_default(), style)))
                 }
                 StatusProperty::Elapsed => {
-                    Some(Either::Left(Span::styled(status.elapsed.to_string(), style)))
+                    Some(Either::Left(Span::styled(status.elapsed.map(|d| d.to_string()).unwrap_or_default(), style)))
                 }
                 StatusProperty::Partition => {
                     Some(Either::Left(Span::styled(&status.partition, style)))
                 }
                 StatusProperty::Volume => {
-                    Some(Either::Left(Span::styled(status.volume.value().to_string(), style)))
+                    Some(Either::Left(Span::styled(status.volume.to_string(), style)))
                 }
                 StatusProperty::Repeat { on_label, off_label, on_style, off_style } => {
                     Some(Either::Left(Span::styled(
@@ -1001,7 +995,7 @@ impl Property<PropertyKind> {
                                 .filter_map(|s| s.duration)
                                 .sum();
                             if current_song.duration.is_some() {
-                                total_remaining.saturating_sub(ctx.status.elapsed)
+                                total_remaining.saturating_sub(ctx.status.elapsed.unwrap_or_default())
                             } else {
                                 total_remaining
                             }
@@ -1019,7 +1013,7 @@ impl Property<PropertyKind> {
             },
             PropertyKindOrText::Property(PropertyKind::Widget(w)) => match w {
                 WidgetProperty::Volume => {
-                    Some(Either::Left(Span::styled(Volume::get_str(*status.volume.value()), style)))
+                    Some(Either::Left(Span::styled(status.volume.to_string(), style)))
                 }
                 WidgetProperty::States { active_style, separator_style } => {
                     let separator = Span::styled(" / ", *separator_style);
@@ -1095,11 +1089,13 @@ impl Property<PropertyKind> {
                 }
             }
             PropertyKindOrText::Transform(Transform::Truncate { content, length, from_start }) => {
-                let truncate_fn =
-                    if *from_start { Span::truncate_start } else { Span::truncate_end };
                 match content.as_span(song, ctx, tag_separator, strategy) {
                     Some(Either::Left(mut span)) => {
-                        truncate_fn(&mut span, *length);
+                        if *from_start {
+                            span.truncate_start(*length);
+                        } else {
+                            span.truncate_end(*length);
+                        }
                         Some(Either::Left(span))
                     }
                     Some(Either::Right(mut spans)) => {
@@ -1116,7 +1112,7 @@ impl Property<PropertyKind> {
                             let i = if *from_start { spans_len - 1 - i } else { i };
                             let mut span = std::mem::take(&mut spans[i]);
 
-                            let remaining = truncate_fn(&mut span, remaining_len);
+                            let remaining = if *from_start { span.truncate_start(*length) } else { span.truncate_end(*length) };
                             push_fn(&mut buf, span);
                             remaining_len = remaining_len.saturating_sub(remaining);
                         }
@@ -2399,4 +2395,5 @@ mod format_tests {
             assert_eq!(result, Some("innerfallbackouter".to_owned()));
         }
     }
+}
 }

@@ -36,8 +36,9 @@ use crate::{
         config_watcher::ERROR_CONFIG_MODAL_ID,
     },
     ctx::{Ctx, FETCH_SONG_STICKERS, LIKE_STICKER, RATING_STICKER},
+    domain::PlaybackState as State,
     mpd::{
-        commands::{State, SeekPosition, idle::IdleEvent},
+        commands::{SeekPosition, idle::IdleEvent},
         errors::{ErrorCode, MpdError, MpdFailureResponse},
         mpd_client::{MpdClient, MpdCommand, ValueChange},
         proto_client::ProtoClient,
@@ -367,13 +368,13 @@ impl<'ui> Ui<'ui> {
                     let keep_state = ctx.config.keep_state_on_song_change;
                     let state = ctx.status.state;
                     ctx.command(move |client| {
-                        client.next_keep_state(keep_state, state)?;
+                        client.next_keep_state(keep_state, state.into())?;
                         Ok(())
                     });
                 }
                 GlobalAction::PreviousTrack if ctx.status.state != State::Stop => {
                     let rewind_to_start = ctx.config.rewind_to_start_sec;
-                    let elapsed_sec = ctx.status.elapsed.as_secs();
+                    let elapsed_sec = ctx.status.elapsed.unwrap_or_default().as_secs();
                     let keep_state = ctx.config.keep_state_on_song_change;
                     let state = ctx.status.state;
                     ctx.command(move |client| {
@@ -382,11 +383,11 @@ impl<'ui> Ui<'ui> {
                                 if elapsed_sec >= value {
                                     client.seek_current(SeekPosition::Absolute(0.0))?;
                                 } else {
-                                    client.prev_keep_state(keep_state, state)?;
+                                    client.prev_keep_state(keep_state, state.into())?;
                                 }
                             }
                             None => {
-                                client.prev_keep_state(keep_state, state)?;
+                                client.prev_keep_state(keep_state, state.into())?;
                             }
                         }
                         Ok(())
@@ -416,9 +417,9 @@ impl<'ui> Ui<'ui> {
                     let single = ctx.status.single;
                     ctx.command(move |client| {
                         if client.version() < Version::new(0, 21, 0) {
-                            client.single(single.cycle_skip_oneshot())?;
+                            client.single(single.cycle_skip_oneshot().into())?;
                         } else {
-                            client.single(single.cycle())?;
+                            client.single(single.cycle().into())?;
                         }
                         Ok(())
                     });
@@ -427,9 +428,9 @@ impl<'ui> Ui<'ui> {
                     let consume = ctx.status.consume;
                     ctx.command(move |client| {
                         if client.version() < Version::new(0, 24, 0) {
-                            client.consume(consume.cycle_skip_oneshot())?;
+                            client.consume(consume.cycle_skip_oneshot().into())?;
                         } else {
-                            client.consume(consume.cycle())?;
+                            client.consume(consume.cycle().into())?;
                         }
                         Ok(())
                     });
@@ -437,14 +438,14 @@ impl<'ui> Ui<'ui> {
                 GlobalAction::ToggleSingleOnOff => {
                     let single = ctx.status.single;
                     ctx.command(move |client| {
-                        client.single(single.cycle_skip_oneshot())?;
+                        client.single(single.cycle_skip_oneshot().into())?;
                         Ok(())
                     });
                 }
                 GlobalAction::ToggleConsumeOnOff => {
                     let consume = ctx.status.consume;
                     ctx.command(move |client| {
-                        client.consume(consume.cycle_skip_oneshot())?;
+                        client.consume(consume.cycle_skip_oneshot().into())?;
                         Ok(())
                     });
                 }

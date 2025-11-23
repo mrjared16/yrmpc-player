@@ -16,8 +16,9 @@ use crate::{
         cli::{Command, RemoteCommandQuery},
     },
     ctx::Ctx,
+    domain::PlaybackState as State,
     mpd::{
-        commands::{IdleEvent, State},
+        commands::{IdleEvent, volume::Volume},
         mpd_client::{MpdClient, SaveMode},
     },
     shared::{
@@ -107,10 +108,10 @@ fn main_task<B: Backend + std::io::Write>(
                 .map(Duration::from_millis)
                 .map(|interval| ctx.scheduler.repeated(interval, run_status_update));
 
-            ctx.song_played = Some(ctx.status.elapsed);
+            ctx.song_played = ctx.status.elapsed;
         }
         State::Pause => {
-            ctx.song_played = Some(ctx.status.elapsed);
+            ctx.song_played = ctx.status.elapsed;
         }
         State::Stop => {}
     }
@@ -417,7 +418,7 @@ fn main_task<B: Backend + std::io::Write>(
                                                     ctx.queue
                                                         .iter()
                                                         .enumerate()
-                                                        .find(|(_, song)| song.id == id)
+                                                        .find(|(_, song)| song.id == Some(id))
                                                 })
                                                 .map(|(_, s)| s.file.clone()),
                                         )
@@ -448,7 +449,7 @@ fn main_task<B: Backend + std::io::Write>(
                             render_wanted = true;
                         }
                         ("global_volume_update", None, MpdQueryResult::Volume(volume)) => {
-                            ctx.status.volume = volume;
+                            ctx.status.volume = volume.0 as u8;
                             render_wanted = true;
                         }
                         ("global_queue_update", None, MpdQueryResult::Queue(queue)) => {
@@ -628,13 +629,13 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
                 .replace_id("volume")
                 .query(move |client| {
                     let status = client.get_status()?;
-                    Ok(MpdQueryResult::Volume(status.volume))
+                    Ok(MpdQueryResult::Volume(Volume::new(status.volume as u32)))
                 });
         }
         IdleEvent::Mixer => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.status()?,
+                    data: client.get_status()?,
                     source_event: Some(IdleEvent::Mixer),
                 })
             });
@@ -642,7 +643,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Options => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.status()?,
+                    data: client.get_status()?,
                     source_event: Some(IdleEvent::Options),
                 })
             });
@@ -650,7 +651,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Player => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.status()?,
+                    data: client.get_status()?,
                     source_event: Some(IdleEvent::Player),
                 })
             });
@@ -665,7 +666,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
                 ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status_from_playlist").query(
                     move |client| {
                         Ok(MpdQueryResult::Status {
-                            data: client.status()?,
+                            data: client.get_status()?,
                             source_event: Some(IdleEvent::Playlist),
                         })
                     },
@@ -686,7 +687,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Database => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
                 Ok(MpdQueryResult::Status {
-                    data: client.status()?,
+                    data: client.get_status()?,
                     source_event: Some(IdleEvent::Database),
                 })
             });

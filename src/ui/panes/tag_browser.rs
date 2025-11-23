@@ -13,10 +13,8 @@ use crate::{
         tabs::PaneType,
     },
     ctx::Ctx,
-    mpd::{
-        commands::Song,
-        mpd_client::{Filter, FilterKind, MpdClient, Tag},
-    },
+    domain::Song,
+    mpd::mpd_client::{Filter, FilterKind, MpdClient, Tag},
     player::Client,
     shared::{
         cmp::StringCompare,
@@ -105,7 +103,7 @@ impl TagBrowserPane {
                     .find_map(|tag| {
                         song.metadata
                             .get(Into::<&'static str>::into(tag))
-                            .map(|v| v.last().to_string())
+                            .and_then(|v| v.last().map(|s| s.clone()))
                     })
                     .unwrap_or_else(|| "<no date>".to_string());
 

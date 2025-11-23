@@ -6,8 +6,9 @@ use ratatui::{Frame, prelude::Rect, widgets::Paragraph};
 use super::Pane;
 use crate::{
     ctx::Ctx,
+    domain::PlaybackState as State,
     mpd::{
-        commands::{SeekPosition, State},
+        commands::SeekPosition,
         mpd_client::MpdClient,
     },
     shared::{
@@ -41,10 +42,11 @@ impl Pane for ProgressBarPane {
             }
             _ => {
                 let bar_cfg = &ctx.config.theme.progress_bar;
-                let value = if ctx.status.duration == Duration::ZERO {
+                let value = if ctx.status.duration.unwrap_or_default() == Duration::ZERO {
                     0.0
                 } else {
-                    ctx.status.elapsed.as_secs_f32() / ctx.status.duration.as_secs_f32()
+                    ctx.status.elapsed.map(|d| d.as_secs_f32()).unwrap_or(0.0)
+                        / ctx.status.duration.map(|d| d.as_secs_f32()).unwrap_or(1.0)
                 };
                 let bar = ProgressBar::builder()
                     .elapsed_style(bar_cfg.elapsed_style)
@@ -82,6 +84,7 @@ impl Pane for ProgressBarPane {
                 let second_to_seek_to = ctx
                     .status
                     .duration
+                    .unwrap_or_default()
                     .mul_f32(
                         f32::from(event.x.saturating_sub(self.area.x)) / f32::from(self.area.width),
                     )

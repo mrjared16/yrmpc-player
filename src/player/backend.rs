@@ -1,7 +1,10 @@
 
 use anyhow::Result;
 
-use crate::mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Version};
+use crate::{
+    domain::{Song, Status, QueuePosition},
+    mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Version},
+};
 
 /// Trait for music player backends (MPD, MPV, etc.)
 ///

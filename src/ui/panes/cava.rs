@@ -22,7 +22,7 @@ use crate::{
         theme::cava::{CavaTheme, Orientation},
     },
     ctx::Ctx,
-    mpd::commands::State,
+    domain::PlaybackState as State,
     shared::{
         dependencies::CAVA,
         key_event::KeyEvent,

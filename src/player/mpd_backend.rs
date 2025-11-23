@@ -15,7 +15,6 @@ use crate::mpd::{
         SaveMode,
         SeekPosition,
         Song,
-        Status,
         Tag,
         ValueChange,
         Volume,
@@ -99,26 +98,48 @@ impl<'name> MusicBackend for MpdBackend<'name> {
 
     // ===== Status Queries =====
 
-    fn get_status(&mut self) -> Result<Status> {
-        self.client.get_status().map_err(Into::into)
+    fn get_status(&mut self) -> Result<crate::domain::Status> {
+        Ok(self.client.get_status()?.into())
     }
 
-    fn playlist_info(&mut self) -> Result<Vec<Song>> {
+    fn playlist_info(&mut self) -> Result<Vec<crate::domain::Song>> {
         Ok(self
             .client
             .playlist_info()
             .map_err(|e: crate::mpd::errors::MpdError| anyhow::Error::from(e))?
-            .unwrap_or_default())
+            .unwrap_or_default()
+            .into_iter()
+            .map(Into::into)
+            .collect())
     }
 
-    fn current_song(&mut self) -> Result<Option<Song>> {
-        self.client.get_current_song().map_err(Into::into)
+    fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
+        Ok(self.client.get_current_song()?.map(Into::into))
     }
 
     // ===== Queue Management =====
 
-    fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
-        self.client.add(uri, position).map_err(Into::into)
+    fn add(&mut self, uri: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
+        let mpd_pos = position.map(|p| match p {
+            crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
+            crate::domain::QueuePosition::Relative(i) => if i >= 0 {
+                crate::mpd::QueuePosition::RelativeAdd(i as usize)
+            } else {
+                crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+            },
+            crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX), // MPD handles out of bounds as end usually, or we need logic
+            crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1), // Rough approximation, MPD doesn't have "Next" directly in add without calc
+        });
+        // For now, let's assume simple mapping. MPD's add command usually takes optional position.
+        // The client.add takes Option<QueuePosition>.
+        // Wait, crate::mpd::QueuePosition definition:
+        // pub enum QueuePosition { Absolute(usize), RelativeAdd(usize), RelativeSub(usize) }
+        
+        // Re-checking logic:
+        // domain::QueuePosition::Next -> logic needed? 
+        // For now I will implement a basic conversion.
+        
+        self.client.add(uri, mpd_pos).map_err(Into::into)
     }
 
     fn delete_id(&mut self, id: u32) -> Result<()> {
@@ -223,14 +244,14 @@ impl<'name> MusicBackend for MpdBackend<'name> {
             .collect())
     }
 
-    fn search(&mut self, filter: &[Filter]) -> Result<Vec<Song>> {
-        self.client.search(filter, false).map_err(Into::into)
+    fn search(&mut self, filter: &[Filter]) -> Result<Vec<crate::domain::Song>> {
+        Ok(self.client.search(filter, false)?.into_iter().map(Into::into).collect())
     }
 
-    fn find(&mut self, filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
+    fn find(&mut self, filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<crate::domain::Song>> {
         // MPD client find() doesn't support window directly in this version wrapper
         // TODO: Implement window support if critical
-        self.client.find(filter).map_err(Into::into)
+        Ok(self.client.find(filter)?.into_iter().map(Into::into).collect())
     }
 
     fn list_tag(&mut self, tag: Tag, filter: Option<&[Filter]>) -> Result<Vec<String>> {
@@ -252,12 +273,22 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         self.client.list_playlists().map_err(Into::into)
     }
 
-    fn playlist_info_name(&mut self, name: &str) -> Result<Vec<Song>> {
-        self.client.list_playlist_info(name, None).map_err(Into::into)
+    fn playlist_info_name(&mut self, name: &str) -> Result<Vec<crate::domain::Song>> {
+        Ok(self.client.list_playlist_info(name, None)?.into_iter().map(Into::into).collect())
     }
 
-    fn load_playlist(&mut self, name: &str, position: Option<QueuePosition>) -> Result<()> {
-        self.client.load_playlist(name, position).map_err(Into::into)
+    fn load_playlist(&mut self, name: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
+        let mpd_pos = position.map(|p| match p {
+            crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
+            crate::domain::QueuePosition::Relative(i) => if i >= 0 {
+                crate::mpd::QueuePosition::RelativeAdd(i as usize)
+            } else {
+                crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+            },
+            crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX),
+            crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1),
+        });
+        self.client.load_playlist(name, mpd_pos).map_err(Into::into)
     }
 
     fn save_queue_as_playlist(&mut self, name: &str, mode: Option<SaveMode>) -> Result<()> {

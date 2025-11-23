@@ -7,7 +7,7 @@ use strum::{Display, EnumDiscriminants, VariantArray};
 use super::ToDescription;
 use crate::{
     config::{tabs::TabName, utils::tilde_expand},
-    mpd::{QueuePosition, commands::Song},
+    mpd::QueuePosition,
     shared::macros::status_warn,
 };
 
@@ -486,7 +486,7 @@ pub struct AddOpts {
 impl AddOpts {
     pub fn autoplay_idx_and_queue_position(
         self,
-        queue: &[Song],
+        queue: &[crate::domain::Song],
         current_song_idx: Option<usize>,
         hovered_song_idx: Option<usize>,
     ) -> anyhow::Result<(Option<usize>, Option<QueuePosition>)> {
@@ -497,7 +497,7 @@ impl AddOpts {
         ))
     }
 
-    fn to_album_ranges(queue: &[Song]) -> Vec<Range<usize>> {
+    fn to_album_ranges(queue: &[crate::domain::Song]) -> Vec<Range<usize>> {
         let mut out = Vec::new();
         let mut i = 0;
         while i < queue.len() {
@@ -558,7 +558,7 @@ impl AddOpts {
 
     fn autoplay_idx(
         self,
-        queue: &[Song],
+        queue: &[crate::domain::Song],
         current_song_idx: Option<usize>,
         hovered_song_idx: Option<usize>,
         same_album_ranges: &[Range<usize>],

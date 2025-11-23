@@ -19,7 +19,6 @@ pub mod update;
 pub mod volume;
 
 pub use self::{
-    count::Count,
     current_song::Song,
     decoders::Decoder,
     idle::IdleEvent,

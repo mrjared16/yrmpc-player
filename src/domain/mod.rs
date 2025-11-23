@@ -7,5 +7,5 @@ pub mod queue;
 
 // Re-export main types for convenience
 pub use song::Song;
-pub use status::{Status, State as PlaybackState};
+pub use status::{Status, State as PlaybackState, OnOffOneshot};
 pub use queue::QueuePosition;

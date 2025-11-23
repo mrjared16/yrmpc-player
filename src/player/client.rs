@@ -4,6 +4,7 @@ use anyhow::Result;
 
 use crate::{
     config::PlayerBackend,
+    domain::QueuePosition,
     mpd::{
         MpdClient,
         commands::{
@@ -13,11 +14,9 @@ use crate::{
             OnOffOneshot,
             Output,
             Playlist,
-            QueuePosition,
             SaveMode,
             SeekPosition,
             Song,
-            Status,
             Tag,
             stickers::Sticker,
             ValueChange,
@@ -138,19 +137,19 @@ impl<'name> Client<'name> {
         self.backend_mut().seek_current(position)
     }
 
-    pub fn status(&mut self) -> Result<Status> {
+    pub fn get_status(&mut self) -> Result<crate::domain::Status> {
         self.backend_mut().get_status()
     }
 
-    pub fn playlist_info(&mut self) -> Result<Vec<Song>> {
+    pub fn playlist_info(&mut self) -> Result<Vec<crate::domain::Song>> {
         self.backend_mut().playlist_info()
     }
 
-    pub fn current_song(&mut self) -> Result<Option<Song>> {
+    pub fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
         self.backend_mut().current_song()
     }
 
-    pub fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
+    pub fn add(&mut self, uri: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
         self.backend_mut().add(uri, position)
     }
 
@@ -184,13 +183,13 @@ impl<'name> Client<'name> {
         }
     }
 
-    pub fn get_current_song(&mut self) -> Result<Option<Song>> {
+    pub fn get_current_song(&mut self) -> Result<Option<crate::domain::Song>> {
         self.current_song()
     }
 
-    pub fn find_one(&mut self, filter: &[Filter]) -> Result<Option<Song>> {
+    pub fn find_one(&mut self, filter: &[Filter]) -> Result<Option<crate::domain::Song>> {
         match self {
-            Client::Mpd(b) => b.client.find_one(filter).map_err(Into::into),
+            Client::Mpd(b) => Ok(b.client.find_one(filter)?.map(Into::into)),
             Client::Mpv(_) => Ok(None),
         }
     }
@@ -253,15 +252,15 @@ impl<'name> Client<'name> {
         self.backend_mut().list_all(path)
     }
 
-    pub fn search(&mut self, filter: &[crate::mpd::mpd_client::Filter]) -> Result<Vec<Song>> {
+    pub fn search(&mut self, filter: &[Filter]) -> Result<Vec<crate::domain::Song>> {
         self.backend_mut().search(filter)
     }
 
     pub fn find(
         &mut self,
-        filter: &[crate::mpd::mpd_client::Filter],
+        filter: &[Filter],
         window: Option<(u32, u32)>,
-    ) -> Result<Vec<Song>> {
+    ) -> Result<Vec<crate::domain::Song>> {
         self.backend_mut().find(filter, window)
     }
 
@@ -284,11 +283,11 @@ impl<'name> Client<'name> {
         self.backend_mut().list_playlists()
     }
 
-    pub fn playlist_info_name(&mut self, name: &str) -> Result<Vec<Song>> {
+    pub fn playlist_info_name(&mut self, name: &str) -> Result<Vec<crate::domain::Song>> {
         self.backend_mut().playlist_info_name(name)
     }
 
-    pub fn load_playlist(&mut self, name: &str, position: Option<QueuePosition>) -> Result<()> {
+    pub fn load_playlist(&mut self, name: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
         self.backend_mut().load_playlist(name, position)
     }
 
@@ -541,9 +540,7 @@ impl<'name> Client<'name> {
     }
 
     /// Get status (alias for status method)
-    pub fn get_status(&mut self) -> Result<Status> {
-        self.status()
-    }
+
 
     pub fn pause_toggle(&mut self) -> Result<()> {
         match self {
@@ -562,10 +559,10 @@ impl<'name> Client<'name> {
     pub fn move_in_queue(
         &mut self,
         from: crate::mpd::mpd_client::SingleOrRange,
-        to: crate::mpd::commands::QueuePosition,
+        to: QueuePosition,
     ) -> Result<()> {
         match self {
-            Client::Mpd(b) => b.client.move_in_queue(from, to).map_err(Into::into),
+            Client::Mpd(b) => b.client.move_in_queue(from, to.into()).map_err(Into::into),
             Client::Mpv(_) => {
                 log::debug!("move_in_queue not supported in MPV backend");
                 Ok(())
@@ -591,11 +588,14 @@ impl<'name> Client<'name> {
         &mut self,
         playlist: &str,
         range: Option<SingleOrRange>,
-    ) -> Result<Vec<Song>> {
+    ) -> Result<Vec<crate::domain::Song>> {
         match self {
-            Client::Mpd(b) => b.client.list_playlist_info(playlist, range).map_err(Into::into),
+            Client::Mpd(b) => b.client
+                .list_playlist_info(playlist, range)
+                .map(|songs| songs.into_iter().map(Into::into).collect())
+                .map_err(Into::into),
             Client::Mpv(_) => {
-                log::debug!("list_playlist_info not supported in MPV backend");
+                // MPV doesn't support playlists, return empty
                 Ok(Vec::new())
             }
         }
@@ -704,7 +704,7 @@ impl<'name> Client<'name> {
     /// Send add command (MPD only - for batching)
     pub fn send_add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
         match self {
-            Client::Mpd(b) => b.client.send_add(uri, position).map_err(Into::into),
+            Client::Mpd(b) => b.client.send_add(uri, position.map(Into::into)).map_err(Into::into),
             Client::Mpv(_) => {
                 // For MPV, just add directly
                 self.add(uri, position)
@@ -818,7 +818,7 @@ impl<'name> Client<'name> {
     /// Send find and add command (MPD only)
     pub fn send_find_add(&mut self, filter: &[Filter], position: Option<QueuePosition>) -> Result<()> {
         match self {
-            Client::Mpd(b) => b.client.send_find_add(filter, position).map_err(Into::into),
+            Client::Mpd(b) => b.client.send_find_add(filter, position.map(Into::into)).map_err(Into::into),
             Client::Mpv(_) => Ok(()),
         }
     }

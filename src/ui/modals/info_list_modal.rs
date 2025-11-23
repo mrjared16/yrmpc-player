@@ -16,14 +16,14 @@ use super::{Modal, RectExt};
 use crate::{
     config::keys::CommonAction,
     ctx::Ctx,
-    mpd::commands::Song,
+    domain::Song,
     shared::{
         ext::duration::DurationExt,
         id::{self, Id},
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
     },
-    ui::dirstack::DirState,
+    ui::{dirstack::DirState, panes::browser::SongExt},
 };
 
 #[derive(Debug)]

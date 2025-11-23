@@ -10,10 +10,8 @@ use crate::{
     MpdQueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
-    mpd::{
-        commands::Song,
-        mpd_client::{MpdClient, SingleOrRange},
-    },
+    domain::Song,
+    mpd::mpd_client::{MpdClient, SingleOrRange},
     player::Client,
     shared::{
         cmp::StringCompare,

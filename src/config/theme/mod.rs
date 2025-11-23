@@ -296,6 +296,15 @@ impl TagResolutionStrategy {
             TagResolutionStrategy::Nth(idx) => tag.nth(idx).into(),
         }
     }
+
+    pub fn resolve_vec<'a>(self, values: &'a [String], separator: &str) -> std::borrow::Cow<'a, str> {
+        match self {
+            TagResolutionStrategy::First => values.first().map(|s| s.as_str()).unwrap_or("").into(),
+            TagResolutionStrategy::Last => values.last().map(|s| s.as_str()).unwrap_or("").into(),
+            TagResolutionStrategy::All => std::borrow::Cow::Owned(values.join(separator)),
+            TagResolutionStrategy::Nth(idx) => values.get(idx).map(|s| s.as_str()).unwrap_or("").into(),
+        }
+    }
 }
 
 // Converts all components while also resolving dependencies between them. If a

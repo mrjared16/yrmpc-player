@@ -16,7 +16,7 @@ use crate::mpd::{
 #[derive(Debug)]
 pub struct MpvBackend {
     ipc: Arc<Mutex<MpvIpc>>,
-    queue: Arc<Mutex<Vec<Song>>>,
+    queue: Arc<Mutex<Vec<crate::domain::Song>>>,
     current_index: Arc<Mutex<usize>>,
 }
 
@@ -141,70 +141,43 @@ impl MusicBackend for MpvBackend {
 
     // ===== Status Queries =====
 
-    fn get_status(&mut self) -> Result<Status> {
+
+    fn get_status(&mut self) -> Result<crate::domain::Status> {
         let mut ipc = self.ipc.lock();
+        let paused: bool = serde_json::from_value(ipc.get_property("pause")?)?;
+        let volume: f64 = serde_json::from_value(ipc.get_property("volume")?)?;
+        let time_pos: f64 = ipc.get_property("time-pos").ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or(0.0);
+        let duration: f64 = ipc.get_property("duration").ok().and_then(|v| serde_json::from_value(v).ok()).unwrap_or(0.0);
 
-        let paused: bool =
-            serde_json::from_value(ipc.get_property("pause").unwrap_or(serde_json::json!(true)))
-                .unwrap_or(true);
-
-        let idle: bool = serde_json::from_value(
-            ipc.get_property("idle-active").unwrap_or(serde_json::json!(true)),
-        )
-        .unwrap_or(true);
-
-        let time_pos: f64 =
-            serde_json::from_value(ipc.get_property("time-pos").unwrap_or(serde_json::json!(0.0)))
-                .unwrap_or(0.0);
-
-        let duration: f64 =
-            serde_json::from_value(ipc.get_property("duration").unwrap_or(serde_json::json!(0.0)))
-                .unwrap_or(0.0);
-
-        let volume: f64 =
-            serde_json::from_value(ipc.get_property("volume").unwrap_or(serde_json::json!(100.0)))
-                .unwrap_or(100.0);
-
-        let state = if idle {
-            State::Stop
-        } else if paused {
-            State::Pause
-        } else {
-            State::Play
-        };
-
-        Ok(Status {
-            partition: String::from("default"),
-            state,
-            volume: Volume::new(volume as u32),
-            repeat: false,
+        Ok(crate::domain::Status {
+            state: if paused { crate::domain::PlaybackState::Pause } else { crate::domain::PlaybackState::Play },
+            volume: volume as u8,
+            elapsed: Some(std::time::Duration::from_secs_f64(time_pos)),
+            duration: Some(std::time::Duration::from_secs_f64(duration)),
+            repeat: false, // TODO: Implement property fetching
             random: false,
-            single: OnOffOneshot::Off,
-            consume: OnOffOneshot::Off,
-            playlist: Some(1),
-            playlistlength: self.queue.lock().len() as u32,
-            song: Some(*self.current_index.lock() as u32),
+            single: crate::domain::OnOffOneshot::Off,
+            consume: crate::domain::OnOffOneshot::Off,
+            playlist: None,
+            playlistlength: 0,
             songid: None,
-            nextsong: None,
-            nextsongid: None,
-            elapsed: std::time::Duration::from_secs_f64(time_pos),
-            duration: std::time::Duration::from_secs_f64(duration),
+            next_songid: None,
+            song_position: None,
             bitrate: None,
-            xfade: None,
-            mixrampdb: None,
-            mixrampdelay: None,
-            audio: None,
-            updating_db: None,
             error: None,
+            updating_db: None,
+            xfade: None,
+            partition: String::from("default"),
             lastloadedplaylist: None,
         })
     }
 
-    fn playlist_info(&mut self) -> Result<Vec<Song>> {
-        Ok(self.queue.lock().clone())
+    fn playlist_info(&mut self) -> Result<Vec<crate::domain::Song>> {
+        let queue = self.queue.lock();
+        Ok(queue.clone())
     }
 
-    fn current_song(&mut self) -> Result<Option<Song>> {
+    fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
         let queue = self.queue.lock();
         let idx = *self.current_index.lock();
         Ok(queue.get(idx).cloned())
@@ -212,24 +185,19 @@ impl MusicBackend for MpvBackend {
 
     // ===== Queue Management =====
 
-    fn add(&mut self, uri: &str, _position: Option<QueuePosition>) -> Result<()> {
-        // Create a minimal Song struct
-        let song = Song {
+    fn add(&mut self, uri: &str, _position: Option<crate::domain::QueuePosition>) -> Result<()> {
+        let mut queue = self.queue.lock();
+        // Simple append for now
+        queue.push(crate::domain::Song {
             file: uri.to_string(),
-            duration: None,
-            id: self.queue.lock().len() as u32,
-            metadata: std::collections::HashMap::new(),
-            last_modified: chrono::Utc::now(),
-            added: Some(chrono::Utc::now()),
-        };
-
-        self.queue.lock().push(song);
+            ..Default::default()
+        });
         Ok(())
     }
 
     fn delete_id(&mut self, id: u32) -> Result<()> {
         let mut queue = self.queue.lock();
-        queue.retain(|s| s.id != id);
+        queue.retain(|s| s.id == Some(id));
         Ok(())
     }
 
@@ -242,8 +210,8 @@ impl MusicBackend for MpvBackend {
     fn move_id(&mut self, from: u32, to: u32) -> Result<()> {
         // Simplified implementation
         let mut queue = self.queue.lock();
-        if let Some(from_idx) = queue.iter().position(|s| s.id == from) {
-            if let Some(to_idx) = queue.iter().position(|s| s.id == to) {
+        if let Some(from_idx) = queue.iter().position(|s| s.id == Some(from)) {
+            if let Some(to_idx) = queue.iter().position(|s| s.id == Some(to)) {
                 queue.swap(from_idx, to_idx);
             }
         }
@@ -252,7 +220,7 @@ impl MusicBackend for MpvBackend {
 
     fn play_id(&mut self, id: u32) -> Result<()> {
         let queue = self.queue.lock();
-        if let Some((idx, song)) = queue.iter().enumerate().find(|(_, s)| s.id == id) {
+        if let Some((idx, song)) = queue.iter().enumerate().find(|(_, s)| s.id == Some(id)) {
             *self.current_index.lock() = idx;
             let mut ipc = self.ipc.lock();
             ipc.send_command(vec!["loadfile", &song.file])?;
@@ -328,12 +296,12 @@ impl MusicBackend for MpvBackend {
         Ok(vec![])
     }
 
-    fn search(&mut self, _filter: &[Filter]) -> Result<Vec<Song>> {
+    fn search(&mut self, _filter: &[Filter]) -> Result<Vec<crate::domain::Song>> {
         // MPV doesn't support search
         Ok(Vec::new())
     }
 
-    fn find(&mut self, _filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
+    fn find(&mut self, _filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<crate::domain::Song>> {
         Ok(vec![])
     }
 
@@ -351,11 +319,11 @@ impl MusicBackend for MpvBackend {
         Ok(vec![])
     }
 
-    fn playlist_info_name(&mut self, _name: &str) -> Result<Vec<Song>> {
+    fn playlist_info_name(&mut self, _name: &str) -> Result<Vec<crate::domain::Song>> {
         Ok(vec![])
     }
 
-    fn load_playlist(&mut self, _name: &str, _position: Option<QueuePosition>) -> Result<()> {
+    fn load_playlist(&mut self, _name: &str, _position: Option<crate::domain::QueuePosition>) -> Result<()> {
         Ok(())
     }
 

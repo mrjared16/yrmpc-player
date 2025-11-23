@@ -30,9 +30,9 @@ use crate::{
     },
     core::command::{create_env, run_external},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
+    domain::{Song, QueuePosition},
+    ui::panes::browser::SongExt,
     mpd::{
-        QueuePosition,
-        commands::Song,
         mpd_client::{MpdClient, SingleOrRange},
     },
     player::Client,
@@ -155,7 +155,7 @@ impl QueuePane {
                 section.add_item("Play", move |ctx| {
                     if let Some(id) = selected_song_id {
                         ctx.command(move |client| {
-                            client.play_id(id)?;
+                            client.play_id(id.unwrap_or_default())?;
                             Ok(())
                         });
                     }
@@ -227,7 +227,7 @@ impl QueuePane {
                     .item("Remove", move |ctx| {
                         if let Some(id) = selected_song_id {
                             ctx.command(move |client| {
-                                client.delete_id(id)?;
+                                client.delete_id(id.unwrap_or_default())?;
                                 Ok(())
                             });
                         }
@@ -586,7 +586,7 @@ impl Pane for QueuePane {
                 {
                     let id = song.id;
                     ctx.command(move |client| {
-                        client.play_id(id)?;
+                        client.play_id(id.unwrap_or_default())?;
                         Ok(())
                     });
                 }
@@ -602,7 +602,7 @@ impl Pane for QueuePane {
                 {
                     let id = selected_song.id;
                     ctx.command(move |client| {
-                        client.delete_id(id)?;
+                        client.delete_id(id.unwrap_or_default())?;
                         Ok(())
                     });
                 }
@@ -749,7 +749,7 @@ impl Pane for QueuePane {
                     if let Some(selected_song) = self.queue.selected() {
                         let id = selected_song.id;
                         ctx.command(move |client| {
-                            client.delete_id(id)?;
+                            client.delete_id(id.unwrap_or_default())?;
                             Ok(())
                         });
                     } else {
@@ -781,14 +781,14 @@ impl Pane for QueuePane {
                     if let Some(selected_song) = self.queue.selected() {
                         let id = selected_song.id;
                         ctx.command(move |client| {
-                            client.play_id(id)?;
+                            client.play_id(id.unwrap_or_default())?;
                             Ok(())
                         });
                     }
                 }
                 QueueActions::JumpToCurrent => {
                     if let Some((idx, _)) = ctx.status.songid.and_then(|id| {
-                        self.queue.items.iter().enumerate().find(|(_, song)| song.id == id)
+                        self.queue.items.iter().enumerate().find(|(_, song)| song.id == Some(id))
                     }) {
                         self.queue.select_idx(idx, ctx.config.scrolloff);
                         ctx.render()?;
@@ -995,7 +995,7 @@ impl Pane for QueuePane {
                     let new_idx = idx.saturating_sub(1);
                     let id = selected.id;
                     ctx.command(move |client| {
-                        client.move_id(id, new_idx as u32)?;
+                        client.move_id(id.unwrap_or_default(), new_idx as u32)?;
                         Ok(())
                     });
                     self.queue.select_idx(new_idx, ctx.config.scrolloff);
@@ -1014,7 +1014,7 @@ impl Pane for QueuePane {
                     let new_idx = (idx + 1).min(self.queue.len() - 1);
                     let id = selected.id;
                     ctx.command(move |client| {
-                        client.move_id(id, new_idx as u32)?;
+                        client.move_id(id.unwrap_or_default(), new_idx as u32)?;
                         Ok(())
                     });
                     self.queue.select_idx(new_idx, ctx.config.scrolloff);

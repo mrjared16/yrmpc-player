@@ -5,10 +5,11 @@ use serde::{Deserialize, Serialize};
 
 /// Domain model for a song/track
 /// Backend-agnostic - can be populated from MPD, YouTube Music, Spotify, etc.
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Song {
     /// Unique ID for this song in the current context
-    pub id: u32,
+    /// Option because not all backends provide IDs
+    pub id: Option<u32>,
     
     /// URI/path to the song (can be local path, URL, or backend-specific identifier)
     pub file: String,
@@ -30,7 +31,7 @@ pub struct Song {
 impl Default for Song {
     fn default() -> Self {
         Self {
-            id: 0,
+            id: None,
             file: String::new(),
             duration: None,
             metadata: HashMap::new(),
@@ -49,7 +50,7 @@ impl Song {
             .map(|s| s.as_str())
             .unwrap_or(&self.file)
     }
-    
+
     /// Get the artist from metadata
     pub fn artist(&self) -> Option<&str> {
         self.metadata
@@ -57,7 +58,7 @@ impl Song {
             .and_then(|v| v.first())
             .map(|s| s.as_str())
     }
-    
+
     /// Get the album from metadata
     pub fn album(&self) -> Option<&str> {
         self.metadata
@@ -67,26 +68,23 @@ impl Song {
     }
 }
 
-// Conversion from MPD Song to domain Song
+/// Conversion from MPD Song to domain Song
 impl From<crate::mpd::commands::current_song::Song> for Song {
     fn from(mpd_song: crate::mpd::commands::current_song::Song) -> Self {
         use crate::mpd::commands::metadata_tag::MetadataTag;
         
-        // Convert MPD MetadataTag to Vec<String>
-        let metadata = mpd_song
-            .metadata
-            .into_iter()
-            .map(|(key, tag)| {
-                let values = match tag {
-                    MetadataTag::Single(v) => vec![v],
-                    MetadataTag::Multiple(v) => v,
-                };
-                (key, values)
-            })
-            .collect();
-        
+        // Convert metadata from HashMap<String, MetadataTag> to HashMap<String, Vec<String>>
+        let metadata = mpd_song.metadata.into_iter().map(|(key, tag)| {
+            // Convert MetadataTag enum to Vec<String>
+            let values = match tag {
+                MetadataTag::Single(s) => vec![s],
+                MetadataTag::Multiple(v) => v,
+            };
+            (key, values)
+        }).collect();
+
         Self {
-            id: mpd_song.id,
+            id: Some(mpd_song.id),
             file: mpd_song.file,
             duration: mpd_song.duration,
             metadata,

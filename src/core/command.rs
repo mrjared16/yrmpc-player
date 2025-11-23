@@ -11,7 +11,7 @@ use crate::{
     ctx::Ctx,
     mpd::{
         QueuePosition,
-        commands::{IdleEvent, State, SeekPosition, mpd_config::MpdConfig, volume::Bound},
+        commands::{IdleEvent, SeekPosition, mpd_config::MpdConfig},
         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
         proto_client::ProtoClient,
         version::Version,
@@ -72,7 +72,7 @@ impl Command {
                         loop {
                             client.idle(Some(IdleEvent::Update))?;
                             log::trace!("issuing update");
-                            let crate::mpd::commands::Status { updating_db, .. } =
+                            let crate::domain::Status { updating_db, .. } =
                                 client.get_status()?;
                             log::trace!("update done");
                             match updating_db {
@@ -136,7 +136,7 @@ impl Command {
             Command::Pause => Ok(Box::new(|client| Ok(client.pause()?))),
             Command::TogglePause => Ok(Box::new(|client| {
                 let status = client.get_status()?;
-                if matches!(status.state, State::Play | State::Pause) {
+                if matches!(status.state, crate::domain::PlaybackState::Play | crate::domain::PlaybackState::Pause) {
                     client.pause_toggle()?;
                 } else {
                     client.play()?;
@@ -149,25 +149,25 @@ impl Command {
                 Ok(Box::new(move |client| Ok(client.volume(value.parse()?)?)))
             }
             Command::Volume { value: None } => Ok(Box::new(|client| {
-                println!("{}", client.get_status()?.volume.value());
+                println!("{}", client.get_status()?.volume);
                 Ok(())
             })),
             Command::Next { keep_state } => Ok(Box::new(move |client| {
                 let status = client.get_status()?;
-                Ok(client.next_keep_state(keep_state, status.state)?)
+                Ok(client.next_keep_state(keep_state, status.state.into())?)
             })),
             Command::Prev { rewind_to_start, keep_state } => Ok(Box::new(move |client| {
                 let status = client.get_status()?;
                 match rewind_to_start {
                     Some(value) => {
-                        if status.elapsed.as_secs() >= value {
+                        if status.elapsed.map(|d| d.as_secs()).unwrap_or(0) >= value {
                             client.seek_current(SeekPosition::Absolute(0.0))?;
                         } else {
-                            client.prev_keep_state(keep_state, status.state)?;
+                            client.prev_keep_state(keep_state, status.state.into())?;
                         }
                     }
                     None => {
-                        client.prev_keep_state(keep_state, status.state)?;
+                        client.prev_keep_state(keep_state, status.state.into())?;
                     }
                 }
                 Ok(())
@@ -195,18 +195,18 @@ impl Command {
             Command::ToggleSingle { skip_oneshot } => Ok(Box::new(move |client| {
                 let status = client.get_status()?;
                 if skip_oneshot || client.version() < Version::new(0, 21, 0) {
-                    client.single(status.single.cycle_skip_oneshot())?;
+                    client.single(status.single.cycle_skip_oneshot().into())?;
                 } else {
-                    client.single(status.single.cycle())?;
+                    client.single(status.single.cycle().into())?;
                 }
                 Ok(())
             })),
             Command::ToggleConsume { skip_oneshot } => Ok(Box::new(move |client| {
                 let status = client.get_status()?;
                 if skip_oneshot || client.version() < Version::new(0, 24, 0) {
-                    client.consume(status.consume.cycle_skip_oneshot())?;
+                    client.consume(status.consume.cycle_skip_oneshot().into())?;
                 } else {
-                    client.consume(status.consume.cycle())?;
+                    client.consume(status.consume.cycle().into())?;
                 }
                 Ok(())
             })),
@@ -268,10 +268,10 @@ impl Command {
                                     .trim_start_matches(&dir)
                                     .trim_start_matches('/')
                                     .trim_end_matches('/'),
-                                position,
+                                position.map(|p| p.into()),
                             )?;
                         } else {
-                            client.add(&file.to_string_lossy(), position)?;
+                            client.add(&file.to_string_lossy(), position.map(|p| p.into()))?;
                         }
                     }
 
@@ -279,11 +279,11 @@ impl Command {
                 }))
             }
             Command::Add { mut files, position, .. } => Ok(Box::new(move |client| {
-                if let Some(QueuePosition::Absolute(_) | QueuePosition::RelativeAdd(_)) = position {
+                if let Some(crate::mpd::QueuePosition::Absolute(_) | crate::mpd::QueuePosition::RelativeAdd(_) | crate::mpd::QueuePosition::RelativeSub(_)) = position {
                     files.reverse();
                 }
                 for file in files {
-                    client.add(&file.to_string_lossy(), position)?;
+                    client.add(&file.to_string_lossy(), position.map(Into::into))?;
                 }
 
                 Ok(())
@@ -293,7 +293,7 @@ impl Command {
                 Ok(Box::new(move |client| {
                     client.send_start_cmd_list()?;
                     for file in file_paths {
-                        client.send_add(&file, position)?;
+                        client.send_add(&file, position.map(Into::into))?;
                     }
                     client.send_execute_cmd_list()?;
                     client.read_ok()?;
@@ -311,7 +311,7 @@ impl Command {
                 Ok(Box::new(move |client| {
                     client.send_start_cmd_list()?;
                     for file in &file_paths {
-                        client.send_add(file, position)?;
+                        client.send_add(file, position.map(Into::into))?;
                     }
                     client.send_execute_cmd_list()?;
                     client.read_ok()?;
@@ -531,7 +531,7 @@ pub fn create_env<'a>(
     if let Some((_, current)) = ctx.find_current_song_in_queue() {
         result.push(("CURRENT_SONG".to_owned(), current.file.clone()));
         result.extend(
-            current.metadata.iter().map(|(k, v)| (k.to_ascii_uppercase(), v.last().to_owned())),
+            current.metadata.iter().map(|(k, v)| (k.to_ascii_uppercase(), v.last().map(|s| s.to_string()).unwrap_or_default())),
         );
         let lrc_path = ctx
             .config
