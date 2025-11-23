@@ -657,10 +657,17 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
             });
         }
         IdleEvent::Playlist => {
+            log::debug!("Queue update requested");
+            let app_state = ctx.app_state.clone();
             ctx.query()
                 .id(GLOBAL_QUEUE_UPDATE)
                 .replace_id("playlist")
-                .query(move |client| Ok(MpdQueryResult::Queue(Some(client.playlist_info()?))));
+                .query(move |client| {
+                    let queue = client.playlist_info()?;
+                    // Sync to AppState
+                    app_state.write().unwrap().replace_queue(queue.clone());
+                    Ok(MpdQueryResult::Queue(Some(queue)))
+                });
             if ctx.config.reflect_changes_to_playlist {
                 // Do not replace because we want to update currently loaded playlist if any
                 ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status_from_playlist").query(

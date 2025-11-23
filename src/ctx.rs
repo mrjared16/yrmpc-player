@@ -97,6 +97,10 @@ impl Ctx {
 
         let status = client.get_status()?;
         let queue = client.playlist_info()?;
+        
+        // Initialize AppState with current MPD queue
+        let app_state = Arc::new(RwLock::new(crate::app_state::AppState::new()));
+        app_state.write().unwrap().replace_queue(queue.clone());
 
         if !supported_commands.contains("albumart") || !supported_commands.contains("readpicture") {
             config.album_art.method = ImageMethod::None;
@@ -113,7 +117,7 @@ impl Ctx {
             config: std::sync::Arc::new(config),
             status,
             queue,
-            app_state: Arc::new(RwLock::new(crate::app_state::AppState::new())),
+            app_state,
             stickers: HashMap::new(),
             active_tab,
             supported_commands,
