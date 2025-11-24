@@ -288,6 +288,11 @@ impl MusicBackend for MpvBackend {
 
     // ===== Library Browsing (Stubs - MPV doesn't have a library) =====
 
+    fn get_search_suggestions(&mut self, _query: String) -> Result<Vec<String>> {
+        // MPV backend doesn't support search suggestions
+        Ok(vec![])
+    }
+
     fn lsinfo(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
         Ok(vec![])
     }
@@ -327,7 +332,7 @@ impl MusicBackend for MpvBackend {
         Ok(())
     }
 
-    fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {
+    fn save_queue_as_playlist(&mut self, _name: &str, _mode: Option<SaveMode>) -> Result<()> {
         // MPV doesn't support server-side playlists in the same way
         // We could implement a local playlist file, but for now just return Ok
         Ok(())

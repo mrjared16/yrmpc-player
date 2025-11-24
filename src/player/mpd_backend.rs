@@ -169,12 +169,12 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(status.volume.0 as u8)
     }
 
-    fn set_volume(&mut self, _delta: ValueChange) -> Result<()> {
+    fn set_volume(&mut self, delta: ValueChange) -> Result<()> {
         // Convert ValueChange to Volume for MPD
-        match _delta {
+        match delta {
             ValueChange::Set(v) => self.client.set_volume(Volume(v as u32)).map_err(Into::into),
-            ValueChange::Increase(delta) | ValueChange::Decrease(delta) => {
-                self.client.volume(_delta).map_err(Into::into)
+            ValueChange::Increase(_) | ValueChange::Decrease(_) => {
+                self.client.volume(delta).map_err(Into::into)
             }
         }
     }
@@ -206,6 +206,11 @@ impl<'name> MusicBackend for MpdBackend<'name> {
     }
 
     // ===== Library Browsing =====
+
+    fn get_search_suggestions(&mut self, _query: String) -> Result<Vec<String>> {
+        // MPD backend doesn't support search suggestions
+        Ok(vec![])
+    }
 
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
         Ok(self

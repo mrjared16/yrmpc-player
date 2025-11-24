@@ -9,10 +9,7 @@ use super::{events::AppEvent, mpd_client_ext::PartitionedOutput};
 use crate::{
     config::tabs::PaneType,
     domain::{Song, Status},
-    mpd::{
-        commands::{Decoder, IdleEvent, Volume},
-        mpd_client::{Filter, Tag},
-    },
+    mpd::commands::{Decoder, IdleEvent, Volume},
     player::client::Client,
     shared::{events::ClientRequest, macros::try_skip},
     ui::{dir_or_song::DirOrSong, dirstack::Path},
@@ -84,6 +81,7 @@ pub(crate) enum MpdQueryResult {
     SongsList { data: Vec<Song>, path: Option<Path> },
     LsInfo { data: Vec<String>, path: Option<Path> },
     DirOrSong { data: Vec<DirOrSong>, path: Option<Path> },
+    SearchSuggestions(Vec<String>),
     SearchResult { data: Vec<Song> },
     AddToPlaylist { playlists: Vec<String>, song_file: String },
     AddToPlaylistMultiple { playlists: Vec<String>, song_files: Vec<String> },

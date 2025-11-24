@@ -227,6 +227,10 @@ impl<'name> Client<'name> {
         }
     }
 
+    pub fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
+        self.backend_mut().get_search_suggestions(query)
+    }
+
     pub fn volume(&mut self, change: ValueChange) -> Result<()> {
         self.set_volume(change)
     }

@@ -7,8 +7,8 @@ use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use ytmapi_rs::{
     YtMusic, auth::BrowserToken, 
-    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery}, 
-    common::{YoutubeID, VideoID, AlbumID},
+    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery, GetArtistQuery, GetSearchSuggestionsQuery}, 
+    common::{YoutubeID, VideoID, AlbumID, ArtistChannelID},
     parse::SearchResultVideo,
 };
 use crate::mpd::commands::LsInfoEntry;
@@ -69,6 +69,8 @@ impl YouTubeBackend {
         
         Ok(backend)
     }
+
+
 
     pub fn load_cookies(&mut self, path: &str) -> Result<()> {
         let api = self.block_on(async {
@@ -268,6 +270,21 @@ impl YouTubeBackend {
 }
 
 impl MusicBackend for YouTubeBackend {
+    fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
+        let api_opt = self.api.lock().as_ref().cloned();
+        if let Some(api) = api_opt {
+            let rt = &self.rt;
+            let result = rt.block_on(async {
+                let suggestions = api.get_search_suggestions(query).await?;
+                let texts: Vec<String> = suggestions.into_iter()
+                    .map(|s| s.get_text())
+                    .collect();
+                Ok(texts)
+            });
+            return result;
+        }
+        Ok(vec![])
+    }
     fn backend_name(&self) -> &'static str {
         "YouTube"
     }
@@ -345,7 +362,7 @@ impl MusicBackend for YouTubeBackend {
         };
 
         if let Some(item) = current_song {
-            let url = self.get_stream_url(&item.song.file)?;
+            let _url = self.get_stream_url(&item.song.file)?;
             self.mpv.lock().send_command(vec!["seek", "0", "absolute"])?;
             Ok(())
         } else {
@@ -608,6 +625,66 @@ impl MusicBackend for YouTubeBackend {
 
                  entries.push(LsInfoEntry::File(s));
              }
+             return Ok(entries);
+
+        }
+
+        if let Some(artist_id) = path.strip_prefix("artist:") {
+             let query = GetArtistQuery::new(ArtistChannelID::from_raw(artist_id));
+             let artist = self.rt.block_on(async move { api.query(query).await })?;
+             
+             let mut entries = Vec::new();
+             
+             // Top Songs
+             if let Some(songs) = artist.top_releases.songs {
+                 for song in songs.results {
+                     let mut s = Song {
+                         file: song.video_id.get_raw().to_string(),
+                         ..Default::default()
+                     };
+                     s.metadata.insert("title".to_string(), vec![song.title]);
+                     s.metadata.insert("artist".to_string(), vec![artist.name.clone()]);
+                     s.metadata.insert("type".to_string(), vec!["song".to_string()]);
+                     s.metadata.insert("album".to_string(), vec![song.album.name]);
+                     // ArtistSong doesn't have thumbnails directly? 
+                     // Wait, the struct definition says:
+                     // pub struct ArtistSong { ... }
+                     // It does NOT have thumbnails!
+                     // But GetArtist has thumbnails (for the artist).
+                     // Maybe we can use artist thumbnail as fallback?
+                     // Or maybe we don't have thumbnails for top songs in this view.
+                     
+                     // Duration is also missing in ArtistSong!
+                     // It has `plays`.
+                     
+                     entries.push(LsInfoEntry::File(s));
+                 }
+             }
+
+             // Albums
+             if let Some(albums) = artist.top_releases.albums {
+                 for album in albums.results {
+                     let dir = crate::mpd::commands::lsinfo::Dir {
+                         name: album.title.clone(),
+                         full_path: format!("album:{}", album.album_id.get_raw()),
+                         last_modified: chrono::Utc::now(),
+                     };
+                     entries.push(LsInfoEntry::Dir(dir));
+                 }
+             }
+
+             // Singles
+             if let Some(singles) = artist.top_releases.singles {
+                 for single in singles.results {
+                     let dir = crate::mpd::commands::lsinfo::Dir {
+                         name: single.title.clone(),
+                         full_path: format!("album:{}", single.album_id.get_raw()),
+                         last_modified: chrono::Utc::now(),
+                     };
+                     entries.push(LsInfoEntry::Dir(dir));
+                 }
+             }
+
              return Ok(entries);
         }
 
