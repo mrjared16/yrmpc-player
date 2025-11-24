@@ -76,45 +76,50 @@ warning: unused imports: `Filter` and `Tag`
    |
    = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
 
-error[E0658]: use of unstable library feature `str_as_str`
-   --> src/player/youtube_backend.rs:580:34
+error[E0308]: mismatched types
+   --> src/player/mpd_backend.rs:229:39
     |
-580 |                     Some(f.value.as_str())
-    |                                  ^^^^^^
+229 |                     LsInfoEntry::File(Song { file: path, ..Default::default() })
+    |                     ----------------- ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^ expected `domain::song::Song`, found `current_song::Song`
+    |                     |
+    |                     arguments to this enum variant are incorrect
     |
-    = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
-    = help: add `#![feature(str_as_str)]` to the crate attributes to enable
-    = note: this compiler was built on 2025-08-26; consider upgrading it if it is out of date
-
-error[E0609]: no field `video_id` on type `SearchResultVideo`
-   --> src/player/youtube_backend.rs:623:29
+    = note: `current_song::Song` and `domain::song::Song` have similar names, but are actually distinct types
+note: `current_song::Song` is defined in module `crate::mpd::commands::current_song` of the current crate
+   --> src/mpd/commands/current_song.rs:11:1
     |
-623 |                 file: video.video_id.get_raw().to_string(),
-    |                             ^^^^^^^^ unknown field
-
-error[E0609]: no field `title` on type `SearchResultVideo`
-   --> src/player/youtube_backend.rs:626:63
+ 11 | pub struct Song {
+    | ^^^^^^^^^^^^^^^
+note: `domain::song::Song` is defined in module `crate::domain::song` of the current crate
+   --> src/domain/song.rs:9:1
     |
-626 |             s.metadata.insert("title".to_string(), vec![video.title]);
-    |                                                               ^^^^^ unknown field
-
-error[E0609]: no field `author` on type `SearchResultVideo`
-   --> src/player/youtube_backend.rs:627:64
+  9 | pub struct Song {
+    | ^^^^^^^^^^^^^^^
+note: tuple variant defined here
+   --> src/mpd/commands/lsinfo.rs:24:5
     |
-627 |             s.metadata.insert("artist".to_string(), vec![video.author]);
-    |                                                                ^^^^^^ unknown field
-
-error[E0609]: no field `thumbnails` on type `SearchResultVideo`
-   --> src/player/youtube_backend.rs:629:40
+ 24 |     File(Song),
+    |     ^^^^
+help: call `Into::into` on this expression to convert `current_song::Song` into `domain::song::Song`
     |
-629 |             if let Some(thumb) = video.thumbnails.last() {
-    |                                        ^^^^^^^^^^ unknown field
+229 |                     LsInfoEntry::File(Song { file: path, ..Default::default() }.into())
+    |                                                                                +++++++
 
 warning: unused import: `itertools::Itertools`
  --> src/ui/dirstack/mod.rs:3:5
   |
 3 | use itertools::Itertools;
   |     ^^^^^^^^^^^^^^^^^^^^
+
+warning: variable does not need to be mutable
+   --> src/mpd/commands/lsinfo.rs:191:44
+    |
+191 |     fn next_internal(&mut self, key: &str, mut value: String) -> Result<LineHandled, MpdError> {
+    |                                            ----^^^^^
+    |                                            |
+    |                                            help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
 warning: unused variable: `limit`
    --> src/mpd/mpd_client.rs:389:32
@@ -142,22 +147,10 @@ warning: unused variable: `name`
     |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
 
 warning: unused variable: `url`
-   --> src/player/youtube_backend.rs:346:17
+   --> src/player/youtube_backend.rs:348:17
     |
-346 |             let url = self.get_stream_url(&item.song.file)?;
+348 |             let url = self.get_stream_url(&item.song.file)?;
     |                 ^^^ help: if this is intentional, prefix it with an underscore: `_url`
-
-error: lifetime may not live long enough
-   --> src/ui/dirstack/mod.rs:229:13
-    |
-152 |     fn to_list_item<'a>(
-    |                     -- lifetime `'a` defined here
-153 |         &self,
-154 |         ctx: &Ctx,
-    |              - let's call the lifetime of this reference `'1`
-...
-229 |             ListItem::from(value)
-    |             ^^^^^^^^^^^^^^^^^^^^^ method was supposed to return data with lifetime `'a` but it is returning data with lifetime `'1`
 
 warning: unused variable: `elapsed`
   --> src/ui/panes/lyrics.rs:40:13
@@ -165,7 +158,6 @@ warning: unused variable: `elapsed`
 40 |         let elapsed = ctx.status.elapsed;
    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elapsed`
 
-Some errors have detailed explanations: E0609, E0658.
-For more information about an error, try `rustc --explain E0609`.
-warning: `rmpc` (bin "rmpc") generated 7 warnings
-error: could not compile `rmpc` (bin "rmpc") due to 6 previous errors; 7 warnings emitted
+For more information about this error, try `rustc --explain E0308`.
+warning: `rmpc` (bin "rmpc") generated 8 warnings
+error: could not compile `rmpc` (bin "rmpc") due to 1 previous error; 8 warnings emitted

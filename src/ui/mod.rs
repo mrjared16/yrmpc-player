@@ -698,10 +698,8 @@ impl<'ui> Ui<'ui> {
                 self.modals
                     .retain(|m| m.replacement_id().is_none_or(|id| id != ERROR_CONFIG_MODAL_ID));
                 let new_len = self.modals.len();
-                if new_len == 0 {
+                if new_len < original_len {
                     self.on_event(UiEvent::ModalClosed, ctx)?;
-                }
-                if original_len != new_len {
                     ctx.render()?;
                 }
             }
@@ -718,6 +716,107 @@ impl<'ui> Ui<'ui> {
             }
             UiAppEvent::ChangeTab(tab_name) => {
                 self.change_tab(tab_name, ctx)?;
+                ctx.render()?;
+            }
+            UiAppEvent::Redraw => {
+                ctx.render()?;
+            }
+            UiAppEvent::OpenAlbum(album_id) => {
+                // Switch to Albums tab
+                // We assume there is a tab named "Albums" or similar where AlbumsPane is located.
+                // If not, we might need to find where AlbumsPane is.
+                // For now, let's assume "Albums" tab exists.
+                // Or we can iterate to find which tab has AlbumsPane.
+                
+                let albums_tab_name = ctx.config.tabs.tabs.iter()
+                    .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Albums))
+                    .map(|(name, _)| name.clone());
+                
+                if let Some(tab_name) = albums_tab_name {
+                    self.change_tab(tab_name, ctx)?;
+                    
+                    // Now we need to tell AlbumsPane to open this album.
+                    // We can use `get_mut` to access AlbumsPane.
+                    if let Ok(Panes::Albums(albums_pane)) = self.panes.get_mut(&PaneType::Albums, ctx) {
+                         // We need to push the album ID to the stack.
+                         // The stack path is Vec<String>.
+                         // We want to push the album ID.
+                         // But we also need to trigger a fetch.
+                         
+                         // We can manually insert the path and trigger fetch.
+                         use crate::ui::dirstack::Path;
+                         let path = Path::from(album_id.clone());
+                         
+                         // Clear stack and set root? No, we want to keep history if possible, 
+                         // but since we are jumping from search, maybe just set it as current?
+                         // AlbumsPane usually starts with root (list of albums).
+                         // If we push album_id, it will be root -> album_id.
+                         
+                         // But AlbumsPane stack is initialized with list of albums.
+                         // If we just push, it might work if the stack logic allows.
+                         
+                         // Let's try to just push it.
+                         // But we need to make sure the stack is initialized?
+                         // AlbumsPane initializes in `before_show`.
+                         // We just called `change_tab` which calls `before_show`.
+                         
+                         // However, `before_show` is async-ish (sends query).
+                         // So the stack might not be ready.
+                         
+                         // But we can force it.
+                         // Let's just set the stack to have this album as the next item?
+                         // Or we can use `ctx.query` to trigger `FETCH_DATA` with this path.
+                         
+                         // AlbumsPane::fetch_data uses `self.stack().next_path()`.
+                         // So we need to insert the path into the stack first.
+                         
+                         // Wait, `AlbumsPane` has `stack` field.
+                         // We can modify it directly.
+                         
+                         // But `DirStack` doesn't have a simple "push and go" method that also fetches.
+                         // We need to simulate user entering a directory.
+                         
+                         // Let's try:
+                         // 1. Ensure stack has root (maybe empty root is fine).
+                         // 2. Insert the album path.
+                         // 3. Trigger fetch.
+                         
+                         // But we don't know the album name, only ID.
+                         // `lsinfo` uses ID.
+                         // `AlbumsPane` uses `Tag::Album` filter.
+                         
+                         // If we push "album:ID" as path.
+                         // `AlbumsPane::fetch_data` will use it.
+                         
+                         // Let's see `AlbumsPane::fetch_data`:
+                         // let current = selected.as_path().to_owned();
+                         // client.find(&[Filter::new(Tag::Album, current)], None)?
+                         
+                         // So if we push "album:ID", it will search for Tag::Album = "album:ID".
+                         // My `YouTubeBackend::find` handles this!
+                         
+                         albums_pane.stack_mut().push(album_id.clone());
+                         
+                         // Now trigger fetch.
+                         // We can call `fetch_data` manually?
+                         // `AlbumsPane` implements `BrowserPane`.
+                         // `BrowserPane` has `fetch_data`.
+                         // But `fetch_data` takes `selected` item.
+                         
+                         // We can construct a fake `DirOrSong` representing the album.
+                         use crate::ui::dir_or_song::DirOrSong;
+                         let fake_item = DirOrSong::Dir { 
+                             name: album_id.clone(), 
+                             full_path: album_id.clone(), 
+                             playlist: false,
+                             last_modified: chrono::Utc::now(),
+                         };
+                         
+                         use crate::ui::browser::BrowserPane;
+                         albums_pane.fetch_data(&fake_item, ctx)?;
+                    }
+                }
+                
                 ctx.render()?;
             }
         }
@@ -902,6 +1001,8 @@ pub enum UiAppEvent {
     PopModal(Id),
     PopConfigErrorModal,
     ChangeTab(TabName),
+    Redraw,
+    OpenAlbum(String),
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]
@@ -924,6 +1025,7 @@ pub enum UiEvent {
     Hidden,
     ConfigChanged,
     PlaybackStateChanged,
+    Redraw,
 }
 
 impl TryFrom<IdleEvent> for UiEvent {

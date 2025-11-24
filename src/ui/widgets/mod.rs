@@ -1,5 +1,6 @@
 use ratatui::prelude::Alignment;
 
+pub mod async_image;
 pub mod browser;
 pub mod button;
 pub mod header;

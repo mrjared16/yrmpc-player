@@ -226,7 +226,7 @@ impl<'name> MusicBackend for MpdBackend<'name> {
             .into_iter()
             .map(|entry| match entry {
                 ListAllEntry::File(path) => {
-                    LsInfoEntry::File(Song { file: path, ..Default::default() })
+                    LsInfoEntry::File(Song { file: path, ..Default::default() }.into())
                 }
                 ListAllEntry::Dir(path) => LsInfoEntry::Dir(Dir {
                     full_path: path.clone(),

@@ -7,6 +7,7 @@ pub mod ext;
 pub mod geometry;
 pub mod id;
 pub mod image;
+pub mod image_cache;
 pub mod ipc;
 pub mod key_event;
 pub mod logging;

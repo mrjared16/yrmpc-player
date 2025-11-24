@@ -3,6 +3,7 @@ use std::borrow::Cow;
 use itertools::Itertools;
 use ratatui::{
     text::{Line, Span},
+    style::{Color, Style},
     widgets::{ListItem, ListState, TableState},
 };
 
@@ -156,33 +157,68 @@ impl DirStackItem for Song {
         additional_content: Option<String>,
     ) -> ListItem<'a> {
         let config = &ctx.config;
+        let item_type = self.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
+
+        if item_type == "header" {
+            let title = self.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("Unknown");
+            let style = Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::BOLD);
+            return ListItem::new(Line::from(vec![
+                Span::styled(format!("--- {} ---", title), style)
+            ]));
+        }
+
         let marker_span = if is_marked {
             Span::styled(config.theme.symbols.marker.clone(), config.theme.highlighted_item_style)
         } else {
             Span::from(" ".repeat(config.theme.symbols.marker.chars().count()))
         };
 
-        let spans = [
+        let symbol = match item_type {
+            "artist" => " ".to_string(), // Nerd Font icon for person/artist
+            "album" => "jm ".to_string(), // Nerd Font icon for disc/album
+            "video" => " ".to_string(), // Nerd Font icon for video
+            _ => config.theme.symbols.song.clone(),
+        };
+
+        let mut spans = vec![
             marker_span,
             Span::styled(
-                config.theme.symbols.song.clone(),
+                symbol,
                 config.theme.symbols.song_style.unwrap_or_default(),
             ),
             Span::from(" "),
-        ]
-        .into_iter()
-        .chain(config.theme.browser_song_format.0.iter().map(|prop| {
-            Span::from(
-                prop.as_string(
-                    Some(self),
-                    &config.theme.format_tag_separator,
-                    config.theme.multiple_tag_resolution_strategy,
-                    ctx,
+        ];
+
+        if item_type == "artist" {
+             if let Some(artist) = self.metadata.get("title").and_then(|v| v.first()) {
+                spans.push(Span::styled(artist.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
+             }
+        } else if item_type == "album" {
+            if let Some(album) = self.metadata.get("title").and_then(|v| v.first()) {
+                spans.push(Span::styled(album.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
+            }
+            if let Some(artist) = self.metadata.get("artist").and_then(|v| v.first()) {
+                spans.push(Span::from(format!(" by {}", artist)));
+            }
+            if let Some(year) = self.metadata.get("year").and_then(|v| v.first()) {
+                spans.push(Span::from(format!(" ({})", year)));
+            }
+        } else {
+            // Default song rendering
+            spans.extend(config.theme.browser_song_format.0.iter().map(|prop| {
+                Span::from(
+                    prop.as_string(
+                        Some(self),
+                        &config.theme.format_tag_separator,
+                        config.theme.multiple_tag_resolution_strategy,
+                        ctx,
+                    )
+                    .unwrap_or_default(),
                 )
-                .unwrap_or_default(),
-            )
-        }));
-        let mut value = Line::from(spans.collect_vec());
+            }));
+        }
+
+        let mut value = Line::from(spans);
 
         if let Some(content) = additional_content {
             value.push_span(Span::raw(content));

@@ -21,8 +21,8 @@ warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved
 warning: use of deprecated unit variant `common::LibraryStatusIcon::LibrarySaved`: Future deprecation see https://github.com/nick42d/youtui/issues/271
    --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:119:32
     |
-119 |             LibraryStatusIcon::LibrarySaved => {
-    |                                ^^^^^^^^^^^^
+119 | ...   LibraryStatusIcon::LibrarySaved => {
+    |                          ^^^^^^^^^^^^
 
 warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`: Future deprecation see https://github.com/nick42d/youtui/issues/271
    --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/common.rs:123:32
@@ -33,26 +33,26 @@ warning: use of deprecated unit variant `common::LibraryStatusIcon::LibraryAdd`:
 warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
  --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:5:69
   |
-5 | ...ESCRIPTION_SHELF_RUNS, STRAPLINE_TEXT, TITLE_TEXT,
-  |                           ^^^^^^^^^^^^^^
+5 | ...N_SHELF_RUNS, STRAPLINE_TEXT, TITLE_TEXT,
+  |                  ^^^^^^^^^^^^^^
 
 warning: use of deprecated constant `nav_consts::STRAPLINE_TEXT`: Google deprecating this path in future
    --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/playlist.rs:554:47
     |
-554 | ...take_value_pointers(&[STRAPLINE_TEXT, FACEPILE_TEXT])?;
-    |                          ^^^^^^^^^^^^^^
+554 | ...e_pointers(&[STRAPLINE_TEXT, FACEPILE_TEX...
+    |                 ^^^^^^^^^^^^^^
 
 warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
  --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:2:55
   |
-2 | ...ARY_SECTION_LIST_ITEM, STRAPLINE_RUNS, TAB_CONTENT, THUMBNAILS,
-  |                           ^^^^^^^^^^^^^^
+2 | ...ON_LIST_ITEM, STRAPLINE_RUNS, TAB_CONTENT, ...
+  |                  ^^^^^^^^^^^^^^
 
 warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
    --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:277:74
     |
-277 | ...ate_pointer(concatcp!(STRAPLINE_RUNS, "/0"))?;
-    |                          ^^^^^^^^^^^^^^
+277 | ...er(concatcp!(STRAPLINE_RUNS, "/0"))?;
+    |                 ^^^^^^^^^^^^^^
 
 warning: use of deprecated constant `nav_consts::STRAPLINE_RUNS`: Google deprecating this path in future
    --> <PROJECT_ROOT>/youtui/ytmapi-rs/src/parse/podcasts.rs:237:29
@@ -68,367 +68,305 @@ warning: use of deprecated field `parse::artist::AlbumResult::album_type`: Futur
 
 warning: `ytmapi-rs` (lib) generated 12 warnings (1 duplicate)
     Checking rmpc v0.10.0 (<PROJECT_ROOT>/rmpc)
-error[E0432]: unresolved imports `crate::domain::Output`, `crate::domain::Playlist`, `crate::domain::SaveMode`, `crate::domain::SeekPosition`, `crate::domain::ValueChange`, `crate::domain::Decoder`, `crate::domain::Tag`, `crate::domain::LsInfoEntry`
-   --> src/player/youtube_backend.rs:13:19
+error: expected identifier, found keyword `if`
+   --> src/ui/panes/search/mod.rs:654:21
     |
- 13 |     OnOffOneshot, Output, Playlist, QueuePosition, SaveMode, SeekPosition, Song, Status, ValueChange,
-    |                   ^^^^^^  ^^^^^^^^                 ^^^^^^^^  ^^^^^^^^^^^^                ^^^^^^^^^^^ no `ValueChange` in `domain`
-    |                   |       |                        |         |
-    |                   |       |                        |         no `SeekPosition` in `domain`
-    |                   |       |                        |         help: a similar name exists in the module: `QueuePosition`
-    |                   |       |                        no `SaveMode` in `domain`
-    |                   |       no `Playlist` in `domain`
-    |                   no `Output` in `domain`
- 14 |     Decoder, Tag, LsInfoEntry, PlaybackState,
-    |     ^^^^^^^  ^^^  ^^^^^^^^^^^ no `LsInfoEntry` in `domain`
-    |     |        |
-    |     |        no `Tag` in `domain`
-    |     no `Decoder` in `domain`
+654 |                     if self.songs_dir.marked().is_empty() {
+    |                     ^^ expected identifier, found keyword
+
+error[E0432]: unresolved import `crate::shared::mpd_client`
+  --> src/ui/panes/search/mod.rs:38:9
+   |
+38 |         mpd_client::MpdClientExt,
+   |         ^^^^^^^^^^ could not find `mpd_client` in `shared`
+
+error[E0412]: cannot find type `Enqueue` in this scope
+   --> src/ui/panes/search/mod.rs:111:57
     |
-    = help: consider importing one of these items instead:
-            crate::mpd::commands::IdleEvent::Output
-            crate::mpd::commands::Output
-            crate::ui::UiEvent::Output
-            std::process::Output
-    = help: consider importing one of these items instead:
-            crate::config::keys::actions::DeleteKind::Playlist
-            crate::config::keys::actions::SaveKind::Playlist
-            crate::mpd::commands::IdleEvent::Playlist
-            crate::mpd::commands::Playlist
-            crate::mpd::commands::list_all::ListAllEntry::Playlist
-            crate::mpd::commands::lsinfo::Playlist
-            crate::player::youtube_backend::MpdLsInfoEntry::Playlist
-            crate::shared::mpd_client_ext::Enqueue::Playlist
-            crate::shared::mpd_client_ext::MpdDelete::Playlist
-            rusty_ytdl::search::Playlist
-            rusty_ytdl::search::SearchResult::Playlist
-            rusty_ytdl::search::SearchType::Playlist
-            ytmapi_rs::parse::BasicSearchResultCommunityPlaylist::Playlist
-            ytmapi_rs::parse::TopResultType::Playlist
-note: variant `crate::shared::ytdlp::YtDlpPlaylistOrHost::Playlist` exists but is inaccessible
-   --> src/shared/ytdlp.rs:258:5
+111 |     fn enqueue(&self, all: bool) -> (Option<usize>, Vec<Enqueue>) {
+    |                                                         ^^^^^^^ not found in this scope
     |
-258 |     Playlist(YtDlpPlaylist),
-    |     ^^^^^^^^^^^^^^^^^^^^^^^ not accessible
-    = help: consider importing this enum instead:
-            crate::mpd::mpd_client::SaveMode
-    = help: consider importing this enum instead:
-            crate::mpd::commands::SeekPosition
-    = help: consider importing this enum instead:
-            crate::mpd::mpd_client::ValueChange
-    = help: consider importing this struct through its public re-export instead:
-            crate::mpd::commands::Decoder
-    = help: consider importing this enum instead:
-            crate::mpd::mpd_client::Tag
-note: these variants exist but are inaccessible
-   --> src/ui/modals/add_random_modal.rs:45:5
+help: consider importing this enum through its public re-export
     |
- 45 |     Tag,
-    |     ^^^ `crate::ui::modals::add_random_modal::InputAreas::Tag`: not accessible
+  1 + use crate::ui::Enqueue;
+    |
+
+error[E0433]: failed to resolve: use of undeclared type `Enqueue`
+   --> src/ui/panes/search/mod.rs:114:30
+    |
+114 |             .map(|(_, item)| Enqueue::File { path: item.file.clone() })
+    |                              ^^^^^^^ use of undeclared type `Enqueue`
+    |
+help: consider importing this enum through its public re-export
+    |
+  1 + use crate::ui::Enqueue;
+    |
+
+error[E0433]: failed to resolve: use of undeclared type `Enqueue`
+   --> src/ui/panes/search/mod.rs:123:28
+    |
+123 |                     if let Enqueue::File { path } = item { Some((idx, path)) } else { None }
+    |                            ^^^^^^^ use of undeclared type `Enqueue`
+    |
+help: consider importing this enum through its public re-export
+    |
+  1 + use crate::ui::Enqueue;
+    |
+
+error[E0433]: failed to resolve: use of undeclared type `Enqueue`
+   --> src/ui/panes/search/mod.rs:589:30
+    |
+589 |                         vec![Enqueue::File { path: item.file.clone() }]
+    |                              ^^^^^^^ use of undeclared type `Enqueue`
+    |
+help: consider importing this enum through its public re-export
+    |
+  1 + use crate::ui::Enqueue;
+    |
+
+warning: unused imports: `Filter` and `Tag`
+  --> src/shared/mpd_query.rs:14:22
+   |
+14 |         mpd_client::{Filter, Tag},
+   |                      ^^^^^^  ^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `AutoplayKind`, `Position`, `RateKind`, `UiAppEvent`, `create_add_modal`, `create_rating_modal`, and `events::AppEvent`
+  --> src/ui/panes/search/mod.rs:20:32
+   |
+20 |             actions::{AddKind, AutoplayKind, DeleteKind, Position, RateKind, SaveKind},
+   |                                ^^^^^^^^^^^^              ^^^^^^^^  ^^^^^^^^
 ...
- 52 |     Tag,
-    |     ^^^ `crate::ui::modals::add_random_modal::InputType::Tag`: not accessible
-    = help: consider importing this enum through its public re-export instead:
-            crate::mpd::commands::LsInfoEntry
-
-error[E0433]: failed to resolve: use of undeclared type `RwLock`
-   --> src/main.rs:357:38
-    |
-357 |             let app_state = Arc::new(RwLock::new(AppState::new()));
-    |                                      ^^^^^^ use of undeclared type `RwLock`
-    |
-help: consider importing one of these items
-    |
-  1 + use std::sync::RwLock;
-    |
-  1 + use std::sync::nonpoison::RwLock;
-    |
-  1 + use parking_lot::RwLock;
-    |
-  1 + use tokio::sync::RwLock;
-    |
-
-warning: unused import: `anyhow`
- --> src/player/youtube_backend.rs:5:22
-  |
-5 | use anyhow::{Result, anyhow};
-  |                      ^^^^^^
-  |
-  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
-
-warning: unused imports: `Decoder as MpdDecoder`, `LsInfoEntry as MpdLsInfoEntry`, and `Output as MpdOutput`
-  --> src/player/youtube_backend.rs:17:16
-   |
-17 |     commands::{LsInfoEntry as MpdLsInfoEntry, Output as MpdOutput, Decoder as MpdDecoder},
-   |                ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^  ^^^^^^^^^^^^^^^^^^^^^
-
-error[E0053]: method `single` has an incompatible type for trait
-   --> src/player/youtube_backend.rs:258:35
-    |
-258 |     fn single(&mut self, _single: OnOffOneshot) -> Result<()> { Ok(()) }
-    |                                   ^^^^^^^^^^^^ expected `mpd::commands::status::OnOffOneshot`, found `domain::status::OnOffOneshot`
-    |
-note: type in trait
-   --> src/player/backend.rs:46:34
-    |
- 46 |     fn single(&mut self, single: OnOffOneshot) -> Result<()>;
-    |                                  ^^^^^^^^^^^^
-    = note: expected signature `fn(&mut YouTubeBackend, mpd::commands::status::OnOffOneshot) -> Result<_, _>`
-               found signature `fn(&mut YouTubeBackend, domain::status::OnOffOneshot) -> Result<_, _>`
-help: change the parameter type to match the trait
-    |
-258 |     fn single(&mut self, _single: mpd::commands::status::OnOffOneshot) -> Result<()> { Ok(()) }
-    |                                   +++++++++++++++++++++++
-
-error[E0053]: method `consume` has an incompatible type for trait
-   --> src/player/youtube_backend.rs:259:37
-    |
-259 |     fn consume(&mut self, _consume: OnOffOneshot) -> Result<()> { Ok(()) }
-    |                                     ^^^^^^^^^^^^ expected `mpd::commands::status::OnOffOneshot`, found `domain::status::OnOffOneshot`
-    |
-note: type in trait
-   --> src/player/backend.rs:47:36
-    |
- 47 |     fn consume(&mut self, consume: OnOffOneshot) -> Result<()>;
-    |                                    ^^^^^^^^^^^^
-    = note: expected signature `fn(&mut YouTubeBackend, mpd::commands::status::OnOffOneshot) -> Result<_, _>`
-               found signature `fn(&mut YouTubeBackend, domain::status::OnOffOneshot) -> Result<_, _>`
-help: change the parameter type to match the trait
-    |
-259 |     fn consume(&mut self, _consume: mpd::commands::status::OnOffOneshot) -> Result<()> { Ok(()) }
-    |                                     +++++++++++++++++++++++
-
-error[E0062]: field `backend` specified more than once
-   --> src/config/mod.rs:269:13
-    |
-268 |             backend: PlayerBackend::default(),
-    |             --------------------------------- first use of `backend`
-269 |             backend: PlayerBackend::default(),
-    |             ^^^^^^^ used more than once
-
-error[E0062]: field `backend` specified more than once
-   --> src/config/mod.rs:509:13
-    |
-508 |             backend: self.backend,
-    |             --------------------- first use of `backend`
-509 |             backend: self.backend,
-    |             ^^^^^^^ used more than once
-
-error[E0277]: `YouTubeBackend` doesn't implement `std::fmt::Debug`
-  --> src/player/client.rs:39:13
-   |
-35 | #[derive(Debug)]
-   |          ----- in this derive macro expansion
+34 |         events::AppEvent,
+   |         ^^^^^^^^^^^^^^^^
 ...
-39 |     YouTube(YouTubeBackend),
-   |             ^^^^^^^^^^^^^^ the trait `std::fmt::Debug` is not implemented for `YouTubeBackend`
-   |
-   = note: add `#[derive(Debug)]` to `YouTubeBackend` or manually `impl std::fmt::Debug for YouTubeBackend`
-help: consider annotating `YouTubeBackend` with `#[derive(Debug)]`
-  --> src/player/youtube_backend.rs:24:1
-   |
-24 + #[derive(Debug)]
-25 | pub struct YouTubeBackend {
-   |
+41 |         UiAppEvent,
+   |         ^^^^^^^^^^
+...
+48 |                 create_add_modal,
+   |                 ^^^^^^^^^^^^^^^^
+49 |                 create_delete_modal,
+50 |                 create_rating_modal,
+   |                 ^^^^^^^^^^^^^^^^^^^
 
-error[E0599]: no method named `get_next` found for struct `std::sync::RwLockReadGuard<'_, AppState>` in the current scope
-   --> src/player/youtube_backend.rs:168:35
+error[E0658]: use of unstable library feature `str_as_str`
+   --> src/player/youtube_backend.rs:736:40
     |
-168 |         let next_song = app_state.get_next();
-    |                                   ^^^^^^^^ method not found in `std::sync::RwLockReadGuard<'_, AppState>`
-
-error[E0308]: mismatched types
-   --> src/player/youtube_backend.rs:181:56
+736 |                 let album_id = f.value.as_str();
+    |                                        ^^^^^^
     |
-181 |             songid: current_song.as_ref().and_then(|s| s.id),
-    |                                                        ^^^^ expected `Option<_>`, found `u32`
+    = note: see issue #130366 <https://github.com/rust-lang/rust/issues/130366> for more information
+    = help: add `#![feature(str_as_str)]` to the crate attributes to enable
+    = note: this compiler was built on 2025-08-26; consider upgrading it if it is out of date
+
+error[E0599]: no variant or associated item named `resolve_and_enqueue` found for enum `player::client::Client<'name>` in the current scope
+   --> src/ui/panes/search/mod.rs:405:33
     |
-    = note: expected enum `std::option::Option<_>`
-               found type `u32`
-help: try wrapping the expression in `Some`
+405 |                         Client::resolve_and_enqueue(
+    |                                 ^^^^^^^^^^^^^^^^^^^ variant or associated item not found in `player::client::Client<'_>`
     |
-181 |             songid: current_song.as_ref().and_then(|s| Some(s.id)),
-    |                                                        +++++    +
+   ::: src/player/client.rs:36:1
+    |
+ 36 | pub enum Client<'name> {
+    | ---------------------- variant or associated item `resolve_and_enqueue` not found for this enum
+    |
+note: if you're trying to build a new `player::client::Client<'_>` consider using one of the following associated functions:
+      player::client::Client::<'name>::new_mpd
+      player::client::Client::<'name>::new_mpv
+      player::client::Client::<'name>::init
+      player::client::Client::<'name>::init_with_backend
+   --> src/player/client.rs:44:5
+    |
+ 44 |       pub fn new_mpd(client: crate::mpd::client::Client<'name>) -> Self {
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 49 |       pub fn new_mpv(socket_path: &str) -> Result<Self> {
+    |       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+ 54 | /     pub fn init(
+ 55 | |         addr: crate::config::MpdAddress,
+ 56 | |         password: Option<crate::config::address::MpdPassword>,
+ 57 | |         name: &'name str,
+ 58 | |         partition: Option<String>,
+ 59 | |         autocreate_partition: bool,
+ 60 | |     ) -> Result<Self> {
+    | |_____________________^
+...
+ 72 | /     pub fn init_with_backend(
+ 73 | |         backend: PlayerBackend,
+ 74 | |         addr: crate::config::MpdAddress,
+ 75 | |         password: Option<crate::config::address::MpdPassword>,
+...   |
+ 81 | |         app_state: Arc<RwLock<AppState>>,
+ 82 | |     ) -> Result<Self> {
+    | |_____________________^
+    = help: items from traits can only be used if the trait is in scope
+help: there is a method `move_in_queue` with a similar name, but with different arguments
+   --> src/player/client.rs:580:5
+    |
+580 | /     pub fn move_in_queue(
+581 | |         &mut self,
+582 | |         from: crate::mpd::mpd_client::SingleOrRange,
+583 | |         to: QueuePosition,
+584 | |     ) -> Result<()> {
+    | |___________________^
+help: trait `MpdClientExt` which provides `resolve_and_enqueue` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
 
-warning: unused import: `mpd_client::MpdClient`
-  --> src/main.rs:26:11
-   |
-26 |     mpd::{mpd_client::MpdClient, proto_client::SocketClient},
-   |           ^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: no method named `enqueue_multiple` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+   --> src/ui/panes/search/mod.rs:593:36
+    |
+593 | ...                   client.enqueue_multiple(items, None, None, false)?;
+    |                              ^^^^^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: there is a method `delete_multiple` with a similar name, but with different arguments
+   --> src/shared/mpd_client_ext.rs:54:5
+    |
+ 54 |     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: trait `MpdClientExt` which provides `enqueue_multiple` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
 
-warning: unused import: `mpd_client::MpdClient`
-  --> src/core/client.rs:24:9
-   |
-24 |         mpd_client::MpdClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: no method named `enqueue_multiple` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+   --> src/ui/panes/search/mod.rs:882:40
+    |
+882 | ...                   client.enqueue_multiple(enqueue_clone, None, None, false)?;
+    |                              ^^^^^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: there is a method `delete_multiple` with a similar name, but with different arguments
+   --> src/shared/mpd_client_ext.rs:54:5
+    |
+ 54 |     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: trait `MpdClientExt` which provides `enqueue_multiple` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
 
-warning: unused import: `proto_client::ProtoClient`
-  --> src/core/client.rs:25:9
-   |
-25 |         proto_client::ProtoClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: no method named `enqueue_multiple` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+   --> src/ui/panes/search/mod.rs:889:40
+    |
+889 | ...                   client.enqueue_multiple(enqueue, None, None, true)?;
+    |                              ^^^^^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: there is a method `delete_multiple` with a similar name, but with different arguments
+   --> src/shared/mpd_client_ext.rs:54:5
+    |
+ 54 |     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+    |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: trait `MpdClientExt` which provides `enqueue_multiple` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
 
-warning: unused import: `MpdClient`
-  --> src/core/command.rs:15:30
-   |
-15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
-   |                              ^^^^^^^^^
+error[E0599]: no method named `create_playlist` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+   --> src/ui/panes/search/mod.rs:907:52
+    |
+907 | ...                   client.create_playlist(&value, song_files)?;
+    |                              ^^^^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `MpdClientExt` which provides `create_playlist` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
+help: there is a method `rename_playlist` with a similar name
+    |
+907 -                                             client.create_playlist(&value, song_files)?;
+907 +                                             client.rename_playlist(&value, song_files)?;
+    |
 
-warning: unused import: `MpdCommand`
-  --> src/core/command.rs:15:41
-   |
-15 |         mpd_client::{Filter, MpdClient, MpdCommand, Tag},
-   |                                         ^^^^^^^^^^
+error[E0599]: no method named `create_playlist` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+   --> src/ui/panes/search/mod.rs:962:44
+    |
+962 | ...                   client.create_playlist(&value, files)?;
+    |                              ^^^^^^^^^^^^^^^
+    |
+    = help: items from traits can only be used if the trait is in scope
+help: trait `MpdClientExt` which provides `create_playlist` is implemented but not in scope; perhaps you want to import it
+    |
+  1 + use crate::shared::mpd_client_ext::MpdClientExt;
+    |
+help: there is a method `rename_playlist` with a similar name
+    |
+962 -                                     client.create_playlist(&value, files)?;
+962 +                                     client.rename_playlist(&value, files)?;
+    |
 
-warning: unused import: `proto_client::ProtoClient`
-  --> src/core/command.rs:16:9
-   |
-16 |         proto_client::ProtoClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: no method named `enqueue_multiple` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+    --> src/ui/panes/search/mod.rs:1252:40
+     |
+1252 | ...                   client.enqueue_multiple(items, None, None, false)?;
+     |                              ^^^^^^^^^^^^^^^^
+     |
+     = help: items from traits can only be used if the trait is in scope
+help: there is a method `delete_multiple` with a similar name, but with different arguments
+    --> src/shared/mpd_client_ext.rs:54:5
+     |
+  54 |     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: trait `MpdClientExt` which provides `enqueue_multiple` is implemented but not in scope; perhaps you want to import it
+     |
+   1 + use crate::shared::mpd_client_ext::MpdClientExt;
+     |
 
-warning: unused import: `MpdClient`
-  --> src/core/event_loop.rs:22:22
-   |
-22 |         mpd_client::{MpdClient, SaveMode},
-   |                      ^^^^^^^^^
+error[E0599]: no method named `enqueue_multiple` found for mutable reference `&mut player::client::Client<'_>` in the current scope
+    --> src/ui/panes/search/mod.rs:1307:36
+     |
+1307 | ...                   client.enqueue_multiple(items, None, None, false)?;
+     |                              ^^^^^^^^^^^^^^^^
+     |
+     = help: items from traits can only be used if the trait is in scope
+help: there is a method `delete_multiple` with a similar name, but with different arguments
+    --> src/shared/mpd_client_ext.rs:54:5
+     |
+  54 |     fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+     |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+help: trait `MpdClientExt` which provides `enqueue_multiple` is implemented but not in scope; perhaps you want to import it
+     |
+   1 + use crate::shared::mpd_client_ext::MpdClientExt;
+     |
 
-warning: unused import: `mpd_client::MpdClient`
-  --> src/ctx.rs:27:9
-   |
-27 |         mpd_client::MpdClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^
+error[E0599]: no method named `push` found for mutable reference `&mut DirStack<DirOrSong, ListState>` in the current scope
+   --> src/ui/mod.rs:798:50
+    |
+798 |                          albums_pane.stack_mut().push(album_id.clone());
+    |                                                  ^^^^ method not found in `&mut DirStack<DirOrSong, ListState>`
+    |
+    = help: items from traits can only be used if the trait is implemented and in scope
+    = note: the following traits define an item `push`, perhaps you need to implement one of them:
+            candidate #1: `bitstream_io::Endianness`
+            candidate #2: `selectors::sink::Push`
 
-warning: unused import: `proto_client::ProtoClient`
-  --> src/ui/mod.rs:44:9
-   |
-44 |         proto_client::ProtoClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
+error[E0063]: missing field `last_modified` in initializer of `DirOrSong`
+   --> src/ui/mod.rs:808:42
+    |
+808 |                          let fake_item = DirOrSong::Dir { 
+    |                                          ^^^^^^^^^^^^^^ missing `last_modified`
 
-warning: unused import: `MpdCommand`
-  --> src/ui/mod.rs:43:33
-   |
-43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
-   |                                 ^^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/mod.rs:43:22
-   |
-43 |         mpd_client::{MpdClient, MpdCommand, ValueChange},
-   |                      ^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/player/client.rs:26:30
-   |
-26 |         mpd_client::{Filter, MpdClient as MpdClientTrait, MpdCommand, SingleOrRange},
-   |                              ^^^^^^^^^
-
-warning: unused import: `mpd_client::MpdClient`
-  --> src/ui/panes/progress_bar.rs:12:9
-   |
-12 |         mpd_client::MpdClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/panes/directories.rs:13:42
-   |
-13 |         mpd_client::{Filter, FilterKind, MpdClient, Tag},
-   |                                          ^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/panes/playlists.rs:14:23
-   |
-14 |     mpd::mpd_client::{MpdClient, SingleOrRange},
-   |                       ^^^^^^^^^
-
-warning: unused import: `mpd_client::MpdClient`
-  --> src/shared/mpd_query.rs:14:9
-   |
-14 |         mpd_client::MpdClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `mpd::mpd_client::MpdClient`
-  --> src/ui/browser.rs:18:5
-   |
-18 |     mpd::mpd_client::MpdClient,
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `MpdClient`
- --> src/ui/panes/volume.rs:8:23
+warning: unused import: `itertools::Itertools`
+ --> src/ui/dirstack/mod.rs:3:5
   |
-8 |     mpd::mpd_client::{MpdClient, ValueChange},
-  |                       ^^^^^^^^^
+3 | use itertools::Itertools;
+  |     ^^^^^^^^^^^^^^^^^^^^
 
-warning: unused import: `MpdClient`
-  --> src/ui/panes/tag_browser.rs:17:43
-   |
-17 |     mpd::mpd_client::{Filter, FilterKind, MpdClient, Tag},
-   |                                           ^^^^^^^^^
-
-warning: unused import: `MpdClient`
- --> src/ui/panes/header.rs:7:23
-  |
-7 |     mpd::mpd_client::{MpdClient, ValueChange},
-  |                       ^^^^^^^^^
-
-warning: unused import: `MpdCommand`
-  --> src/ui/panes/search/mod.rs:29:41
-   |
-29 |         mpd_client::{Filter, MpdClient, MpdCommand},
-   |                                         ^^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/panes/search/mod.rs:29:30
-   |
-29 |         mpd_client::{Filter, MpdClient, MpdCommand},
-   |                              ^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/modals/menu/mod.rs:20:22
-   |
-20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
-   |                      ^^^^^^^^^
-
-warning: unused import: `MpdCommand`
-  --> src/ui/modals/menu/mod.rs:20:33
-   |
-20 |         mpd_client::{MpdClient, MpdCommand, SingleOrRange},
-   |                                 ^^^^^^^^^^
-
-warning: unused import: `proto_client::ProtoClient`
-  --> src/ui/modals/menu/mod.rs:21:9
-   |
-21 |         proto_client::ProtoClient,
-   |         ^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `mpd::mpd_client::MpdClient`
-  --> src/ui/modals/outputs.rs:14:5
-   |
-14 |     mpd::mpd_client::MpdClient,
-   |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `MpdClientExt`
-  --> src/ui/modals/outputs.rs:19:26
-   |
-19 |         mpd_client_ext::{MpdClientExt, PartitionedOutput, PartitionedOutputKind},
-   |                          ^^^^^^^^^^^^
-
-warning: unused import: `mpd::mpd_client::MpdClient`
- --> src/ui/panes/album_art.rs:9:5
-  |
-9 |     mpd::mpd_client::MpdClient,
-  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/panes/albums.rs:13:30
-   |
-13 |         mpd_client::{Filter, MpdClient, Tag},
-   |                              ^^^^^^^^^
-
-warning: unused import: `MpdClient`
-  --> src/ui/panes/queue.rs:36:22
-   |
-36 |         mpd_client::{MpdClient, SingleOrRange},
-   |                      ^^^^^^^^^
+warning: variable does not need to be mutable
+   --> src/mpd/commands/lsinfo.rs:191:44
+    |
+191 |     fn next_internal(&mut self, key: &str, mut value: String) -> Result<LineHandled, MpdError> {
+    |                                            ----^^^^^
+    |                                            |
+    |                                            help: remove this `mut`
+    |
+    = note: `#[warn(unused_mut)]` (part of `#[warn(unused)]`) on by default
 
 warning: unused variable: `limit`
    --> src/mpd/mpd_client.rs:389:32
@@ -455,254 +393,11 @@ warning: unused variable: `name`
 330 |     fn save_queue_as_playlist(&mut self, name: &str, _mode: Option<SaveMode>) -> Result<()> {
     |                                          ^^^^ help: if this is intentional, prefix it with an underscore: `_name`
 
-warning: unused variable: `uri`
-   --> src/player/youtube_backend.rs:205:23
+warning: unused variable: `url`
+   --> src/player/youtube_backend.rs:348:17
     |
-205 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
-    |                       ^^^ help: if this is intentional, prefix it with an underscore: `_uri`
-
-warning: unused variable: `position`
-   --> src/player/youtube_backend.rs:205:34
-    |
-205 |     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
-    |                                  ^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_position`
-
-warning: unused variable: `id`
-   --> src/player/youtube_backend.rs:223:27
-    |
-223 |     fn play_id(&mut self, id: u32) -> Result<()> {
-    |                           ^^ help: if this is intentional, prefix it with an underscore: `_id`
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:875:15
-    |
-875 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-877 ~             crate::player::Client::Mpv(_) => Ok(()),
-878 ~             &mut player::client::Client::YouTube(_) => todo!(), // Not applicable for MPV
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:888:15
-    |
-888 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-895 ~             },
-896 +             &mut player::client::Client::YouTube(_) => todo!()
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:900:15
-    |
-900 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-902 ~             crate::player::Client::Mpv(_) => Ok(()),
-903 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:911:15
-    |
-911 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-915 ~             crate::player::Client::Mpv(_) => Ok(()),
-916 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:923:15
-    |
-923 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-925 ~             crate::player::Client::Mpv(_) => Ok(Vec::new()),
-926 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:930:15
-    |
-930 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-935 ~             },
-936 +             &mut player::client::Client::YouTube(_) => todo!()
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:940:15
-    |
-940 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-945 ~             },
-946 +             &mut player::client::Client::YouTube(_) => todo!()
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:950:15
-    |
-950 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-955 ~             },
-956 +             &mut player::client::Client::YouTube(_) => todo!()
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:963:15
-    |
-963 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-965 ~             crate::player::Client::Mpv(_) => Ok(HashMap::new()),
-966 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:975:15
-    |
-975 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-977 ~             crate::player::Client::Mpv(_) => Ok(()),
-978 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
-
-error[E0004]: non-exhaustive patterns: `&mut player::client::Client::YouTube(_)` not covered
-   --> src/shared/mpd_client_ext.rs:982:15
-    |
-982 |         match self {
-    |               ^^^^ pattern `&mut player::client::Client::YouTube(_)` not covered
-    |
-note: `player::client::Client<'_>` defined here
-   --> src/player/client.rs:36:10
-    |
- 36 | pub enum Client<'name> {
-    |          ^^^^^^
-...
- 39 |     YouTube(YouTubeBackend),
-    |     ------- not covered
-    = note: the matched value is of type `&mut player::client::Client<'_>`
-help: ensure that all possible cases are being handled by adding a match arm with a wildcard pattern or an explicit pattern as shown
-    |
-984 ~             crate::player::Client::Mpv(_) => Ok(()),
-985 ~             &mut player::client::Client::YouTube(_) => todo!(),
-    |
+348 |             let url = self.get_stream_url(&item.song.file)?;
+    |                 ^^^ help: if this is intentional, prefix it with an underscore: `_url`
 
 warning: unused variable: `elapsed`
   --> src/ui/panes/lyrics.rs:40:13
@@ -710,7 +405,7 @@ warning: unused variable: `elapsed`
 40 |         let elapsed = ctx.status.elapsed;
    |             ^^^^^^^ help: if this is intentional, prefix it with an underscore: `_elapsed`
 
-Some errors have detailed explanations: E0004, E0053, E0062, E0277, E0308, E0432, E0433, E0599.
-For more information about an error, try `rustc --explain E0004`.
-warning: `rmpc` (bin "rmpc") generated 39 warnings
-error: could not compile `rmpc` (bin "rmpc") due to 20 previous errors; 39 warnings emitted
+Some errors have detailed explanations: E0063, E0412, E0432, E0433, E0599, E0658.
+For more information about an error, try `rustc --explain E0063`.
+warning: `rmpc` (bin "rmpc") generated 9 warnings
+error: could not compile `rmpc` (bin "rmpc") due to 17 previous errors; 9 warnings emitted

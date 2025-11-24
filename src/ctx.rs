@@ -34,6 +34,7 @@ use crate::{
         mpd_client_ext::MpdClientExt,
         mpd_query::MpdQuerySync,
         ring_vec::RingVec,
+        image_cache::ImageCache,
     },
     ui::StatusMessage,
 };
@@ -48,6 +49,7 @@ pub struct Ctx {
     pub(crate) config: std::sync::Arc<Config>,
     pub(crate) status: Status,
     pub(crate) queue: Vec<Song>,
+    pub(crate) image_cache: ImageCache,
     /// Application state with in-memory queue management
     pub(crate) app_state: Arc<RwLock<crate::app_state::AppState>>,
     #[cfg(test)]
@@ -95,6 +97,8 @@ impl Ctx {
         };
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
 
+        let image_cache = ImageCache::new(app_event_sender.clone());
+
         let status = client.get_status()?;
         let queue = client.playlist_info()?;
         
@@ -124,6 +128,7 @@ impl Ctx {
             app_event_sender,
             work_sender,
             scheduler,
+            image_cache,
             client_request_sender,
             needs_render: Cell::new(false),
             stickers_to_fetch: RefCell::new(HashSet::new()),

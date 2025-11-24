@@ -112,6 +112,13 @@ where
         self.dirs.insert(path, Dir::new_with_state(items, new_state));
     }
 
+    pub fn push(&mut self, segment: impl Into<String>) {
+        self.path.push(segment);
+        if !self.dirs.contains_key(&self.path) {
+            self.dirs.insert(self.path.clone(), Dir::default());
+        }
+    }
+
     pub fn enter(&mut self) {
         if let Some(next_path) = self.next_path() {
             self.path = next_path;

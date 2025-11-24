@@ -7,9 +7,11 @@ use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use ytmapi_rs::{
     YtMusic, auth::BrowserToken, 
-    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery}, 
-    common::{YoutubeID, VideoID}
+    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery}, 
+    common::{YoutubeID, VideoID, AlbumID},
+    parse::SearchResultVideo,
 };
+use crate::mpd::commands::LsInfoEntry;
 use lru::LruCache;
 use std::num::NonZeroUsize;
 use std::time::Instant;
@@ -21,7 +23,7 @@ use crate::app_state::AppState;
 use crate::domain::{QueuePosition, Song, Status, PlaybackState};
 use crate::mpd::{
     commands::{
-        LsInfoEntry, Output, Decoder, Playlist, SaveMode, SeekPosition, ValueChange,
+        Output, Decoder, Playlist, SaveMode, SeekPosition, ValueChange,
         status::OnOffOneshot,
     },
     mpd_client::{Filter, SingleOrRange, Tag},
@@ -209,6 +211,10 @@ impl YouTubeBackend {
         for track in tracks {
             let mut metadata = HashMap::new();
             metadata.insert("title".to_string(), vec![track.title]);
+            
+            if let Some(thumb) = track.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
             // Note: WatchPlaylistTrack has different fields than SearchResultSong
             // artist info is in a different structure
 
@@ -439,6 +445,10 @@ impl MusicBackend for YouTubeBackend {
                 if let Some(album) = result.album {
                     metadata.insert("album".to_string(), vec![album.name]);
                 }
+                
+                if let Some(thumb) = result.thumbnails.last() {
+                    metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                }
 
                 Song {
                     id: None,
@@ -467,6 +477,10 @@ impl MusicBackend for YouTubeBackend {
             metadata.insert("title".to_string(), vec![info.video_details.title]);
             if let Some(author) = info.video_details.author {
                 metadata.insert("artist".to_string(), vec![author.name]);
+            }
+            
+            if let Some(thumb) = info.video_details.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
             }
 
             Song {
@@ -551,8 +565,52 @@ impl MusicBackend for YouTubeBackend {
 
     // ===== Library Browsing =====
 
-    fn lsinfo(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
-        // TODO: Implement browsing
+    fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
+        let path = path.unwrap_or("");
+        if path.is_empty() {
+             return Ok(vec![]);
+        }
+
+        let api_opt = self.api.lock().as_ref().cloned();
+        let api = if let Some(api) = api_opt {
+            api
+        } else {
+            return Ok(vec![]);
+        };
+
+        if let Some(album_id) = path.strip_prefix("album:") {
+             let query = GetAlbumQuery::new(AlbumID::from_raw(album_id));
+             let album = self.rt.block_on(async move { api.query(query).await })?;
+             
+             let mut entries = Vec::new();
+             for track in album.tracks {
+                 let mut s = Song {
+                     file: track.video_id.get_raw().to_string(),
+                     ..Default::default()
+                 };
+                 s.metadata.insert("title".to_string(), vec![track.title]);
+                 s.metadata.insert("album".to_string(), vec![album.title.clone()]);
+                 if let Some(artist) = album.artists.first() {
+                     s.metadata.insert("artist".to_string(), vec![artist.name.clone()]);
+                 }
+                 s.metadata.insert("track".to_string(), vec![track.track_no.to_string()]);
+                 
+                 // Parse duration string "MM:SS" or "HH:MM:SS"
+                 let parts: Vec<&str> = track.duration.split(':').collect();
+                 let secs = match parts.len() {
+                     2 => parts[0].parse::<u64>().unwrap_or(0) * 60 + parts[1].parse::<u64>().unwrap_or(0),
+                     3 => parts[0].parse::<u64>().unwrap_or(0) * 3600 + parts[1].parse::<u64>().unwrap_or(0) * 60 + parts[2].parse::<u64>().unwrap_or(0),
+                     _ => 0,
+                 };
+                 if secs > 0 {
+                     s.duration = Some(std::time::Duration::from_secs(secs));
+                 }
+
+                 entries.push(LsInfoEntry::File(s));
+             }
+             return Ok(entries);
+        }
+
         Ok(vec![])
     }
 
@@ -560,13 +618,131 @@ impl MusicBackend for YouTubeBackend {
         Ok(vec![])
     }
 
-    fn search(&mut self, _filter: &[Filter]) -> Result<Vec<Song>> {
-        // TODO: Implement search
-        Ok(vec![])
+    fn search(&mut self, filter: &[Filter]) -> Result<Vec<Song>> {
+        let query = filter
+            .iter()
+            .find_map(|f| {
+                if !f.value.is_empty() {
+                    Some(f.value.as_ref())
+                } else {
+                    None
+                }
+            })
+            .unwrap_or("");
+
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let api_opt = self.api.lock().as_ref().cloned();
+        let api = if let Some(api) = api_opt {
+            api
+        } else {
+            return Ok(vec![]);
+        };
+
+        let results = self.rt.block_on(async move {
+            api.search(query).await
+        })?;
+        
+        let mut songs = Vec::new();
+
+        for song in results.songs {
+            let mut s = Song {
+                file: song.video_id.get_raw().to_string(),
+                ..Default::default()
+            };
+            s.metadata.insert("title".to_string(), vec![song.title]);
+            s.metadata.insert("artist".to_string(), vec![song.artist]);
+            if let Some(album) = song.album {
+                s.metadata.insert("album".to_string(), vec![album.name]);
+            }
+            s.metadata.insert("type".to_string(), vec!["song".to_string()]);
+            if let Some(thumb) = song.thumbnails.last() {
+                s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+            songs.push(s);
+        }
+
+        for video in results.videos {
+            match video {
+                SearchResultVideo::Video { title, channel_name, video_id, thumbnails, .. } => {
+                    let mut s = Song {
+                        file: video_id.get_raw().to_string(),
+                        ..Default::default()
+                    };
+                    s.metadata.insert("title".to_string(), vec![title]);
+                    s.metadata.insert("artist".to_string(), vec![channel_name]);
+                    s.metadata.insert("type".to_string(), vec!["video".to_string()]);
+                    if let Some(thumb) = thumbnails.last() {
+                        s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                    }
+                    songs.push(s);
+                }
+                SearchResultVideo::VideoEpisode { title, channel_name, episode_id, thumbnails, .. } => {
+                    let mut s = Song {
+                        file: episode_id.get_raw().to_string(),
+                        ..Default::default()
+                    };
+                    s.metadata.insert("title".to_string(), vec![title]);
+                    s.metadata.insert("artist".to_string(), vec![channel_name]);
+                    s.metadata.insert("type".to_string(), vec!["video".to_string()]);
+                    if let Some(thumb) = thumbnails.last() {
+                        s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                    }
+                    songs.push(s);
+                }
+            }
+        }
+
+        for album in results.albums {
+            let mut s = Song {
+                file: album.album_id.get_raw().to_string(),
+                ..Default::default()
+            };
+            s.metadata.insert("title".to_string(), vec![album.title]);
+            s.metadata.insert("artist".to_string(), vec![album.artist]);
+            s.metadata.insert("year".to_string(), vec![album.year]);
+            s.metadata.insert("type".to_string(), vec!["album".to_string()]);
+            if let Some(thumb) = album.thumbnails.last() {
+                s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+            songs.push(s);
+        }
+
+        for artist in results.artists {
+            let mut s = Song {
+                file: artist.browse_id.get_raw().to_string(),
+                ..Default::default()
+            };
+            s.metadata.insert("title".to_string(), vec![artist.artist]);
+            s.metadata.insert("type".to_string(), vec!["artist".to_string()]);
+            if let Some(thumb) = artist.thumbnails.last() {
+                s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+            songs.push(s);
+        }
+
+        Ok(songs)
     }
 
-    fn find(&mut self, _filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
-        Ok(vec![])
+    fn find(&mut self, filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<Song>> {
+        for f in filter {
+            if f.tag == Tag::Album {
+                // If filtering by Album, we assume the value is the album ID (or we need to handle it)
+                // Since lsinfo now handles "album:ID", we can use it.
+                // But lsinfo returns LsInfoEntry, find returns Song.
+                // We need to extract Songs from LsInfoEntry.
+                let album_id = &f.value;
+                let entries = self.lsinfo(Some(album_id))?;
+                let songs = entries.into_iter().filter_map(|e| match e {
+                    LsInfoEntry::File(s) => Some(s),
+                    _ => None,
+                }).collect();
+                return Ok(songs);
+            }
+        }
+        self.search(filter)
     }
 
     fn list_tag(&mut self, _tag: Tag, _filter: Option<&[Filter]>) -> Result<Vec<String>> {

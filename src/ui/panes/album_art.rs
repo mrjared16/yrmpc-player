@@ -7,7 +7,7 @@ use crate::{
     config::{album_art::ImageMethod, tabs::PaneType},
     ctx::Ctx,
     shared::key_event::KeyEvent,
-    ui::{UiEvent, image::facade::AlbumArtFacade},
+    ui::{UiEvent, image::facade::AlbumArtFacade, widgets::async_image::AsyncImage},
 };
 
 #[derive(Debug)]
@@ -58,7 +58,16 @@ impl AlbumArtPane {
 }
 
 impl Pane for AlbumArtPane {
-    fn render(&mut self, _frame: &mut Frame, area: Rect, _ctx: &Ctx) -> Result<()> {
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {
+        if let Some((_, song)) = ctx.find_current_song_in_queue() {
+            if let Some(url) = song.metadata.get("thumbnail").and_then(|v| v.first()) {
+                self.album_art.hide()?; // Ensure legacy facade is hidden
+                let widget = AsyncImage::new(&ctx.image_cache, Some(url.clone()));
+                frame.render_widget(widget, area);
+                return Ok(());
+            }
+        }
+
         self.album_art.set_size(area);
         Ok(())
     }

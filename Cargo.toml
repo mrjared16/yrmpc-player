@@ -57,6 +57,8 @@ ytmapi-rs = { path = "../youtui/ytmapi-rs", version = "0.2.0" }
 rusty_ytdl = "0.7.4"
 tokio = { version = "1", features = ["full"] }
 lru = "0.12"
+ratatui-image = "8.0.2"
+reqwest = { version = "0.12.24", features = ["blocking"] }
 
 
 [build-dependencies]

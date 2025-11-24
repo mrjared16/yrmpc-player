@@ -31,12 +31,16 @@ use crate::{
     },
     player::Client,
     shared::{
+        events::AppEvent,
         key_event::KeyEvent,
         macros::{modal, status_error, status_info, status_warn},
         mouse_event::{MouseEvent, MouseEventKind, calculate_scrollbar_position},
-        mpd_client_ext::{Enqueue, MpdClientExt},
+
+        mpd_client_ext::MpdClientExt as _,
     },
     ui::{
+        Enqueue,
+        UiAppEvent,
         UiEvent,
         dirstack::Dir,
         modals::{
@@ -650,22 +654,70 @@ impl SearchPane {
                 CommonAction::Rename => {}
                 CommonAction::Close => {}
                 CommonAction::Confirm if self.songs_dir.marked().is_empty() => {
-                    let (hovered_song_idx, items) = self.enqueue(true);
-                    let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
+                    if let Some(selected) = self.songs_dir.selected() {
+                            if let Some(type_) = selected.metadata.get("type").and_then(|v| v.first()) {
+                                if type_ == "album" {
+                                    // Open album in AlbumsPane
+                                    // We need to construct a path for the album.
+                                    // The file field of the album song should contain "album:ID"
+                                    let album_id = &selected.file;
+                                    
+                                    // We need to send a message to switch tab/pane and load data.
+                                    // Since we can't easily access AlbumsPane directly here, we might need a new mechanism.
+                                    // However, we can use the existing UiEvent or just rely on the fact that we can switch tabs.
+                                    // But we also need to tell AlbumsPane WHICH album to load.
+                                    
+                                    // For now, let's assume we can use a custom GlobalAction or similar, 
+                                    // but better yet, let's use the ctx.query mechanism to push data to AlbumsPane if possible,
+                                    // or just switch to it and let it handle it? No, it needs the ID.
+                                    
+                                    // Let's try to use the "Directories" approach where we push a path.
+                                    // But AlbumsPane is separate.
+                                    
+                                    // Actually, we can use `ctx.command` to send a command to the backend? No, that's for MPD.
+                                    
+                                    // Let's use a hack for now: 
+                                    // We can use `GlobalAction::SwitchToTab` to switch to "Albums" tab (if it exists).
+                                    // AND we need to set the path in AlbumsPane.
+                                    
+                                    // Wait, `AlbumsPane` listens to `FETCH_DATA`.
+                                    // If we can trigger `FETCH_DATA` on `AlbumsPane` with the album ID, it might work.
+                                    // But `FETCH_DATA` usually comes from `fetch_data` method in `BrowserPane` trait.
+                                    
+                                    // Let's look at `AlbumsPane::fetch_data`. It uses `self.stack().next_path()`.
+                                    // So we need to modify `AlbumsPane`'s stack.
+                                    
+                                    // Since we don't have access to `AlbumsPane` state here, we might need a new `UiAppEvent`.
+                                    // `UiAppEvent::OpenAlbum(String)` would be ideal.
+                                    // But `UiAppEvent` is defined in `src/ui/mod.rs`.
+                                    
+                                    // Let's add `OpenAlbum` to `UiAppEvent`.
+                                    // But first, let's just log it to see if we get here.
+                                    log::info!("Opening album: {}", album_id);
 
-                    if !items.is_empty() {
-                        Client::resolve_and_enqueue(
-                            ctx,
-                            items,
-                            Position::Replace,
-                            AutoplayKind::Hovered,
-                            current_song_idx,
-                            hovered_song_idx,
-                        );
+                                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenAlbum(album_id.clone()))) {
+                                        log::error!("Failed to send OpenAlbum event: {}", err);
+                                    }
+                                }
+                            }
+                        }
+                    
+                        let (hovered_song_idx, items) = self.enqueue(true);
+                        let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
+
+                        if !items.is_empty() {
+                            Client::resolve_and_enqueue(
+                                ctx,
+                                items,
+                                Position::Replace,
+                                AutoplayKind::Hovered,
+                                current_song_idx,
+                                hovered_song_idx,
+                            );
+                        }
+
+                        ctx.render()?;
                     }
-
-                    ctx.render()?;
-                }
                 CommonAction::Confirm => {}
                 CommonAction::FocusInput => {}
                 CommonAction::AddOptions { kind: AddKind::Action(opts) } => {
@@ -1093,8 +1145,63 @@ impl Pane for SearchPane {
     ) -> Result<()> {
         match (id, data) {
             (SEARCH, MpdQueryResult::SearchResult { data }) => {
-                status_info!("Found {} matching songs", data.len());
-                self.songs_dir = Dir::new(data);
+                let mut artists = Vec::new();
+                let mut albums = Vec::new();
+                let mut songs = Vec::new();
+                let mut videos = Vec::new();
+                let mut others = Vec::new();
+
+                for song in data {
+                    let type_ = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
+                    match type_ {
+                        "artist" => artists.push(song),
+                        "album" => albums.push(song),
+                        "song" => songs.push(song),
+                        "video" => videos.push(song),
+                        _ => others.push(song),
+                    }
+                }
+
+                let mut grouped_data = Vec::new();
+
+                if !artists.is_empty() {
+                    let mut header = Song::default();
+                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
+                    header.metadata.insert("title".to_string(), vec!["Artists".to_string()]);
+                    grouped_data.push(header);
+                    grouped_data.extend(artists);
+                }
+
+                if !albums.is_empty() {
+                    let mut header = Song::default();
+                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
+                    header.metadata.insert("title".to_string(), vec!["Albums".to_string()]);
+                    grouped_data.push(header);
+                    grouped_data.extend(albums);
+                }
+
+                if !songs.is_empty() {
+                    let mut header = Song::default();
+                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
+                    header.metadata.insert("title".to_string(), vec!["Songs".to_string()]);
+                    grouped_data.push(header);
+                    grouped_data.extend(songs);
+                }
+
+                if !videos.is_empty() {
+                    let mut header = Song::default();
+                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
+                    header.metadata.insert("title".to_string(), vec!["Videos".to_string()]);
+                    grouped_data.push(header);
+                    grouped_data.extend(videos);
+                }
+                
+                if !others.is_empty() {
+                    grouped_data.extend(others);
+                }
+
+                status_info!("Found {} matching items", grouped_data.len());
+                self.songs_dir = Dir::new(grouped_data);
                 ctx.render()?;
             }
             _ => {}

@@ -2,7 +2,7 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use derive_more::{AsMut, AsRef, Into, IntoIterator};
 
-use super::Song;
+use crate::domain::Song;
 use crate::mpd::{FromMpd, LineHandled, ParseErrorExt, errors::MpdError};
 
 #[derive(Debug, Default, IntoIterator, AsRef, AsMut, Into)]
@@ -184,5 +184,36 @@ Last-Modified: 2024-08-12T03:03:40Z";
                 last_modified: "2024-08-12T03:03:40Z".to_owned().parse().unwrap()
             })
         );
+    }
+}
+
+impl FromMpd for Song {
+    fn next_internal(&mut self, key: &str, mut value: String) -> Result<LineHandled, MpdError> {
+        match key {
+            "file" => self.file = value,
+            "id" => {
+                if let Ok(id) = value.parse() {
+                    self.id = Some(id);
+                }
+            }
+            "duration" | "time" => {
+                if let Ok(secs) = value.parse::<f64>() {
+                    self.duration = Some(std::time::Duration::from_secs_f64(secs));
+                }
+            }
+            "last-modified" => {
+                self.last_modified = value.parse().ok();
+            }
+            "added" => {
+                self.added = value.parse().ok();
+            }
+            key => {
+                self.metadata
+                    .entry(key.to_owned())
+                    .or_default()
+                    .push(value);
+            }
+        }
+        Ok(LineHandled::Yes)
     }
 }
