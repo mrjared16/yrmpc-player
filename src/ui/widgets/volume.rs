@@ -46,6 +46,7 @@ impl<'a> Volume<'a> {
 }
 
 impl Volume<'_> {
+    #[allow(dead_code)]
     pub fn get_str(value: u32) -> String {
         let i = std::cmp::min((value / 13) as usize, CHARS.len());
         format!("Volume: {:<7} {:>3}%", CHARS[0..i].join(""), value)

@@ -1,6 +1,5 @@
 use std::borrow::Cow;
 
-use itertools::Itertools;
 use ratatui::{
     text::{Line, Span},
     style::{Color, Style},

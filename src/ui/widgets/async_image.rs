@@ -11,6 +11,7 @@ use crate::shared::image_cache::ImageCache;
 pub struct AsyncImage<'a> {
     cache: &'a ImageCache,
     url: Option<String>,
+    #[allow(dead_code)]
     placeholder_char: char,
 }
 

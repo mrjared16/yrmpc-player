@@ -37,7 +37,7 @@ impl Pane for LyricsPane {
         let Some(lrc) = &self.current_lyrics else { return Ok(()) };
         let offset = ctx.config.lyrics_offset;
 
-        let elapsed = ctx.status.elapsed;
+        let _elapsed = ctx.status.elapsed;
         let (current_line_idx, first_line_reached) = lrc
             .lines
             .iter()

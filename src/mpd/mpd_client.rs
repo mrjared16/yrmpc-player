@@ -386,7 +386,7 @@ impl MpdClient for Client<'_> {
         self.config.as_ref()
     }
 
-    fn binary_limit(&mut self, limit: u64) -> MpdResult<()> {
+    fn binary_limit(&mut self, _limit: u64) -> MpdResult<()> {
         // Commented out for Mopidy compatibility - Mopidy doesn't support binarylimit
         // self.send_binary_limit(limit).and_then(|()| self.read_ok())
         Ok(())
