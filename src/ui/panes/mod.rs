@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use album_art::AlbumArtPane;
 use albums::AlbumsPane;
 use anyhow::{Context, Result};
+use artist::ArtistPane;
 use cava::CavaPane;
+use playlist::PlaylistPane;
+use library::LibraryPane;
 use directories::DirectoriesPane;
 use header::HeaderPane;
 use lyrics::LyricsPane;
@@ -40,7 +43,10 @@ use crate::{
 
 pub mod album_art;
 pub mod albums;
+pub mod artist;
 pub mod cava;
+pub mod playlist;
+pub mod library;
 pub mod directories;
 #[cfg(debug_assertions)]
 pub mod frame_count;
@@ -63,10 +69,12 @@ pub enum Panes<'pane_ref, 'pane> {
     #[cfg(debug_assertions)]
     Logs(&'pane_ref mut LogsPane),
     Directories(&'pane_ref mut DirectoriesPane),
-    Artists(&'pane_ref mut TagBrowserPane),
+    Artists(&'pane_ref mut ArtistPane),
     AlbumArtists(&'pane_ref mut TagBrowserPane),
     Albums(&'pane_ref mut AlbumsPane),
-    Playlists(&'pane_ref mut PlaylistsPane),
+    Playlists(&'pane_ref mut PlaylistPane),
+    PlaylistsLegacy(&'pane_ref mut PlaylistsPane),
+    Library(&'pane_ref mut LibraryPane),
     Search(&'pane_ref mut SearchPane),
     AlbumArt(&'pane_ref mut AlbumArtPane),
     Lyrics(&'pane_ref mut LyricsPane),
@@ -92,9 +100,11 @@ pub struct PaneContainer<'panes> {
     pub logs: LogsPane,
     pub directories: DirectoriesPane,
     pub albums: AlbumsPane,
-    pub artists: TagBrowserPane,
+    pub artists: ArtistPane,
     pub album_artists: TagBrowserPane,
+    pub playlists_new: PlaylistPane,
     pub playlists: PlaylistsPane,
+    pub library: LibraryPane,
     pub search: SearchPane,
     pub album_art: AlbumArtPane,
     pub lyrics: LyricsPane,
@@ -115,9 +125,11 @@ impl<'panes> PaneContainer<'panes> {
             logs: LogsPane::new(),
             directories: DirectoriesPane::new(ctx),
             albums: AlbumsPane::new(ctx),
-            artists: TagBrowserPane::new(Tag::Artist, PaneType::Artists, None, ctx),
+            artists: ArtistPane::new(ctx),
             album_artists: TagBrowserPane::new(Tag::AlbumArtist, PaneType::AlbumArtists, None, ctx),
+            playlists_new: PlaylistPane::new(ctx),
             playlists: PlaylistsPane::new(ctx),
+            library: LibraryPane::new(ctx),
             search: SearchPane::new(ctx),
             album_art: AlbumArtPane::new(ctx),
             lyrics: LyricsPane::new(ctx),
@@ -171,7 +183,8 @@ impl<'panes> PaneContainer<'panes> {
             PaneType::Artists => Ok(Panes::Artists(&mut self.artists)),
             PaneType::AlbumArtists => Ok(Panes::AlbumArtists(&mut self.album_artists)),
             PaneType::Albums => Ok(Panes::Albums(&mut self.albums)),
-            PaneType::Playlists => Ok(Panes::Playlists(&mut self.playlists)),
+            PaneType::Playlists => Ok(Panes::Playlists(&mut self.playlists_new)),
+            PaneType::Library => Ok(Panes::Library(&mut self.library)),
             PaneType::Search => Ok(Panes::Search(&mut self.search)),
             PaneType::AlbumArt => Ok(Panes::AlbumArt(&mut self.album_art)),
             PaneType::Lyrics => Ok(Panes::Lyrics(&mut self.lyrics)),
@@ -222,6 +235,8 @@ macro_rules! pane_call {
             Panes::Property(s) => s.$fn($($param),+),
             Panes::Others(s) => s.$fn($($param),+),
             Panes::Cava(s) => s.$fn($($param),+),
+            Panes::PlaylistsLegacy(s) => s.$fn($($param),+),
+            Panes::Library(s) => s.$fn($($param),+),
         }
     }
 }

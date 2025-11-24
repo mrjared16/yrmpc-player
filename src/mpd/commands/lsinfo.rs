@@ -188,7 +188,7 @@ Last-Modified: 2024-08-12T03:03:40Z";
 }
 
 impl FromMpd for Song {
-    fn next_internal(&mut self, key: &str, mut value: String) -> Result<LineHandled, MpdError> {
+    fn next_internal(&mut self, key: &str, value: String) -> Result<LineHandled, MpdError> {
         match key {
             "file" => self.file = value,
             "id" => {

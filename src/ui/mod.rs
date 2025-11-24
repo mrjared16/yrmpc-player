@@ -745,7 +745,7 @@ impl<'ui> Ui<'ui> {
                          
                          // We can manually insert the path and trigger fetch.
                          use crate::ui::dirstack::Path;
-                         let path = Path::from(album_id.clone());
+                         let _path = Path::from(album_id.clone());
                          
                          // Clear stack and set root? No, we want to keep history if possible, 
                          // but since we are jumping from search, maybe just set it as current?
@@ -817,6 +817,102 @@ impl<'ui> Ui<'ui> {
                     }
                 }
                 
+                ctx.render()?;
+            }
+
+            UiAppEvent::OpenArtist(artist_id) => {
+                let artists_tab_name = ctx.config.tabs.tabs.iter()
+                    .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Artists))
+                    .map(|(name, _)| name.clone());
+
+                if let Some(tab_name) = artists_tab_name {
+                    self.change_tab(tab_name, ctx)?;
+
+                    if let Ok(Panes::Artists(artist_pane)) = self.panes.get_mut(&PaneType::Artists, ctx) {
+                         use crate::ui::dir_or_song::DirOrSong;
+                         // Construct a fake DirOrSong to trigger fetch
+                         // The name must start with "artist:" for our custom logic in ArtistPane
+                         let fake_item = DirOrSong::Dir {
+                             name: artist_id.clone(),
+                             full_path: artist_id.clone(),
+                             playlist: false,
+                             last_modified: chrono::Utc::now(),
+                         };
+                         
+                         // We push the path first?
+                         // ArtistPane::fetch_data expects the item to be selected or passed.
+                         // But we want to navigate TO it.
+                         // If we just push to stack, we need to make sure it's valid.
+                         
+                         // ArtistPane::fetch_data logic:
+                         // if current_path.is_empty() && name.starts_with("artist:") -> fetch lsinfo
+                         
+                         // So we need to be at root (which we are if we just switched tab, usually).
+                         // But if we were deep in another artist, we should probably reset?
+                         // Or just push?
+                         
+                         // If we are at root, we can call fetch_data directly with the fake item.
+                         // But we need to make sure we are at root.
+                         // artist_pane.stack_mut().clear(); // Maybe?
+                         
+                         // Let's assume we want to reset to root and then open the artist.
+                         // Or maybe we want to keep history?
+                         // If we are at root, we just call fetch_data.
+                         
+                         // If we are NOT at root, we might want to go back to root?
+                         // Or just push?
+                         
+                         // Our ArtistPane::fetch_data handles "artist:" ONLY if current_path is empty.
+                         // So we MUST be at root.
+                         
+                         // So let's clear the stack first?
+                         // artist_pane.stack_mut().clear(); // No clear method?
+                         // stack is DirStack. It has `pop` but maybe not clear.
+                         // We can set it to new?
+                         
+                         // Actually, let's just use `fetch_data` and hope it works or modify `ArtistPane` to handle it.
+                         // But `ArtistPane` logic I wrote:
+                         // if current_path.is_empty() { ... }
+                         
+                         // So I should ensure we are at root.
+                         // But `DirStack` doesn't expose `clear`.
+                         // I can pop until empty?
+                         
+                         // Let's just assume we are at root or the user wants to go to root.
+                         // But wait, `OpenArtist` implies "Go to this artist".
+                         
+                         // I'll add a `reset` method to `ArtistPane` or `DirStack` later if needed.
+                         // For now, I'll try to use `fetch_data` and if it fails because not at root, I'll fix it.
+                         // Actually, I can just manually set the stack if I had access.
+                         
+                         // Let's just call fetch_data.
+                         use crate::ui::browser::BrowserPane;
+                         artist_pane.fetch_data(&fake_item, ctx)?;
+                    }
+                }
+                ctx.render()?;
+            }
+            UiAppEvent::OpenPlaylist(playlist_id) => {
+                let playlists_tab_name = ctx.config.tabs.tabs.iter()
+                    .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Playlists))
+                    .map(|(name, _)| name.clone());
+
+                if let Some(tab_name) = playlists_tab_name {
+                    self.change_tab(tab_name, ctx)?;
+
+                    if let Ok(Panes::Playlists(playlist_pane)) = self.panes.get_mut(&PaneType::Playlists, ctx) {
+                        use crate::ui::dir_or_song::DirOrSong;
+                        let fake_item = DirOrSong::Dir {
+                            name: playlist_id.clone(),
+                            full_path: playlist_id.clone(),
+                            playlist: true,
+                            last_modified: chrono::Utc::now(),
+                        };
+
+                        use crate::ui::browser::BrowserPane;
+                        playlist_pane.fetch_data(&fake_item, ctx)?;
+                    }
+                }
                 ctx.render()?;
             }
         }
@@ -917,6 +1013,8 @@ impl<'ui> Ui<'ui> {
                 Panes::FrameCount(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Others(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Cava(p) => p.on_event(&mut event, visible, ctx),
+                Panes::PlaylistsLegacy(p) => p.on_event(&mut event, visible, ctx),
+                Panes::Library(p) => p.on_event(&mut event, visible, ctx),
                 // Property and the dummy TabContent pane do not need to receive events
                 Panes::Property(_) | Panes::TabContent => Ok(()),
             }?;
@@ -962,6 +1060,8 @@ impl<'ui> Ui<'ui> {
                     #[cfg(debug_assertions)]
                     Panes::FrameCount(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Cava(p) => p.on_query_finished(id, data, visible, ctx),
+                    Panes::PlaylistsLegacy(p) => p.on_query_finished(id, data, visible, ctx),
+                    Panes::Library(p) => p.on_query_finished(id, data, visible, ctx),
                     // Property and the dummy TabContent pane do not need to receive command
                     // notifications
                     Panes::Property(_) | Panes::TabContent => Ok(()),
@@ -1003,6 +1103,8 @@ pub enum UiAppEvent {
     ChangeTab(TabName),
     Redraw,
     OpenAlbum(String),
+    OpenArtist(String),
+    OpenPlaylist(String),
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]

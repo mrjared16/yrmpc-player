@@ -88,6 +88,7 @@ pub enum PaneTypeFile {
         separator: Option<String>,
     },
     Cava,
+    Library,
 }
 
 #[derive(Debug, Clone, Hash, Eq, PartialEq, strum::Display, strum::EnumDiscriminants)]
@@ -123,6 +124,7 @@ pub enum PaneType {
         separator: Option<String>,
     },
     Cava,
+    Library,
 }
 
 pub const PANES_ALLOWED_IN_BOTH_TAB_AND_LAYOUT: [PaneTypeDiscriminants; 1] =
@@ -202,6 +204,7 @@ impl TryFrom<PaneTypeFile> for PaneType {
                 PaneType::Browser { root_tag: tag, separator }
             }
             PaneTypeFile::Cava => PaneType::Cava,
+            PaneTypeFile::Library => PaneType::Library,
         })
     }
 }
