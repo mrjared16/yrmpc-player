@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
 use anyhow::Result;
 use crossterm::event::KeyCode;
@@ -69,6 +70,11 @@ pub struct SearchPane {
     phase: Phase,
     songs_dir: Dir<Song, ListState>,
     column_areas: EnumMap<BrowserArea, Rect>,
+    suggestions: Vec<String>,
+    showing_suggestions: bool,
+    suggestions_state: ListState,
+    debounce_timer: Option<Instant>,
+    last_query: String,
 }
 
 const SEARCH: &str = "search";
@@ -95,6 +101,11 @@ impl SearchPane {
             songs_dir: Dir::default(),
             inputs,
             column_areas: EnumMap::default(),
+            suggestions: Vec::new(),
+            showing_suggestions: false,
+            suggestions_state: ListState::default(),
+            debounce_timer: None,
+            last_query: String::new(),
         }
     }
 
@@ -131,6 +142,39 @@ impl SearchPane {
         };
 
         (hovered_idx, items)
+    }
+
+    fn get_current_query_string(&self) -> String {
+        self.inputs.inputs.iter().find_map(|input| match input {
+            InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
+                if !value.is_empty() && !key.is_empty() =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        }).unwrap_or_default()
+    }
+
+    fn render_suggestions(
+        &mut self,
+        frame: &mut ratatui::prelude::Frame<'_>,
+        area: ratatui::prelude::Rect,
+        ctx: &Ctx,
+    ) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Suggestions")
+            .style(ctx.config.theme.borders_style);
+        
+        let items: Vec<ListItem> = self.suggestions.iter().map(|s| {
+            ListItem::new(Span::raw(s))
+        }).collect();
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(ctx.config.theme.current_item_style);
+        
+        frame.render_stateful_widget(list, area, &mut self.suggestions_state);
     }
 
     fn render_song_column(
@@ -695,12 +739,25 @@ impl SearchPane {
                                     // But first, let's just log it to see if we get here.
                                     log::info!("Opening album: {}", album_id);
 
-                                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenAlbum(album_id.clone()))) {
-                                        log::error!("Failed to send OpenAlbum event: {}", err);
-                                    }
+                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenAlbum(album_id.clone()))) {
+                        log::error!("Failed to send OpenAlbum event: {}", err);
+                    }
+                    return Ok(());
+                } else if type_ == "artist" {
+                    log::info!("Opening artist: {}", selected.file);
+                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenArtist(selected.file.clone()))) {
+                        log::error!("Failed to send OpenArtist event: {}", err);
+                    }
+                    return Ok(());
+                } else if type_ == "playlist" {
+                    log::info!("Opening playlist: {}", selected.file);
+                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenPlaylist(selected.file.clone()))) {
+                        log::error!("Failed to send OpenPlaylist event: {}", err);
+                    }
+                    return Ok(());
+                }
                                 }
                             }
-                        }
                     
                         let (hovered_song_idx, items) = self.enqueue(true);
                         let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
@@ -1076,14 +1133,18 @@ impl Pane for SearchPane {
                 frame.render_widget(&mut self.inputs, current_area);
 
                 // Render only the part of the preview that is actually supposed to be shown
-                let offset = self.songs_dir.state.offset();
-                let items = self.songs_dir.to_list_items_range(
-                    offset..offset + previous_area.height as usize,
-                    ctx.config.theme.browser_song_format.0.as_slice(),
-                    ctx,
-                );
-                let preview = List::new(items).style(ctx.config.as_text_style());
-                frame.render_widget(preview, preview_area);
+                if self.showing_suggestions {
+                    self.render_suggestions(frame, preview_area, ctx);
+                } else {
+                    let offset = self.songs_dir.state.offset();
+                    let items = self.songs_dir.to_list_items_range(
+                        offset..offset + previous_area.height as usize,
+                        ctx.config.theme.browser_song_format.0.as_slice(),
+                        ctx,
+                    );
+                    let preview = List::new(items).style(ctx.config.as_text_style());
+                    frame.render_widget(preview, preview_area);
+                }
             }
             Phase::BrowseResults { filter_input_on: _ } => {
                 self.render_song_column(frame, current_area, ctx);
@@ -1144,6 +1205,12 @@ impl Pane for SearchPane {
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
+            (SEARCH, MpdQueryResult::SearchSuggestions(suggestions)) => {
+                self.suggestions = suggestions;
+                self.showing_suggestions = !self.suggestions.is_empty();
+                self.suggestions_state.select(None);
+                ctx.render()?;
+            }
             (SEARCH, MpdQueryResult::SearchResult { data }) => {
                 let mut artists = Vec::new();
                 let mut albums = Vec::new();
@@ -1392,58 +1459,103 @@ impl Pane for SearchPane {
 
     fn handle_action(&mut self, event: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
         match &mut self.phase {
-            Phase::Search if self.inputs.insert_mode => match event.as_common_action(ctx) {
-                Some(CommonAction::Close) => {
-                    self.phase = Phase::Search;
-                    self.inputs.insert_mode = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) =
-                        self.inputs.focused_mut()
-                        && value.is_empty()
-                    {
-                        value.push('0');
-                    }
+            Phase::Search if self.inputs.insert_mode => {
+                let old_query = self.get_current_query_string();
+                match event.as_common_action(ctx) {
+                    Some(CommonAction::Close) => {
+                        self.phase = Phase::Search;
+                        self.inputs.insert_mode = false;
+                        self.showing_suggestions = false;
+                        if let InputType::Numberbox(TextboxInput { value, .. }) =
+                            self.inputs.focused_mut()
+                            && value.is_empty()
+                        {
+                            value.push('0');
+                        }
 
-                    self.maybe_search_on_change(ctx);
-                    ctx.render()?;
-                }
-                Some(CommonAction::Confirm) => {
-                    self.phase = Phase::Search;
-                    self.inputs.insert_mode = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) =
-                        self.inputs.focused_mut()
-                        && value.is_empty()
-                    {
-                        value.push('0');
+                        self.maybe_search_on_change(ctx);
+                        ctx.render()?;
                     }
+                    Some(CommonAction::Confirm) => {
+                        if self.showing_suggestions {
+                             if let Some(idx) = self.suggestions_state.selected() {
+                                 if let Some(suggestion) = self.suggestions.get(idx) {
+                                     if let InputType::Textbox(input) = self.inputs.focused_mut() {
+                                         input.value = suggestion.clone();
+                                     }
+                                     self.showing_suggestions = false;
+                                     self.search(ctx);
+                                     ctx.render()?;
+                                     return Ok(());
+                                 }
+                             }
+                        }
 
-                    self.maybe_search_on_change(ctx);
-                    ctx.render()?;
-                }
-                _ => {
-                    event.stop_propagation();
-                    match event.code() {
-                        KeyCode::Char(c) => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. }) => {
-                                value.push(c);
-                                ctx.render()?;
-                            }
-                            InputType::Numberbox(TextboxInput { value, .. }) => {
-                                if c.is_numeric() {
+                        self.phase = Phase::Search;
+                        self.inputs.insert_mode = false;
+                        self.showing_suggestions = false;
+                        if let InputType::Numberbox(TextboxInput { value, .. }) =
+                            self.inputs.focused_mut()
+                            && value.is_empty()
+                        {
+                            value.push('0');
+                        }
+
+                        self.maybe_search_on_change(ctx);
+                        ctx.render()?;
+                    }
+                    Some(CommonAction::Down) if self.showing_suggestions => {
+                        let next = self.suggestions_state.selected().map_or(0, |i| (i + 1) % self.suggestions.len());
+                        self.suggestions_state.select(Some(next));
+                        ctx.render()?;
+                    }
+                    Some(CommonAction::Up) if self.showing_suggestions => {
+                        let prev = self.suggestions_state.selected().map_or(self.suggestions.len() - 1, |i| (i + self.suggestions.len() - 1) % self.suggestions.len());
+                        self.suggestions_state.select(Some(prev));
+                        ctx.render()?;
+                    }
+                    _ => {
+                        event.stop_propagation();
+                        match event.code() {
+                            KeyCode::Char(c) => match self.inputs.focused_mut() {
+                                InputType::Textbox(TextboxInput { value, .. }) => {
                                     value.push(c);
                                     ctx.render()?;
                                 }
-                            }
+                                InputType::Numberbox(TextboxInput { value, .. }) => {
+                                    if c.is_numeric() {
+                                        value.push(c);
+                                        ctx.render()?;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            KeyCode::Backspace => match self.inputs.focused_mut() {
+                                InputType::Textbox(TextboxInput { value, .. })
+                                | InputType::Numberbox(TextboxInput { value, .. }) => {
+                                    value.pop();
+                                    ctx.render()?;
+                                }
+                                _ => {}
+                            },
                             _ => {}
-                        },
-                        KeyCode::Backspace => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. })
-                            | InputType::Numberbox(TextboxInput { value, .. }) => {
-                                value.pop();
-                                ctx.render()?;
+                        }
+                    }
+                }
+
+                let new_query = self.get_current_query_string();
+                if new_query != old_query {
+                    self.last_query = new_query.clone();
+                    if !new_query.is_empty() && new_query.len() > 1 {
+                         ctx.query().id(SEARCH).replace_id("search_suggestions").target(PaneType::Search).query(
+                            move |client| {
+                                let suggestions = client.get_search_suggestions(new_query)?;
+                                Ok(MpdQueryResult::SearchSuggestions(suggestions))
                             }
-                            _ => {}
-                        },
-                        _ => {}
+                        );
+                    } else {
+                        self.showing_suggestions = false;
+                        self.suggestions.clear();
                     }
                 }
             },
