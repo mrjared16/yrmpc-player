@@ -489,7 +489,8 @@ mod tests {
     use crate::{
         config::keys::actions::{AddOpts, AutoplayKind, Position},
         ctx::Ctx,
-        mpd::{QueuePosition, commands::Song},
+        mpd::QueuePosition,
+        domain::song::Song,
         tests::fixtures::ctx,
     };
 
@@ -503,11 +504,11 @@ mod tests {
             let albums = ["a", "b", "b", "b", "c", "c", "d", "e", "e", "f"];
             for i in 0..10 {
                 ctx.queue.push(Song {
-                    id: i,
+                    id: Some(i),
                     file: format!("song{i}"),
                     metadata: HashMap::from([(
                         "album".to_owned(),
-                        albums[i as usize].to_owned().into(),
+                        vec![albums[i as usize].to_owned()],
                     )]),
                     ..Default::default()
                 });

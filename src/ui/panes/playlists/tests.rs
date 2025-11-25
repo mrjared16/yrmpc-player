@@ -13,7 +13,7 @@ use rstest::{fixture, rstest};
 
 use crate::{
     ctx::Ctx,
-    mpd::commands::Song,
+    domain::song::Song,
     tests::fixtures::ctx,
     ui::{
         browser::BrowserPane,
@@ -521,11 +521,11 @@ pub fn new_id() -> u32 {
 }
 fn song(name: &str) -> Song {
     Song {
-        id: new_id(),
+        id: Some(new_id()),
         file: name.to_string(),
         duration: Some(Duration::from_secs(1)),
         metadata: HashMap::new(),
-        last_modified: *NOW,
+        last_modified: Some(*NOW),
         added: None,
     }
 }

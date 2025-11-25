@@ -236,23 +236,23 @@ mod tests {
     use chrono::DateTime;
 
     use super::{LrcIndex, LrcIndexEntry};
-    use crate::mpd::commands::{Song, metadata_tag::MetadataTag};
+    use crate::domain::song::Song;
 
     #[builder]
     fn song(artist: &str, title: &str, album: Option<&str>, duration: Option<Duration>) -> Song {
         let mut metadata = HashMap::new();
-        metadata.insert("artist".into(), MetadataTag::from(artist.to_owned()));
-        metadata.insert("title".into(), MetadataTag::from(title.to_owned()));
+        metadata.insert("artist".into(), vec![artist.to_owned()]);
+        metadata.insert("title".into(), vec![title.to_owned()]);
         if let Some(album) = album {
-            metadata.insert("album".into(), MetadataTag::from(album.to_owned()));
+            metadata.insert("album".into(), vec![album.to_owned()]);
         }
         Song {
-            id: 0,
+            id: Some(0),
             file: String::new(),
             duration,
             metadata,
-            last_modified: DateTime::default(),
-            added: Some(DateTime::default()),
+            last_modified: None,
+            added: None,
         }
     }
 

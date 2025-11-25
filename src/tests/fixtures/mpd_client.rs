@@ -425,6 +425,14 @@ impl MpdClient for TestMpdClient {
             .collect())
     }
 
+    fn count(&mut self, filter: &[Filter<'_>]) -> MpdResult<crate::mpd::commands::count::Count> {
+        let songs = self.find(filter)?;
+        Ok(crate::mpd::commands::count::Count {
+            songs: songs.len(),
+            playtime: songs.iter().filter_map(|s| s.duration).sum(),
+        })
+    }
+
     fn move_in_queue(&mut self, _from: SingleOrRange, _to: QueuePosition) -> MpdResult<()> {
         todo!("Not yet implemented")
     }

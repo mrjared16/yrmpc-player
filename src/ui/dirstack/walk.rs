@@ -108,7 +108,7 @@ mod test {
     use itertools::Itertools;
 
     use crate::{
-        mpd::commands::Song,
+        domain::song::Song,
         ui::{
             dir_or_song::DirOrSong,
             dirstack::{DirStack, DirStackItem, ListState, WalkDirStackItem},

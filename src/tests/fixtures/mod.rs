@@ -13,7 +13,8 @@ use crate::{
     config::{Config, ConfigFile, tabs::TabName},
     core::scheduler::Scheduler,
     ctx::{Ctx, StickersSupport},
-    mpd::{commands::Status, version::Version},
+    mpd::version::Version,
+    domain::status::Status,
     shared::{
         events::{ClientRequest, WorkRequest},
         ipc::ipc_stream::IpcStream,
@@ -62,6 +63,8 @@ pub fn ctx(
         status: Status::default(),
         config: std::sync::Arc::new(config),
         queue: Vec::default(),
+        image_cache: crate::shared::image_cache::ImageCache::new(chan1.0.clone()),
+        app_state: std::sync::Arc::new(std::sync::RwLock::new(Default::default())),
         stickers: HashMap::new(),
         active_tab: TabName::from("test_tab"),
         app_event_sender: chan1.0.clone(),

@@ -177,7 +177,7 @@ mod tests {
     use super::AlbumArtPane;
     use crate::{
         config::{Config, album_art::ImageMethod, tabs::PaneType},
-        mpd::commands::{Song, State},
+        domain::{song::Song, status::State},
         shared::{
             events::{ClientRequest, WorkRequest},
             mpd_query::MpdQuery,
@@ -204,7 +204,7 @@ mod tests {
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue.push(Song { id: selected_song_id, ..Default::default() });
+        ctx.queue.push(Song { id: Some(selected_song_id), ..Default::default() });
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);
@@ -244,7 +244,7 @@ mod tests {
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue.push(Song { id: selected_song_id, ..Default::default() });
+        ctx.queue.push(Song { id: Some(selected_song_id), ..Default::default() });
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);

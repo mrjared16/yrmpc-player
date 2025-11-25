@@ -482,14 +482,14 @@ mod ordtest {
 
     fn song_mtime(name: &str, metadata: &[(&str, &str)], mtime: &str) -> DirOrSong {
         DirOrSong::Song(Song {
-            id: new_id(),
+            id: Some(new_id()),
             file: name.to_string(),
             duration: Some(Duration::from_secs(1)),
             metadata: metadata
                 .iter()
                 .map(|(k, v)| ((*k).to_string(), vec![(*v).to_string()]))
                 .collect(),
-            last_modified: mtime.parse().unwrap(),
+            last_modified: Some(mtime.parse().unwrap()),
             added: None,
         })
     }
