@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use std::time::Duration;
+use std::process::{Child, Command};
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, Context, bail};
 use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use ytmapi_rs::{
@@ -38,6 +39,7 @@ pub struct YouTubeBackend {
     // Option because we might initialize it later or it might fail
     api: Arc<Mutex<Option<YtMusic<BrowserToken>>>>,
     mpv: Arc<Mutex<MpvIpc>>,
+    mpv_process: Option<Child>,  // Track spawned MPV process for cleanup
     app_state: Arc<RwLock<AppState>>,
     stream_cache: Arc<Mutex<LruCache<String, (String, Instant)>>>,
     library_cache: Arc<Mutex<super::library_cache::LibraryCache>>,
@@ -50,12 +52,15 @@ impl YouTubeBackend {
         config: YouTubeConfig,
     ) -> Result<Self> {
         let rt = Runtime::new()?;
-        let mpv = MpvIpc::connect(mpv_socket)?;
+        
+        // Try to connect, auto-start MPV if connection fails
+        let (mpv, mpv_process) = Self::connect_or_spawn_mpv(mpv_socket)?;
         
         let mut backend = Self {
             rt,
             api: Arc::new(Mutex::new(None)),
             mpv: Arc::new(Mutex::new(mpv)),
+            mpv_process,
             app_state,
             stream_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))),
             library_cache: Arc::new(Mutex::new(super::library_cache::LibraryCache::new())),
@@ -70,6 +75,59 @@ impl YouTubeBackend {
         }
         
         Ok(backend)
+    }
+
+    /// Connect to existing MPV or spawn new process
+    fn connect_or_spawn_mpv(socket_path: &std::path::Path) -> Result<(MpvIpc, Option<Child>)> {
+        // First attempt: connect to existing MPV instance
+        match MpvIpc::connect(socket_path) {
+            Ok(mpv) => {
+                log::info!("Connected to existing MPV instance at {}", socket_path.display());
+                return Ok((mpv, None));
+            }
+            Err(e) => {
+                log::debug!("MPV connection failed ({}), attempting to spawn MPV", e);
+            }
+        }
+        
+        // Spawn new MPV process
+        let socket_str = socket_path.to_string_lossy();
+        log::info!("Spawning MPV with socket: {}", socket_str);
+        
+        let mut child = Command::new("mpv")
+            .args([
+                "--idle",
+                "--no-video",
+                "--no-terminal",
+                &format!("--input-ipc-server={}", socket_str),
+            ])
+            .spawn()
+            .context("Failed to spawn MPV process. Is MPV installed? Try: apt install mpv")?;
+        
+        log::info!("Spawned MPV process (PID: {})", child.id());
+        
+        // Wait for socket to be ready with timeout
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+        
+        loop {
+            if start.elapsed() > timeout {
+                let _ = child.kill();
+                bail!("Timeout waiting for MPV socket to become available");
+            }
+            
+            // Try to connect
+            match MpvIpc::connect(socket_path) {
+                Ok(mpv) => {
+                    log::info!("Successfully connected to spawned MPV instance");
+                    return Ok((mpv, Some(child)));
+                }
+                Err(_) => {
+                    // Socket not ready yet, wait a bit
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                }
+            }
+        }
     }
 
 
@@ -993,4 +1051,20 @@ impl MusicBackend for YouTubeBackend {
     fn outputs(&mut self) -> Result<Vec<Output>> { Ok(vec![]) }
     fn decoders(&mut self) -> Result<Vec<Decoder>> { Ok(vec![]) }
     fn partitions(&mut self) -> Result<Vec<String>> { Ok(vec![]) }
+}
+
+// Cleanup: kill spawned MPV process when backend is dropped
+impl Drop for YouTubeBackend {
+    fn drop(&mut self) {
+        if let Some(mut child) = self.mpv_process.take() {
+            log::info!("Terminating spawned MPV process (PID: {})", child.id());
+            if let Err(e) = child.kill() {
+                log::warn!("Failed to kill MPV process: {}", e);
+            } else {
+                // Wait for process to exit
+                let _ = child.wait();
+                log::debug!("MPV process terminated");
+            }
+        }
+    }
 }
