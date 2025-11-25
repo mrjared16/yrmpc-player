@@ -661,4 +661,30 @@ mod tests {
 
         assert_eq!(theme, file);
     }
+
+    #[test]
+    fn test_backend_deserialization() {
+        let config_str = r#"
+            (
+                backend: youtube,
+                youtube: (
+                    auth_file: Some("/tmp/auth.json"),
+                ),
+            )
+        "#;
+        let config: ConfigFile = ron::de::from_str(config_str).unwrap();
+        assert_eq!(config.backend, crate::config::PlayerBackend::YouTube);
+        assert_eq!(config.youtube.auth_file, Some("/tmp/auth.json".to_string()));
+    }
+
+    #[test]
+    fn test_backend_deserialization_string_fails() {
+        let config_str = r#"
+            (
+                backend: "youtube",
+            )
+        "#;
+        let res: Result<ConfigFile, _> = ron::de::from_str(config_str);
+        assert!(res.is_err());
+    }
 }

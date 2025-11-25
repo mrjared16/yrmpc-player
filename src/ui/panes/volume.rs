@@ -158,7 +158,7 @@ mod tests {
             theme::volume_slider::{Symbols, VolumeSliderConfig},
         },
         ctx::Ctx,
-        mpd::commands::Volume,
+
         tests::fixtures::{ctx, terminal},
         ui::panes::{Pane, volume::VolumePane},
     };
@@ -179,7 +179,7 @@ mod tests {
     #[rstest]
     fn volume_zero_is_correct(mut terminal: Terminal<TestBackend>, mut ctx: Ctx) {
         let mut pane = pane();
-        ctx.status.volume = Volume::new(0);
+        ctx.status.volume = 0;
 
         let buf = terminal
             .draw(|frame| {
@@ -198,7 +198,7 @@ mod tests {
     #[rstest]
     fn volume_max_is_correct(mut terminal: Terminal<TestBackend>, mut ctx: Ctx) {
         let mut pane = pane();
-        ctx.status.volume = Volume::new(100);
+        ctx.status.volume = 100;
 
         let buf = terminal
             .draw(|frame| {
@@ -217,7 +217,7 @@ mod tests {
     #[rstest]
     fn volume_half_is_correct(mut terminal: Terminal<TestBackend>, mut ctx: Ctx) {
         let mut pane = pane();
-        ctx.status.volume = Volume::new(50);
+        ctx.status.volume = 50;
 
         let buf = terminal
             .draw(|frame| {

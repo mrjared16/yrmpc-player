@@ -8,7 +8,7 @@ use crate::{
     ctx::Ctx,
     domain::Song,
     mpd::commands::lsinfo::LsInfoEntry,
-    player::Client,
+    player::{Client, LibraryCategory},
     shared::{
         key_event::KeyEvent,
         mouse_event::MouseEvent,
@@ -157,8 +157,15 @@ impl BrowserPane<DirOrSong> for LibraryPane {
         move |client| {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => {
-                    // For library items, use lsinfo with "library:category" prefix
-                    if name.starts_with("library:") || name.starts_with("playlist:") || name.starts_with("album:") || name.starts_with("artist:") {
+                    if let Some(category) = LibraryCategory::from_path(&name) {
+                        client.get_library(category)?
+                            .into_iter()
+                            .filter_map(|entry| match entry {
+                                LsInfoEntry::File(song) => Some(song.into()),
+                                _ => None,
+                            })
+                            .collect()
+                    } else if name.starts_with("playlist:") || name.starts_with("album:") || name.starts_with("artist:") {
                         client.lsinfo(Some(&name))?
                             .into_iter()
                             .filter_map(|entry| match entry {
@@ -185,7 +192,12 @@ impl BrowserPane<DirOrSong> for LibraryPane {
                 let next_path = self.stack.path().join(name.clone());
 
                 ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
-                    let result = client.lsinfo(Some(&name_clone))?;
+                    let result = if let Some(category) = LibraryCategory::from_path(&name_clone) {
+                        client.get_library(category)?
+                    } else {
+                        client.lsinfo(Some(&name_clone))?
+                    };
+
                     let mapped: Vec<DirOrSong> = result.into_iter().filter_map(|entry| {
                         match entry {
                             LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),

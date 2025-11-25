@@ -7,8 +7,8 @@ use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use ytmapi_rs::{
     YtMusic, auth::BrowserToken, 
-    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery, GetArtistQuery, GetSearchSuggestionsQuery}, 
-    common::{YoutubeID, VideoID, AlbumID, ArtistChannelID},
+    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery, GetArtistQuery}, 
+    common::{YoutubeID, VideoID, AlbumID, ArtistChannelID, PlaylistID},
     parse::SearchResultVideo,
 };
 use crate::mpd::commands::LsInfoEntry;
@@ -40,6 +40,7 @@ pub struct YouTubeBackend {
     mpv: Arc<Mutex<MpvIpc>>,
     app_state: Arc<RwLock<AppState>>,
     stream_cache: Arc<Mutex<LruCache<String, (String, Instant)>>>,
+    library_cache: Arc<Mutex<super::library_cache::LibraryCache>>,
 }
 
 impl YouTubeBackend {
@@ -57,6 +58,7 @@ impl YouTubeBackend {
             mpv: Arc::new(Mutex::new(mpv)),
             app_state,
             stream_cache: Arc::new(Mutex::new(LruCache::new(NonZeroUsize::new(100).unwrap()))),
+            library_cache: Arc::new(Mutex::new(super::library_cache::LibraryCache::new())),
         };
 
         if let Some(auth_file) = config.auth_file {
@@ -284,6 +286,111 @@ impl MusicBackend for YouTubeBackend {
             return result;
         }
         Ok(vec![])
+    }
+
+    fn get_library(&mut self, category: super::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+        use ytmapi_rs::query::{
+            GetLibraryPlaylistsQuery, GetLibraryAlbumsQuery, 
+            GetLibraryArtistsQuery, GetLibrarySongsQuery
+        };
+        
+        // Check cache first
+        {
+            let mut cache = self.library_cache.lock();
+            if let Some(cached_data) = cache.get(category) {
+                log::debug!("Library cache HIT for {:?}", category);
+                return Ok(cached_data);
+            }
+        }
+        
+        // Cache miss - fetch from API
+        log::debug!("Library cache MISS for {:?}, fetching from YouTube Music", category);
+        
+        let api_opt = self.api.lock().as_ref().cloned();
+        if api_opt.is_none() {
+            return Err(anyhow!("YouTube API not initialized"));
+        }
+        let api = api_opt.unwrap();
+        
+        let entries: Vec<LsInfoEntry> = match category {
+            super::LibraryCategory::Playlists => {
+                let playlists = self.rt.block_on(async move {
+                    api.query(GetLibraryPlaylistsQuery).await
+                })?;
+                
+                playlists.into_iter().map(|playlist| {
+                    LsInfoEntry::Dir(crate::mpd::commands::lsinfo::Dir {
+                        name: playlist.title,
+                        full_path: format!("playlist:{}", playlist.playlist_id.get_raw()),
+                        last_modified: chrono::Utc::now(),
+                    })
+                }).collect()
+            },
+            super::LibraryCategory::Albums => {
+                let albums = self.rt.block_on(async move {
+                    api.query(GetLibraryAlbumsQuery::default()).await
+                })?;
+                
+                albums.into_iter().map(|album| {
+                    LsInfoEntry::Dir(crate::mpd::commands::lsinfo::Dir {
+                        name: format!("{} - {}", album.title, album.artist),
+                        full_path: format!("album:{}", album.album_id.get_raw()),
+                        last_modified: chrono::Utc::now(),
+                    })
+                }).collect()
+            },
+            super::LibraryCategory::Artists => {
+                let artists = self.rt.block_on(async move {
+                    api.query(GetLibraryArtistsQuery::default()).await
+                })?;
+                
+                artists.into_iter().map(|artist| {
+                    LsInfoEntry::Dir(crate::mpd::commands::lsinfo::Dir {
+                        name: artist.artist,
+                        full_path: format!("artist:{}", artist.channel_id.get_raw()),
+                        last_modified: chrono::Utc::now(),
+                    })
+                }).collect()
+            },
+            super::LibraryCategory::Songs => {
+                let songs = self.rt.block_on(async move {
+                    api.query(GetLibrarySongsQuery::default()).await
+                })?;
+                
+                songs.into_iter().map(|song| {
+                    let mut metadata = HashMap::new();
+                    metadata.insert("title".to_string(), vec![song.title.clone()]);
+                    // ytmapi-rs TableListSong has 'artists' not 'artist'
+                    if let Some(first_artist) = song.artists.first() {
+                        metadata.insert("artist".to_string(), vec![first_artist.name.clone()]);
+                    }
+                    // album is ParsedSongAlbum, not Option
+                    metadata.insert("album".to_string(), vec![song.album.name]);
+                    if let Some(thumb) = song.thumbnails.last() {
+                        metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                    }
+                    
+                    // Parse duration string "MM:SS" or "HH:MM:SS"
+                    let duration = song.duration.split(':').try_fold(0u64, |acc, part| {
+                        part.parse::<u64>().map(|v| acc * 60 + v)
+                    }).ok().map(Duration::from_secs);
+                    
+                    LsInfoEntry::File(Song {
+                        id: None,
+                        file: song.video_id.get_raw().to_string(),
+                        duration,
+                        metadata,
+                        last_modified: None,
+                        added: Some(Utc::now()),
+                    })
+                }).collect()
+            },
+        };
+        
+        // Store in cache
+        self.library_cache.lock().put(category, entries.clone());
+        
+        Ok(entries)
     }
     fn backend_name(&self) -> &'static str {
         "YouTube"
@@ -595,38 +702,68 @@ impl MusicBackend for YouTubeBackend {
             return Ok(vec![]);
         };
 
+        if let Some(playlist_id) = path.strip_prefix("playlist:") {
+            let query = GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
+            let playlist = self.rt.block_on(async move { api.query(query).await })?;
+            
+            let mut entries = Vec::new();
+            for track in playlist {
+                let mut metadata = HashMap::new();
+                metadata.insert("title".to_string(), vec![track.title]);
+                // WatchPlaylistTrack has author (String)
+                metadata.insert("artist".to_string(), vec![track.author]);
+                
+                // WatchPlaylistTrack doesn't have album
+                
+                if let Some(thumb) = track.thumbnails.last() {
+                    metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                }
+                
+                let duration = track.duration.split(':').try_fold(0u64, |acc, part| {
+                    part.parse::<u64>().map(|v| acc * 60 + v)
+                }).ok().map(Duration::from_secs);
+
+                entries.push(LsInfoEntry::File(Song {
+                    id: None,
+                    file: track.video_id.get_raw().to_string(),
+                    duration,
+                    metadata,
+                    last_modified: None,
+                    added: Some(Utc::now()),
+                }));
+            }
+            return Ok(entries);
+        }
+
         if let Some(album_id) = path.strip_prefix("album:") {
              let query = GetAlbumQuery::new(AlbumID::from_raw(album_id));
              let album = self.rt.block_on(async move { api.query(query).await })?;
              
              let mut entries = Vec::new();
              for track in album.tracks {
-                 let mut s = Song {
-                     file: track.video_id.get_raw().to_string(),
-                     ..Default::default()
-                 };
-                 s.metadata.insert("title".to_string(), vec![track.title]);
-                 s.metadata.insert("album".to_string(), vec![album.title.clone()]);
-                 if let Some(artist) = album.artists.first() {
-                     s.metadata.insert("artist".to_string(), vec![artist.name.clone()]);
-                 }
-                 s.metadata.insert("track".to_string(), vec![track.track_no.to_string()]);
+                 let mut metadata = HashMap::new();
+                 metadata.insert("title".to_string(), vec![track.title]);
+                 metadata.insert("artist".to_string(), vec![album.artists.first().map(|a| a.name.clone()).unwrap_or_default()]);
+                 metadata.insert("album".to_string(), vec![album.title.clone()]);
                  
-                 // Parse duration string "MM:SS" or "HH:MM:SS"
-                 let parts: Vec<&str> = track.duration.split(':').collect();
-                 let secs = match parts.len() {
-                     2 => parts[0].parse::<u64>().unwrap_or(0) * 60 + parts[1].parse::<u64>().unwrap_or(0),
-                     3 => parts[0].parse::<u64>().unwrap_or(0) * 3600 + parts[1].parse::<u64>().unwrap_or(0) * 60 + parts[2].parse::<u64>().unwrap_or(0),
-                     _ => 0,
-                 };
-                 if secs > 0 {
-                     s.duration = Some(std::time::Duration::from_secs(secs));
+                 if let Some(thumb) = album.thumbnails.last() {
+                     metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
                  }
+                 
+                 let duration = track.duration.split(':').try_fold(0u64, |acc, part| {
+                     part.parse::<u64>().map(|v| acc * 60 + v)
+                 }).ok().map(Duration::from_secs);
 
-                 entries.push(LsInfoEntry::File(s));
+                 entries.push(LsInfoEntry::File(Song {
+                     id: None,
+                     file: track.video_id.get_raw().to_string(),
+                     duration,
+                     metadata,
+                     last_modified: None,
+                     added: Some(Utc::now()),
+                 }));
              }
              return Ok(entries);
-
         }
 
         if let Some(artist_id) = path.strip_prefix("artist:") {
@@ -638,26 +775,20 @@ impl MusicBackend for YouTubeBackend {
              // Top Songs
              if let Some(songs) = artist.top_releases.songs {
                  for song in songs.results {
-                     let mut s = Song {
+                     let mut metadata = HashMap::new();
+                     metadata.insert("title".to_string(), vec![song.title]);
+                     metadata.insert("artist".to_string(), vec![artist.name.clone()]);
+                     metadata.insert("album".to_string(), vec![song.album.name]);
+                     // ArtistSong might not have thumbnails or duration, skip if missing
+                     
+                     entries.push(LsInfoEntry::File(Song {
+                         id: None,
                          file: song.video_id.get_raw().to_string(),
-                         ..Default::default()
-                     };
-                     s.metadata.insert("title".to_string(), vec![song.title]);
-                     s.metadata.insert("artist".to_string(), vec![artist.name.clone()]);
-                     s.metadata.insert("type".to_string(), vec!["song".to_string()]);
-                     s.metadata.insert("album".to_string(), vec![song.album.name]);
-                     // ArtistSong doesn't have thumbnails directly? 
-                     // Wait, the struct definition says:
-                     // pub struct ArtistSong { ... }
-                     // It does NOT have thumbnails!
-                     // But GetArtist has thumbnails (for the artist).
-                     // Maybe we can use artist thumbnail as fallback?
-                     // Or maybe we don't have thumbnails for top songs in this view.
-                     
-                     // Duration is also missing in ArtistSong!
-                     // It has `plays`.
-                     
-                     entries.push(LsInfoEntry::File(s));
+                         duration: None, // Duration not available in ArtistSong
+                         metadata,
+                         last_modified: None,
+                         added: Some(Utc::now()),
+                     }));
                  }
              }
 
@@ -665,7 +796,7 @@ impl MusicBackend for YouTubeBackend {
              if let Some(albums) = artist.top_releases.albums {
                  for album in albums.results {
                      let dir = crate::mpd::commands::lsinfo::Dir {
-                         name: album.title.clone(),
+                         name: album.title,
                          full_path: format!("album:{}", album.album_id.get_raw()),
                          last_modified: chrono::Utc::now(),
                      };
@@ -677,7 +808,7 @@ impl MusicBackend for YouTubeBackend {
              if let Some(singles) = artist.top_releases.singles {
                  for single in singles.results {
                      let dir = crate::mpd::commands::lsinfo::Dir {
-                         name: single.title.clone(),
+                         name: format!("{} (Single)", single.title),
                          full_path: format!("album:{}", single.album_id.get_raw()),
                          last_modified: chrono::Utc::now(),
                      };

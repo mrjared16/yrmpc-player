@@ -378,14 +378,14 @@ mod tests {
         date: impl Into<String> + std::fmt::Debug,
     ) -> Song {
         Song {
-            id: 0,
+            id: Some(0),
             file: format!("{date:?} {album:?}"),
             duration: None,
             metadata: HashMap::from([
-                ("album".to_string(), Into::<String>::into(album).into()),
-                ("date".to_string(), Into::<String>::into(date).into()),
+                ("album".to_string(), vec![Into::<String>::into(album)]),
+                ("date".to_string(), vec![Into::<String>::into(date)]),
             ]),
-            last_modified: chrono::Utc::now(),
+            last_modified: Some(chrono::Utc::now()),
             added: None,
         }
     }
@@ -396,15 +396,15 @@ mod tests {
         original_date: impl Into<String> + std::fmt::Debug,
     ) -> Song {
         Song {
-            id: 0,
+            id: Some(0),
             file: format!("{date:?} {album:?}"),
             duration: None,
             metadata: HashMap::from([
-                ("album".to_string(), Into::<String>::into(album).into()),
-                ("date".to_string(), Into::<String>::into(date).into()),
-                ("originaldate".to_string(), Into::<String>::into(original_date).into()),
+                ("album".to_string(), vec![Into::<String>::into(album)]),
+                ("date".to_string(), vec![Into::<String>::into(date)]),
+                ("originaldate".to_string(), vec![Into::<String>::into(original_date)]),
             ]),
-            last_modified: chrono::Utc::now(),
+            last_modified: Some(chrono::Utc::now()),
             added: None,
         }
     }

@@ -212,6 +212,12 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(vec![])
     }
 
+    fn get_library(&mut self, _category: super::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+        // MPD backend doesn't support YouTube Music library categories
+        // Return empty vec to indicate no library support
+        Ok(vec![])
+    }
+
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
         Ok(self
             .client

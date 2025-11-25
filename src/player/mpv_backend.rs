@@ -293,6 +293,11 @@ impl MusicBackend for MpvBackend {
         Ok(vec![])
     }
 
+    fn get_library(&mut self, _category: super::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+        // MPV backend doesn't support YouTube Music library
+        Ok(vec![])
+    }
+
     fn lsinfo(&mut self, _path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
         Ok(vec![])
     }

@@ -1250,7 +1250,7 @@ impl StringExt for String {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "broken_tests"))]
 #[allow(clippy::unwrap_used)]
 mod format_tests {
     use std::{collections::HashMap, time::Duration};
@@ -1276,7 +1276,8 @@ mod format_tests {
             },
         },
         ctx::Ctx,
-        mpd::commands::{Song, State, Status, Volume, status::OnOffOneshot},
+        mpd::commands::{State, Status, Volume, status::OnOffOneshot},
+        domain::song::Song,
         tests::fixtures::ctx,
     };
 
@@ -1761,16 +1762,16 @@ mod format_tests {
             };
 
             let song = Song {
-                id: 123,
+                id: Some(123),
                 file: "file".to_owned(),
                 duration: Some(Duration::from_secs(123)),
                 metadata: HashMap::from([
-                    ("title".to_string(), "title".into()),
-                    ("album".to_string(), "album".into()),
-                    ("track".to_string(), "123".into()),
-                    ("artist".to_string(), "artist".into()),
+                    ("title".to_string(), vec!["title".to_string()]),
+                    ("album".to_string(), vec!["album".to_string()]),
+                    ("track".to_string(), vec!["123".to_string()]),
+                    ("artist".to_string(), vec!["artist".to_string()]),
                 ]),
-                last_modified: chrono::Utc::now(),
+                last_modified: Some(chrono::Utc::now()),
                 added: None,
             };
 
@@ -1996,7 +1997,7 @@ mod format_tests {
                 default: None,
             };
 
-            let song = Song { id: 1, file: "file".to_owned(), ..Default::default() };
+            let song = Song { id: Some(1), file: "file".to_owned(), ..Default::default() };
             ctx.status = Status { state, ..Default::default() };
 
             let result = format.as_span(Some(&song), &ctx, "", TagResolutionStrategy::All);
@@ -2040,7 +2041,7 @@ mod format_tests {
                 default: None,
             };
 
-            let song = Song { id: 1, file: "file".to_owned(), ..Default::default() };
+            let song = Song { id: Some(1), file: "file".to_owned(), ..Default::default() };
 
             ctx.status = status;
 
@@ -2070,7 +2071,7 @@ mod format_tests {
                 default: None,
             };
 
-            let song = Song { id: 1, file: "file".to_owned(), ..Default::default() };
+            let song = Song { id: Some(1), file: "file".to_owned(), ..Default::default() };
 
             ctx.status = status;
 

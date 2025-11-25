@@ -1,5 +1,5 @@
 use std::collections::HashSet;
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::event::KeyCode;

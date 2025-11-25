@@ -264,6 +264,10 @@ impl<'name> Client<'name> {
         self.backend_mut().lsinfo(path)
     }
 
+    pub fn get_library(&mut self, category: crate::player::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+        self.backend_mut().get_library(category)
+    }
+
     pub fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
         self.backend_mut().list_all(path)
     }

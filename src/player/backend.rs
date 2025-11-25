@@ -51,6 +51,10 @@ pub trait MusicBackend: Send + Sync {
     // ===== Library Browsing =====
 
     fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>>;
+    
+    /// Get library data for a specific category (playlists, albums, artists, songs)
+    /// Returns Vec<LsInfoEntry> containing directories or songs depending on category
+    fn get_library(&mut self, category: super::LibraryCategory) -> Result<Vec<LsInfoEntry>>;
 
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
     fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;

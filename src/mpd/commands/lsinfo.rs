@@ -18,14 +18,14 @@ impl LsInfo {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum LsInfoEntry {
     Dir(Dir),
     File(Song),
     Playlist(Playlist),
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Dir {
     /// Last segment of the path, the dir name
     pub name: String,
@@ -34,7 +34,7 @@ pub struct Dir {
     pub last_modified: DateTime<Utc>,
 }
 
-#[derive(Debug, Default, PartialEq, Eq)]
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Playlist {
     /// Last segment of the path, the playlist name
     pub name: String,
