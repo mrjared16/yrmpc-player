@@ -96,8 +96,8 @@ impl YouTubeBackend {
         
         let mut child = Command::new("mpv")
             .args([
-                "--idle",
-                "--no-video",
+                "--idle=yes",
+                "--vo=null",  // No video output (prevents UI window)
                 "--no-terminal",
                 &format!("--input-ipc-server={}", socket_str),
             ])
