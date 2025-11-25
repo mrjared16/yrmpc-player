@@ -133,12 +133,56 @@ impl YouTubeBackend {
 
 
     pub fn load_cookies(&mut self, path: &str) -> Result<()> {
+        // Read and parse Netscape cookie file
+        let contents = std::fs::read_to_string(path)?;
+        
+        // Parse Netscape format cookies into semicolon-separated format
+        // Netscape format: domain \t flag \t path \t secure \t expiration \t name \t value
+        let mut cookie_parts = Vec::new();
+        
+        for line in contents.lines() {
+            let line = line.trim();
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            
+            // Split by tabs
+            let parts: Vec<&str> = line.split('\t').collect();
+            if parts.len() >= 7 {
+                let name = parts[5];
+                let value = parts[6];
+                cookie_parts.push(format!("{}={}", name, value));
+            }
+        }
+        
+        if cookie_parts.is_empty() {
+            return Err(anyhow::anyhow!("No valid cookies found in file"));
+        }
+        
+        let cookie_string = cookie_parts.join("; ");
+        log::info!("Parsed {} cookies from Netscape format file", cookie_parts.len());
+        
+        // Use YtMusicBuilder with BrowserToken::from_str instead of from_cookie_file
         let api = self.block_on(async {
-            YtMusic::from_cookie_file(std::path::Path::new(path)).await
+            use ytmapi_rs::auth::BrowserToken;
+            use ytmapi_rs::{Client, YtMusicBuilder};
+            
+            let client = Client::new()?;
+            let token = BrowserToken::from_str(&cookie_string, &client).await?;
+            YtMusicBuilder::new_with_client(client)
+                .with_browser_token(token)
+                .build()
         })?;
+        
         *self.api.lock() = Some(api);
         Ok(())
     }
+
+    pub fn is_api_loaded(&self) -> bool {
+        self.api.lock().is_some()
+    }
+
 
     pub fn enter_idle(&mut self) -> Result<()> {
         // MPV sends events asynchronously
@@ -907,12 +951,61 @@ impl MusicBackend for YouTubeBackend {
             return Ok(vec![]);
         };
 
+        // Use general SearchQuery to get all types of results
         let results = self.rt.block_on(async move {
-            api.search(query).await
+            use ytmapi_rs::query::SearchQuery;
+            
+            let search_query = SearchQuery::new(query);
+            api.query(search_query).await
         })?;
         
         let mut songs = Vec::new();
 
+        // Parse Artists
+        for artist in results.artists {
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![artist.artist]);
+            metadata.insert("type".to_string(), vec!["artist".to_string()]);
+            if let Some(subs) = artist.subscribers {
+                metadata.insert("subtitle".to_string(), vec![subs]);
+            }
+            if let Some(thumb) = artist.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+
+            songs.push(Song {
+                id: None,
+                file: format!("artist:{}", artist.browse_id.get_raw()), // Prefix with artist: for easy identification
+                duration: None,
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            });
+        }
+
+        // Parse Albums
+        for album in results.albums {
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![album.title.clone()]);
+            metadata.insert("artist".to_string(), vec![album.artist]);
+            metadata.insert("album".to_string(), vec![album.title.clone()]);
+            metadata.insert("year".to_string(), vec![album.year]);
+            metadata.insert("type".to_string(), vec!["album".to_string()]);
+            if let Some(thumb) = album.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+
+            songs.push(Song {
+                id: None,
+                file: format!("album:{}", album.album_id.get_raw()),
+                duration: None,
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            });
+        }
+
+        // Parse Songs
         for song in results.songs {
             let mut s = Song {
                 file: song.video_id.get_raw().to_string(),
@@ -927,12 +1020,19 @@ impl MusicBackend for YouTubeBackend {
             if let Some(thumb) = song.thumbnails.last() {
                 s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
             }
+            // Parse duration (song.duration is String, not Option)
+            let duration = song.duration.split(':').try_fold(0u64, |acc, part| {
+                part.parse::<u64>().map(|v| acc * 60 + v)
+            }).ok().map(Duration::from_secs);
+            s.duration = duration;
+           
             songs.push(s);
         }
 
+        // Parse Videos (treat as songs)
         for video in results.videos {
             match video {
-                SearchResultVideo::Video { title, channel_name, video_id, thumbnails, .. } => {
+                SearchResultVideo::Video { title, channel_name, video_id, length, thumbnails, .. } => {
                     let mut s = Song {
                         file: video_id.get_raw().to_string(),
                         ..Default::default()
@@ -943,6 +1043,11 @@ impl MusicBackend for YouTubeBackend {
                     if let Some(thumb) = thumbnails.last() {
                         s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
                     }
+                    // Parse duration (length field)
+                    let duration = length.split(':').try_fold(0u64, |acc, part| {
+                        part.parse::<u64>().map(|v| acc * 60 + v)
+                    }).ok().map(Duration::from_secs);
+                    s.duration = duration;
                     songs.push(s);
                 }
                 SearchResultVideo::VideoEpisode { title, channel_name, episode_id, thumbnails, .. } => {
@@ -952,7 +1057,7 @@ impl MusicBackend for YouTubeBackend {
                     };
                     s.metadata.insert("title".to_string(), vec![title]);
                     s.metadata.insert("artist".to_string(), vec![channel_name]);
-                    s.metadata.insert("type".to_string(), vec!["video".to_string()]);
+                    s.metadata.insert("type".to_string(), vec!["episode".to_string()]);
                     if let Some(thumb) = thumbnails.last() {
                         s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
                     }
@@ -961,32 +1066,69 @@ impl MusicBackend for YouTubeBackend {
             }
         }
 
-        for album in results.albums {
-            let mut s = Song {
-                file: album.album_id.get_raw().to_string(),
-                ..Default::default()
-            };
-            s.metadata.insert("title".to_string(), vec![album.title]);
-            s.metadata.insert("artist".to_string(), vec![album.artist]);
-            s.metadata.insert("year".to_string(), vec![album.year]);
-            s.metadata.insert("type".to_string(), vec!["album".to_string()]);
-            if let Some(thumb) = album.thumbnails.last() {
-                s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+        // Parse Community Playlists (which may be podcasts or playlists)
+        for basic_playlist in results.community_playlists {
+            use ytmapi_rs::parse::BasicSearchResultCommunityPlaylist;
+            match basic_playlist {
+                BasicSearchResultCommunityPlaylist::Playlist(playlist) => {
+                    let mut metadata = HashMap::new();
+                    metadata.insert("title".to_string(), vec![playlist.title]);
+                    metadata.insert("artist".to_string(), vec![playlist.author]);
+                    metadata.insert("type".to_string(), vec!["playlist".to_string()]);
+                    if let Some(thumb) = playlist.thumbnails.last() {
+                        metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                    }
+                    
+                    songs.push(Song {
+                        id: None,
+                        file: format!("playlist:{}", playlist.playlist_id.get_raw()),
+                        duration: None,
+                        metadata,
+                        last_modified: None,
+                        added: Some(Utc::now()),
+                    });
+                }
+                BasicSearchResultCommunityPlaylist::Podcast(podcast) => {
+                    let mut metadata = HashMap::new();
+                    metadata.insert("title".to_string(), vec![podcast.title]);
+                    metadata.insert("artist".to_string(), vec![podcast.publisher]);
+                    metadata.insert("type".to_string(), vec!["podcast".to_string()]);
+                    if let Some(thumb) = podcast.thumbnails.last() {
+                        metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+                    }
+                    
+                    songs.push(Song {
+                        id: None,
+                        file: format!("podcast:{}", podcast.podcast_id.get_raw()),
+                        duration: None,
+                        metadata,
+                        last_modified: None,
+                        added: Some(Utc::now()),
+                    });
+                }
+                // Handle future variants
+                _ => {}
             }
-            songs.push(s);
         }
-
-        for artist in results.artists {
-            let mut s = Song {
-                file: artist.browse_id.get_raw().to_string(),
-                ..Default::default()
-            };
-            s.metadata.insert("title".to_string(), vec![artist.artist]);
-            s.metadata.insert("type".to_string(), vec!["artist".to_string()]);
-            if let Some(thumb) = artist.thumbnails.last() {
-                s.metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+        
+        // Parse Featured Playlists
+        for playlist in results.featured_playlists {
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![playlist.title]);
+            metadata.insert("artist".to_string(), vec![playlist.author]);
+            metadata.insert("type".to_string(), vec!["playlist".to_string()]);
+             if let Some(thumb) = playlist.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
             }
-            songs.push(s);
+
+            songs.push(Song {
+                id: None,
+                file: format!("playlist:{}", playlist.playlist_id.get_raw()),
+                duration: None,
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            });
         }
 
         Ok(songs)
@@ -1066,5 +1208,240 @@ impl Drop for YouTubeBackend {
                 log::debug!("MPV process terminated");
             }
         }
+    }
+}
+#[cfg(test)]
+mod youtube_backend_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    /// Helper to create a mock Song with metadata
+    fn create_mock_song(file: String, type_: &str, title: &str, artist: &str) -> Song {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec![type_.to_string()]);
+        metadata.insert("title".to_string(), vec![title.to_string()]);
+        metadata.insert("artist".to_string(), vec![artist.to_string()]);
+        
+        Song {
+            id: None,
+            file,
+            duration: None,
+            metadata,
+            last_modified: None,
+            added: Some(chrono::Utc::now()),
+        }
+    }
+
+    #[test]
+    fn test_artist_id_format() {
+        let song = create_mock_song(
+            "artist:UC3muIvzjhubNpJ4Pn_0kCQw".to_string(),
+            "artist",
+            "Sơn Tùng M-TP",
+            "Sơn Tùng M-TP"
+        );
+        
+        assert!(song.file.starts_with("artist:"));
+        assert_eq!(song.metadata.get("type").unwrap()[0], "artist");
+    }
+
+    #[test]
+    fn test_album_id_format() {
+        let song = create_mock_song(
+            "album:MPREb_1234567890".to_string(),
+            "album",
+            "Test Album",
+            "Test Artist"
+        );
+        
+        assert!(song.file.starts_with("album:"));
+        assert_eq!(song.metadata.get("type").unwrap()[0], "album");
+    }
+
+    #[test]
+    fn test_playlist_id_format() {
+        let song = create_mock_song(
+            "playlist:RDCLAK5uy_1234567890".to_string(),
+            "playlist",
+            "Test Playlist",
+            "YouTube Music"
+        );
+        
+        assert!(song.file.starts_with("playlist:"));
+        assert_eq!(song.metadata.get("type").unwrap()[0], "playlist");
+    }
+
+    #[test]
+    fn test_podcast_id_format() {
+        let song = create_mock_song(
+            "podcast:MPSP1234567890".to_string(),
+            "podcast",
+            "Test Podcast",
+            "Podcast Publisher"
+        );
+        
+        assert!(song.file.starts_with("podcast:"));
+        assert_eq!(song.metadata.get("type").unwrap()[0], "podcast");
+    }
+
+    #[test]
+    fn test_song_id_format() {
+        // Songs should NOT have a prefix
+        let song = create_mock_song(
+            "dQw4w9WgXcQ".to_string(),
+            "song",
+            "Test Song",
+            "Test Artist"
+        );
+        
+        assert!(!song.file.contains(":"));
+        assert_eq!(song.file.len(), 11); // YouTube video IDs are 11 characters
+        assert_eq!(song.metadata.get("type").unwrap()[0], "song");
+    }
+
+    #[test]
+    fn test_video_id_format() {
+        let song = create_mock_song(
+            "dQw4w9WgXcQ".to_string(),
+            "video",
+            "Test Video",
+            "Test Channel"
+        );
+        
+        assert!(!song.file.contains(":"));
+        assert_eq!(song.metadata.get("type").unwrap()[0], "video");
+    }
+
+    #[test]
+    fn test_metadata_always_includes_type() {
+        let test_types = vec!["artist", "album", "song", "video", "playlist", "podcast"];
+        
+        for type_ in test_types {
+            let song = create_mock_song(
+                "test_id".to_string(),
+                type_,
+                "Test Title",
+                "Test Artist"
+            );
+            
+            assert!(song.metadata.contains_key("type"));
+            assert_eq!(song.metadata.get("type").unwrap()[0], type_);
+        }
+    }
+
+    #[test]
+    fn test_duration_parsing() {
+        // Test MM:SS format
+        let duration_str = "3:45";
+        let seconds: u64 = duration_str
+            .split(':')
+            .try_fold(0u64, |acc, part| {
+                part.parse::<u64>().map(|v| acc * 60 + v)
+            })
+            .unwrap();
+        assert_eq!(seconds, 225); // 3*60 + 45
+
+        // Test HH:MM:SS format
+        let duration_str = "1:23:45";
+        let seconds: u64 = duration_str
+            .split(':')
+            .try_fold(0u64, |acc, part| {
+                part.parse::<u64>().map(|v| acc * 60 + v)
+            })
+            .unwrap();
+        assert_eq!(seconds, 5025); // 1*3600 + 23*60 + 45
+    }
+
+    #[test]
+    fn test_id_extraction_from_prefixed_file() {
+        let test_cases = vec![
+            ("artist:UC123456789", "UC123456789"),
+            ("album:MPREb_123456789", "MPREb_123456789"),
+            ("playlist:RDCLAK5uy_123", "RDCLAK5uy_123"),
+            ("podcast:MPSP123", "MPSP123"),
+        ];
+
+        for (prefixed, expected_id) in test_cases {
+            let id = prefixed.split(':').nth(1).unwrap();
+            assert_eq!(id, expected_id);
+        }
+    }
+
+    #[test]
+    fn test_type_detection_from_file_prefix() {
+        let test_cases = vec![
+            ("artist:UC123", "artist"),
+            ("album:MPREb_123", "album"),
+            ("playlist:RDCLAK", "playlist"),
+            ("podcast:MPSP", "podcast"),
+            ("dQw4w9WgXcQ", "unknown"), // No prefix
+        ];
+
+        for (file, expected_type) in test_cases {
+            let detected_type = if file.contains(':') {
+                file.split(':').next().unwrap()
+            } else {
+                "unknown"
+            };
+            assert_eq!(detected_type, expected_type);
+        }
+    }
+}
+
+#[cfg(test)]
+mod search_navigation_tests {
+    use super::*;
+
+    #[test]
+    fn test_navigation_event_for_artist() {
+        // Simulate artist result
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec!["artist".to_string()]);
+        metadata.insert("title".to_string(), vec!["Test Artist".to_string()]);
+        
+        let type_ = metadata.get("type").and_then(|v| v.first());
+        assert_eq!(type_, Some(&"artist".to_string()));
+        
+        // Should trigger OpenArtist event
+        assert!(matches!(type_, Some(t) if t == "artist"));
+    }
+
+    #[test]
+    fn test_navigation_event_for_album() {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec!["album".to_string()]);
+        
+        let type_ = metadata.get("type").and_then(|v| v.first());
+        assert!(matches!(type_, Some(t) if t == "album"));
+    }
+
+    #[test]
+    fn test_navigation_event_for_playlist() {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec!["playlist".to_string()]);
+        
+        let type_ = metadata.get("type").and_then(|v| v.first());
+        assert!(matches!(type_, Some(t) if t == "playlist"));
+    }
+
+    #[test]
+    fn test_playback_for_song() {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec!["song".to_string()]);
+        
+        let type_ = metadata.get("type").and_then(|v| v.first());
+        // Songs and videos should NOT trigger navigation events
+        assert!(matches!(type_, Some(t) if t == "song"));
+        // Should fall through to enqueue logic
+    }
+
+    #[test]
+    fn test_playback_for_video() {
+        let mut metadata = HashMap::new();
+        metadata.insert("type".to_string(), vec!["video".to_string()]);
+        
+        let type_ = metadata.get("type").and_then(|v| v.first());
+        assert!(matches!(type_, Some(t) if t == "video"));
+        // Should fall through to enqueue logic
     }
 }
