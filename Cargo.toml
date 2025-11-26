@@ -53,7 +53,7 @@ parking_lot = { version = "0.12.4", features = [] }
 unicode-segmentation = "1.12.0"
 
 # YouTube Music
-ytmapi-rs = "0.2.1"
+ytmapi-rs = { path = "../youtui/ytmapi-rs" }
 rusty_ytdl = "0.7.4"
 tokio = { version = "1", features = ["full"] }
 lru = "0.12"
