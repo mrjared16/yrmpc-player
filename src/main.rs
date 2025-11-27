@@ -1,3 +1,8 @@
+#![allow(dead_code)]
+#![allow(deprecated)]
+#![allow(unused_imports)]
+#![allow(unused_variables)]
+
 use core::{config_watcher::ERROR_CONFIG_MODAL_ID, scheduler::Scheduler};
 use std::{
     fs::File,
