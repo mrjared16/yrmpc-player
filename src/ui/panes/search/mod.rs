@@ -294,6 +294,83 @@ impl SearchPane {
         }
     }
 
+    fn fetch_playlist_detail(&mut self, ctx: &Ctx, playlist_id: String) {
+        // Save current results before switching
+        if self.layout_mode == LayoutMode::ThreeColumn {
+            self.search_results_backup = Some(self.songs_dir.clone());
+        }
+        
+        // Switch to detail mode immediately
+        self.layout_mode = LayoutMode::FullDetail;  
+        self.previous_dir_stack.push(self.songs_dir.clone());
+        
+        // Clear current songs while loading
+        self.songs_dir = Dir::default();
+        
+        // Fetch via async query
+        ctx.query()
+            .id("fetch_playlist")
+            .target(PaneType::Search)
+            .query(move |client| {
+                use crate::player::youtube_backend::YouTubeBackend;
+                
+                if let Some(backend) = client.backend_mut().as_youtube_backend() {
+                    let details = backend.browse_playlist(&playlist_id)?;
+                    Ok(MpdQueryResult::PlaylistDetail(details))
+                } else {
+                    anyhow::bail!("YouTube backend not available")
+                }
+            });
+    }
+    
+    fn fetch_album_detail(&mut self, ctx: &Ctx, album_id: String) {
+        if self.layout_mode == LayoutMode::ThreeColumn {
+            self.search_results_backup = Some(self.songs_dir.clone());
+        }
+        
+        self.layout_mode = LayoutMode::FullDetail;
+        self.previous_dir_stack.push(self.songs_dir.clone());
+        self.songs_dir = Dir::default();
+        
+        ctx.query()
+            .id("fetch_album")
+            .target(PaneType::Search)
+            .query(move |client| {
+                use crate::player::youtube_backend::YouTubeBackend;
+                
+                if let Some(backend) = client.backend_mut().as_youtube_backend() {
+                    let details = backend.browse_album(&album_id)?;
+                    Ok(MpdQueryResult::AlbumDetail(details))
+                } else {
+                    anyhow::bail!("YouTube backend not available")
+                }
+            });
+    }
+    
+    fn fetch_artist_detail(&mut self, ctx: &Ctx, artist_id: String) {
+        if self.layout_mode == LayoutMode::ThreeColumn {
+            self.search_results_backup = Some(self.songs_dir.clone());
+        }
+        
+        self.layout_mode = LayoutMode::FullDetail;
+        self.previous_dir_stack.push(self.songs_dir.clone());
+        self.songs_dir = Dir::default();
+        
+        ctx.query()
+            .id("fetch_artist")
+            .target(PaneType::Search)
+            .query(move |client| {
+                use crate::player::youtube_backend::YouTubeBackend;
+                
+                if let Some(backend) = client.backend_mut().as_youtube_backend() {
+                    let details = backend.browse_artist(&artist_id)?;
+                    Ok(MpdQueryResult::ArtistDetail(details))
+                } else {
+                    anyhow::bail!("YouTube backend not available")
+                }
+            });
+    }
+
     /// Trigger search if search should be done on any change. Does nothing when
     /// a dedicated search button is used.
     fn maybe_search_on_change(&mut self, ctx: &Ctx) {
@@ -764,66 +841,29 @@ impl SearchPane {
                 CommonAction::Close => {}
                 CommonAction::Confirm if self.songs_dir.marked().is_empty() => {
                     if let Some(selected) = self.songs_dir.selected() {
-                            if let Some(type_) = selected.metadata.get("type").and_then(|v| v.first()) {
-                                if type_ == "album" {
-                                    // Open album in AlbumsPane
-                                    // We need to construct a path for the album.
-                                    // The file field of the album song should contain "album:ID"
-                                    let album_id = &selected.file;
-                                    
-                                    // We need to send a message to switch tab/pane and load data.
-                                    // Since we can't easily access AlbumsPane directly here, we might need a new mechanism.
-                                    // However, we can use the existing UiEvent or just rely on the fact that we can switch tabs.
-                                    // But we also need to tell AlbumsPane WHICH album to load.
-                                    
-                                    // For now, let's assume we can use a custom GlobalAction or similar, 
-                                    // but better yet, let's use the ctx.query mechanism to push data to AlbumsPane if possible,
-                                    // or just switch to it and let it handle it? No, it needs the ID.
-                                    
-                                    // Let's try to use the "Directories" approach where we push a path.
-                                    // But AlbumsPane is separate.
-                                    
-                                    // Actually, we can use `ctx.command` to send a command to the backend? No, that's for MPD.
-                                    
-                                    // Let's use a hack for now: 
-                                    // We can use `GlobalAction::SwitchToTab` to switch to "Albums" tab (if it exists).
-                                    // AND we need to set the path in AlbumsPane.
-                                    
-                                    // Wait, `AlbumsPane` listens to `FETCH_DATA`.
-                                    // If we can trigger `FETCH_DATA` on `AlbumsPane` with the album ID, it might work.
-                                    // But `FETCH_DATA` usually comes from `fetch_data` method in `BrowserPane` trait.
-                                    
-                                    // Let's look at `AlbumsPane::fetch_data`. It uses `self.stack().next_path()`.
-                                    // So we need to modify `AlbumsPane`'s stack.
-                                    
-                                    // Since we don't have access to `AlbumsPane` state here, we might need a new `UiAppEvent`.
-                                    // `UiAppEvent::OpenAlbum(String)` would be ideal.
-                                    // But `UiAppEvent` is defined in `src/ui/mod.rs`.
-                                    
-                                    // Let's add `OpenAlbum` to `UiAppEvent`.
-                                    // But first, let's just log it to see if we get here.
-                                    log::info!("Opening album: {}", album_id);
-
-                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenAlbum(album_id.clone()))) {
-                        log::error!("Failed to send OpenAlbum event: {}", err);
-                    }
-                    return Ok(());
-                } else if type_ == "artist" {
-                    log::info!("Opening artist: {}", selected.file);
-                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenArtist(selected.file.clone()))) {
-                        log::error!("Failed to send OpenArtist event: {}", err);
-                    }
-                    return Ok(());
-                } else if type_ == "playlist" {
-                    log::info!("Opening playlist: {}", selected.file);
-                    if let Err(err) = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::OpenPlaylist(selected.file.clone()))) {
-                        log::error!("Failed to send OpenPlaylist event: {}", err);
-                    }
-                    return Ok(());
-                }
+                        if let Some(type_) = selected.metadata.get("type").and_then(|v| v.first()) {
+                            // Route to detail views based on item type
+                            match type_.as_str() {
+                                "playlist" => {
+                                    self.fetch_playlist_detail(ctx, selected.file.clone());
+                                    ctx.render()?;
+                                    return Ok(());
                                 }
+                                "album" => {
+                                    self.fetch_album_detail(ctx, selected.file.clone());
+                                    ctx.render()?;
+                                    return Ok(());
+                                }
+                                "artist" => {
+                                    self.fetch_artist_detail(ctx, selected.file.clone());
+                                    ctx.render()?;
+                                    return Ok(());
+                                }
+                                _ => {}
                             }
-                    
+                        }
+                        
+                        // Default: play the selected song/video
                         let (hovered_song_idx, items) = self.enqueue(true);
                         let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
@@ -840,6 +880,7 @@ impl SearchPane {
 
                         ctx.render()?;
                     }
+                }
                 CommonAction::Confirm => {}
                 CommonAction::FocusInput => {}
                 CommonAction::AddOptions { kind: AddKind::Action(opts) } => {
@@ -1334,6 +1375,24 @@ impl Pane for SearchPane {
 
                 status_info!("Found {} matching items", grouped_data.len());
                 self.songs_dir = Dir::new(grouped_data);
+                ctx.render()?;
+            }
+            ("fetch_playlist", MpdQueryResult::PlaylistDetail(details)) => {
+                let tracks: Vec<Song> = details.tracks.clone();
+                self.songs_dir = Dir::new(tracks);
+                self.detail_view = Some(DetailView::Playlist(details));
+                ctx.render()?;
+            }
+            ("fetch_album", MpdQueryResult::AlbumDetail(details)) => {
+                let tracks: Vec<Song> = details.tracks.clone();
+                self.songs_dir = Dir::new(tracks);
+                self.detail_view = Some(DetailView::Album(details));
+                ctx.render()?;
+            }
+            ("fetch_artist", MpdQueryResult::ArtistDetail(details)) => {
+                let tracks: Vec<Song> = details.top_songs.clone();
+                self.songs_dir = Dir::new(tracks);
+                self.detail_view = Some(DetailView::Artist(details));
                 ctx.render()?;
             }
             _ => {}
