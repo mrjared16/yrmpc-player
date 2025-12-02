@@ -4,7 +4,7 @@ use ratatui::widgets::ScrollbarState;
 
 use super::ScrollingState;
 
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Clone)]
 pub struct DirState<T: ScrollingState> {
     pub scrollbar_state: ScrollbarState,
     pub inner: T,

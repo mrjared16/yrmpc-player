@@ -104,7 +104,7 @@ impl<'name> Client<'name> {
     }
 
     // Helper to get mutable reference to backend as trait object
-    fn backend_mut(&mut self) -> &mut dyn MusicBackend {
+    pub fn backend_mut(&mut self) -> &mut dyn MusicBackend {
         match self {
             Client::Mpd(b) => b as &mut dyn MusicBackend,
             Client::Mpv(b) => b as &mut dyn MusicBackend,

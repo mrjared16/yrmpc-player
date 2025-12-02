@@ -8,9 +8,9 @@ use parking_lot::Mutex;
 use tokio::runtime::Runtime;
 use ytmapi_rs::{
     YtMusic, auth::BrowserToken, 
-    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery, GetArtistQuery}, 
+    query::{SearchQuery, search::SongsFilter, GetWatchPlaylistQuery, GetAlbumQuery, GetArtistQuery, GetPlaylistDetailsQuery, GetPlaylistTracksQuery}, 
     common::{YoutubeID, VideoID, AlbumID, ArtistChannelID, PlaylistID},
-    parse::SearchResultVideo,
+    parse::{SearchResultVideo, PlaylistItem},
 };
 use crate::mpd::commands::LsInfoEntry;
 use lru::LruCache;
@@ -32,6 +32,7 @@ use crate::mpd::{
 };
 use super::backend::MusicBackend;
 use super::mpv_ipc::MpvIpc;
+use crate::player::youtube::details::{PlaylistDetails, AlbumDetails, ArtistDetails, ArtistRef, AlbumRef};
 
 #[derive(Debug)]
 pub struct YouTubeBackend {
@@ -228,7 +229,22 @@ impl YouTubeBackend {
     /// Uses LRU cache with 1-hour TTL to minimize API calls
     /// Includes retry logic for transient failures
     fn get_stream_url(&self, video_id: &str) -> Result<String> {
-        self.get_stream_url_with_retry(video_id, 2)
+        match self.get_stream_url_with_retry(video_id, 2) {
+            Ok(url) => Ok(url),
+            Err(e) => {
+                let error_msg = e.to_string();
+                // Filter out known YouTube API structure errors and provide graceful degradation
+                if error_msg.contains("searchSuggestionsSectionRenderer") || 
+                   error_msg.contains("Key /contents") ||
+                   error_msg.contains("not found in Api response") {
+                    
+                    log::warn!("Filtering YouTube API structure error from UI: {}", error_msg);
+                    Err(anyhow!("Unable to play this song due to YouTube API changes. Please try a different song."))
+                } else {
+                    Err(e)
+                }
+            }
+        }
     }
 
     /// Extract stream URL with retry logic
@@ -272,8 +288,24 @@ impl YouTubeBackend {
                     }
                 }
                 Err(e) => {
-                    last_error = Some(e);
-                   // Continue to retry
+                    // Check for specific API structure errors and provide better error handling
+                    let error_msg = e.to_string();
+                    if error_msg.contains("searchSuggestionsSectionRenderer") || 
+                       error_msg.contains("Key /contents") ||
+                       error_msg.contains("not found in Api response") {
+                        // This is a known YouTube API structure issue - implement graceful degradation
+                        log::warn!("YouTube API structure incompatibility detected: {}. This may be due to YouTube API changes.", error_msg);
+                        
+                        // For this specific error, we'll skip this song and continue
+                        // This is better than failing the entire playback
+                        last_error = Some(anyhow!("Skipping song due to YouTube API incompatibility: {}", error_msg));
+                        
+                        // Don't retry for API structure issues - they won't resolve with retries
+                        break;
+                    } else {
+                        last_error = Some(anyhow::Error::from(e));
+                    }
+                    // Continue to retry for other types of errors
                 }
             }
         }
@@ -371,9 +403,222 @@ impl YouTubeBackend {
         
         Ok(())
     }
+
+    fn backend_name(&self) -> &'static str {
+        "YouTube"
+    }
+
+    /// Browse playlist details including tracks and related content
+    pub fn browse_playlist(&self, playlist_id: &str) -> Result<PlaylistDetails> {
+        log::debug!("YouTubeBackend: browse_playlist(id='{}')", playlist_id);
+        
+        let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
+        let playlist_id = PlaylistID::from_raw(playlist_id);
+        
+        let details_query = GetPlaylistDetailsQuery::new(playlist_id.clone());
+        let tracks_query = GetPlaylistTracksQuery::new(playlist_id.clone());
+
+        let (details, tracks_result) = self.rt.block_on(async move {
+            let d = api.query(details_query).await;
+            let t = api.query(tracks_query).await;
+            (d, t)
+        });
+
+        let details = details.map_err(|e| {
+             log::error!("YouTubeBackend browse_playlist details failed: {}", e);
+             e
+        })?;
+        let tracks_list = tracks_result.map_err(|e| {
+             log::error!("YouTubeBackend browse_playlist tracks failed: {}", e);
+             e
+        })?;
+
+        // Parse tracks
+        let mut tracks = Vec::new();
+        for item in tracks_list {
+            let mut s = Song::default();
+            match item {
+                PlaylistItem::Song(song) => {
+                    s.file = song.video_id.get_raw().to_string();
+                    s.metadata.insert("title".into(), vec![song.title]);
+                    let artist_names: Vec<String> = song.artists.iter().map(|a| a.name.clone()).collect();
+                    s.metadata.insert("artist".into(), artist_names);
+                    if !song.album.name.is_empty() {
+                        s.metadata.insert("album".into(), vec![song.album.name]);
+                    }
+                    if let Some(thumb) = song.thumbnails.last() {
+                        s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+                    }
+                    s.metadata.insert("type".into(), vec!["song".into()]);
+                },
+                PlaylistItem::Video(video) => {
+                    s.file = video.video_id.get_raw().to_string();
+                    s.metadata.insert("title".into(), vec![video.title]);
+                    s.metadata.insert("artist".into(), vec![video.channel_name]);
+                    if let Some(thumb) = video.thumbnails.last() {
+                        s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+                    }
+                    s.metadata.insert("type".into(), vec!["video".into()]);
+                },
+                _ => continue,
+            }
+            tracks.push(s);
+        }
+
+        // TODO: Parse featured artists and related playlists when ytmapi-rs exposes them
+        let featured_artists = Vec::new();
+        let related_playlists = Vec::new();
+
+        Ok(PlaylistDetails {
+            id: details.id.get_raw().to_string(),
+            title: details.title,
+            artist: Some(details.author),
+            year: Some(details.year),
+            thumbnail: details.thumbnails.last().map(|th| th.url.clone()),
+            track_count: tracks.len(),
+            duration_text: Some(details.duration),
+            tracks,
+            featured_artists,
+            related_playlists,
+        })
+    }
+
+    /// Browse album details including tracks and artist info
+    pub fn browse_album(&self, album_id: &str) -> Result<AlbumDetails> {
+        log::debug!("YouTubeBackend: browse_album(id='{}')", album_id);
+        
+        let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
+        let album_id = AlbumID::from_raw(album_id);
+        
+        let query = GetAlbumQuery::new(album_id.clone());
+        let result = self.rt.block_on(async move {
+            api.query(query).await
+        }).map_err(|e| {
+            log::error!("YouTubeBackend browse_album failed for id='{}': {}", album_id.get_raw(), e);
+            e
+        })?;
+
+        // Parse tracks
+        let mut tracks = Vec::new();
+        for track in result.tracks {
+                let mut s = Song::default();
+                s.file = track.video_id.get_raw().to_string();
+                s.metadata.insert("title".into(), vec![track.title]);
+
+                s.metadata.insert("album".into(), vec![result.title.clone()]);
+                if let Some(thumb) = result.thumbnails.last() {
+                    s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+                }
+                s.metadata.insert("type".into(), vec!["song".into()]);
+                tracks.push(s);
+            }
+
+        // Parse artist reference
+        let artist = ArtistRef {
+            id: result.artists.first().and_then(|a| a.id.as_ref().map(|id| id.get_raw().to_string())).unwrap_or_default(),
+            name: result.artists.first().map(|a| a.name.clone()).unwrap_or_else(|| "Unknown Artist".to_string()),
+            thumbnail: None,
+        };
+
+        // TODO: Parse "more by artist" when ytmapi-rs exposes it
+        let more_by_artist = Vec::new();
+
+        Ok(AlbumDetails {
+            id: album_id.get_raw().to_string(),
+            title: result.title,
+            artist,
+            year: Some(result.year),
+            thumbnail: result.thumbnails.last().map(|t| t.url.clone()),
+            tracks,
+            more_by_artist,
+        })
+    }
+
+    /// Browse artist details including top songs and albums
+    pub fn browse_artist(&self, artist_id: &str) -> Result<ArtistDetails> {
+        log::debug!("YouTubeBackend: browse_artist(id='{}')", artist_id);
+        
+        let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
+        let artist_id = ArtistChannelID::from_raw(artist_id);
+        
+        let query = GetArtistQuery::new(artist_id.clone());
+        let result = self.rt.block_on(async move {
+            api.query(query).await
+        }).map_err(|e| {
+            log::error!("YouTubeBackend browse_artist failed for id='{}': {}", artist_id.get_raw(), e);
+                log::error!("YouTubeBackend browse_artist failed for id='{}': {}", artist_id.get_raw(), e);
+            e
+        })?;
+
+        // Parse top songs
+        let mut top_songs = Vec::new();
+        if let Some(songs) = result.top_releases.songs {
+            for song in songs.results.iter().take(10) {  // Limit to top 10
+                let mut s = Song::default();
+                s.file = song.video_id.get_raw().to_string();
+                s.metadata.insert("title".into(), vec![song.title.clone()]);
+                let artist_names: Vec<String> = song.artists.iter().map(|a| a.name.clone()).collect();
+                s.metadata.insert("artist".into(), artist_names);
+                if !song.album.name.is_empty() {
+                    s.metadata.insert("album".into(), vec![song.album.name.clone()]);
+                }
+                // ArtistSong doesn't have thumbnails, use artist thumbnail as fallback?
+                // Or maybe ParsedSongAlbum has it? For now, skip.
+                if let Some(thumb) = result.thumbnails.last() {
+                     s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+                }
+                s.metadata.insert("type".into(), vec!["song".into()]);
+                top_songs.push(s);
+            }
+        }
+
+        // Parse albums
+        let mut albums = Vec::new();
+        if let Some(album_results) = result.top_releases.albums {
+            for album in album_results.results.iter().take(20) {
+                albums.push(AlbumRef {
+                    id: album.album_id.get_raw().to_string(),
+                    title: album.title.clone(),
+                    year: Some(album.year.clone()),
+                    thumbnail: album.thumbnails.last().map(|t| t.url.clone()),
+                });
+            }
+        }
+
+        // Parse singles
+        let mut singles = Vec::new();
+        if let Some(singles_results) = result.top_releases.singles {
+            for single in singles_results.results.iter().take(20) {
+                singles.push(AlbumRef {
+                    id: single.album_id.get_raw().to_string(),
+                    title: single.title.clone(),
+                    year: Some(single.year.clone()),
+                    thumbnail: single.thumbnails.last().map(|t| t.url.clone()),
+                });
+            }
+        }
+
+        // TODO: Parse related artists when ytmapi-rs exposes them
+        let related_artists = Vec::new();
+
+        Ok(ArtistDetails {
+            id: artist_id.get_raw().to_string(),
+            name: result.name,
+            subscribers: result.subscribers,
+            description: result.description,
+            thumbnail: result.thumbnails.last().map(|t| t.url.clone()),
+            top_songs,
+            albums,
+            singles,
+            related_artists,
+        })
+    }
 }
 
 impl MusicBackend for YouTubeBackend {
+    fn backend_name(&self) -> &'static str {
+        "YouTube"
+    }
     fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
         let api_opt = self.api.lock().as_ref().cloned();
         if let Some(api) = api_opt {
@@ -494,8 +739,9 @@ impl MusicBackend for YouTubeBackend {
         
         Ok(entries)
     }
-    fn backend_name(&self) -> &'static str {
-        "YouTube"
+
+    fn as_youtube_backend(&mut self) -> Option<&mut YouTubeBackend> {
+        Some(self)
     }
 
     // ===== Playback Control =====
@@ -960,6 +1206,64 @@ impl MusicBackend for YouTubeBackend {
         })?;
         
         let mut songs = Vec::new();
+
+        // Parse Top Results
+        for result in results.top_results {
+            let mut metadata = HashMap::new();
+            metadata.insert("title".to_string(), vec![result.result_name]);
+            
+            if let Some(artist) = result.artist {
+                metadata.insert("artist".to_string(), vec![artist]);
+            }
+            if let Some(album) = result.album {
+                metadata.insert("album".to_string(), vec![album]);
+            }
+            if let Some(thumb) = result.thumbnails.last() {
+                metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
+            }
+            
+            let (file, type_) = match result.result_type {
+                Some(ytmapi_rs::parse::TopResultType::Song) => {
+                    if let Some(vid) = result.video_id {
+                        (vid, "song")
+                    } else { continue; }
+                },
+                Some(ytmapi_rs::parse::TopResultType::Video) => {
+                    if let Some(vid) = result.video_id {
+                        (vid, "video")
+                    } else { continue; }
+                },
+                Some(ytmapi_rs::parse::TopResultType::Artist) => {
+                    if let Some(bid) = result.browse_id {
+                        (format!("artist:{}", bid), "artist")
+                    } else { continue; }
+                },
+                Some(ytmapi_rs::parse::TopResultType::Album(_)) => {
+                    if let Some(bid) = result.browse_id {
+                        (format!("album:{}", bid), "album")
+                    } else { continue; }
+                },
+                Some(ytmapi_rs::parse::TopResultType::Playlist) => {
+                    if let Some(bid) = result.browse_id {
+                        (format!("playlist:{}", bid), "playlist")
+                    } else { continue; }
+                },
+                _ => continue,
+            };
+            
+            metadata.insert("type".to_string(), vec![type_.to_string()]);
+
+            songs.push(Song {
+                id: None,
+                file,
+                duration: result.duration.and_then(|d| d.split(':').try_fold(0u64, |acc, part| {
+                    part.parse::<u64>().map(|v| acc * 60 + v)
+                }).ok()).map(Duration::from_secs),
+                metadata,
+                last_modified: None,
+                added: Some(Utc::now()),
+            });
+        }
 
         // Parse Artists
         for artist in results.artists {

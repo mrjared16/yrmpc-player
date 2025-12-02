@@ -14,7 +14,7 @@ use crate::{
     ui::dirstack::ScrollingState,
 };
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Dir<T, S>
 where
     T: std::fmt::Debug + DirStackItem + Clone + Send,

@@ -64,11 +64,62 @@ use crate::{
 
 mod inputs;
 
+/// Section focus for detail views
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum FocusSection {
+    /// Focus on tracks list
+    Tracks,
+    /// Focus on featured artists section
+    FeaturedArtists,
+    /// Focus on related content section
+    RelatedContent,
+}
+
+/// Selection mode for bulk operations
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SelectionMode {
+    /// Normal navigation mode
+    Normal,
+    /// Visual selection mode (vim-style V key)
+    Visual { anchor: usize },
+}
+
+/// Layout mode for search interface
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum LayoutMode {
+    /// Three-column layout: search inputs | results | preview
+    ThreeColumn,
+    /// Full-detail layout: expanded detail view taking full screen
+    FullDetail,
+}
+
+/// Detail view content for FullDetail mode
+#[derive(Debug, Clone)]
+enum DetailView {
+    Playlist(crate::player::youtube::PlaylistDetails),
+    Album(crate::player::youtube::AlbumDetails),
+    Artist(crate::player::youtube::ArtistDetails),
+}
+
 #[derive(Debug)]
 pub struct SearchPane {
     inputs: InputGroups,
     phase: Phase,
     songs_dir: Dir<Song, ListState>,
+    previous_dir_stack: Vec<Dir<Song, ListState>>,
+    search_results_backup: Option<Dir<Song, ListState>>,
+    
+    // Section focus for detail views
+    focused_section: FocusSection,
+    featured_artists_state: ListState,
+    related_content_state: ListState,
+    
+    // Visual selection mode
+    selection_mode: SelectionMode,
+    
+    // Hybrid UI: layout control
+    layout_mode: LayoutMode,
+    detail_view: Option<DetailView>,
     column_areas: EnumMap<BrowserArea, Rect>,
     suggestions: Vec<String>,
     showing_suggestions: bool,
@@ -106,6 +157,20 @@ impl SearchPane {
             suggestions_state: ListState::default(),
             debounce_timer: None,
             last_query: String::new(),
+            previous_dir_stack: Vec::new(),
+            search_results_backup: None,
+            
+            // Section focus for detail views
+            focused_section: FocusSection::Tracks,
+            featured_artists_state: ListState::default(),
+            related_content_state: ListState::default(),
+           
+            // Visual selection mode
+            selection_mode: SelectionMode::Normal,
+            
+            // Hybrid UI: layout control
+            layout_mode: LayoutMode::ThreeColumn,
+            detail_view: None,
         }
     }
 
@@ -1569,6 +1634,67 @@ impl Pane for SearchPane {
                 self.handle_result_phase_action(event, ctx)?;
             }
         }
+        
+        // Handle visual selection mode
+        if matches!(self.phase, Phase::BrowseResults { filter_input_on: false }) {
+            match event.code() {
+                KeyCode::Char('v') => {
+                    // Toggle visual mode
+                    match self.selection_mode {
+                        SelectionMode::Normal => {
+                            if let Some((idx, _)) = self.songs_dir.selected_with_idx() {
+                                self.selection_mode = SelectionMode::Visual { anchor: idx };
+                                self.songs_dir.state.mark(idx);
+                                ctx.render()?;
+                            }
+                        }
+                        SelectionMode::Visual { .. } => {
+                            self.selection_mode = SelectionMode::Normal;
+                            self.songs_dir.marked_mut().clear();
+                            ctx.render()?;
+                        }
+                    }
+                }
+                _ => {}
+            }
+            
+            // Visual mode operations
+            if let SelectionMode::Visual { anchor } = self.selection_mode {
+                match event.code() {
+                    KeyCode::Char('j') | KeyCode::Down => {
+                        self.songs_dir.next(ctx.config.scrolloff, ctx.config.wrap_navigation);
+                        if let Some((current, _)) = self.songs_dir.selected_with_idx() {
+                            self.songs_dir.marked_mut().clear();
+                            let start = anchor.min(current);
+                            let end = anchor.max(current);
+                            for i in start..=end {
+                                self.songs_dir.state.mark(i);
+                            }
+                        }
+                        ctx.render()?;
+                    }
+                    KeyCode::Char('k') | KeyCode::Up => {
+                        self.songs_dir.prev(ctx.config.scrolloff, ctx.config.wrap_navigation);
+                        if let Some((current, _)) = self.songs_dir.selected_with_idx() {
+                            self.songs_dir.marked_mut().clear();
+                            let start = anchor.min(current);
+                            let end = anchor.max(current);
+                            for i in start..=end {
+                                self.songs_dir.state.mark(i);
+                            }
+                        }
+                        ctx.render()?;
+                    }
+                    KeyCode::Esc => {
+                        self.selection_mode = SelectionMode::Normal;
+                        self.songs_dir.marked_mut().clear();
+                        ctx.render()?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        
         Ok(())
     }
 }

@@ -93,6 +93,9 @@ pub(crate) enum MpdQueryResult {
     Decoders(Vec<Decoder>),
     ExternalCommand(Arc<Vec<String>>, Vec<Song>),
     SongStickers(HashMap<String, HashMap<String, String>>),
+    PlaylistDetail(crate::player::youtube::PlaylistDetails),
+    AlbumDetail(crate::player::youtube::AlbumDetails),
+    ArtistDetail(crate::player::youtube::ArtistDetails),
     Any(Box<dyn Any + Send + Sync>),
 }
 

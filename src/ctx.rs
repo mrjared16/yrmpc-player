@@ -91,7 +91,12 @@ impl Ctx {
     ) -> Result<Self> {
         let supported_commands: HashSet<String> = client.supported_commands();
         let stickers_supported = if supported_commands.contains("sticker") {
-            StickersSupport::Supported
+            // YouTube backend doesn't support MPD stickers - disable to prevent HTTP 400 errors
+            use crate::config::PlayerBackend;
+            match config.backend {
+                PlayerBackend::YouTube => StickersSupport::UnsupportedAndChecked,
+                PlayerBackend::Mpd | PlayerBackend::Mpv => StickersSupport::Supported,
+            }
         } else {
             StickersSupport::Unsupported
         };

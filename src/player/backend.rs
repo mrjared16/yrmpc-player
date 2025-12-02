@@ -11,6 +11,10 @@ use crate::{
 /// This trait abstracts different music player backends to allow rmpc
 /// to work with multiple players (MPD, MPV, etc.)
 pub trait MusicBackend: Send + Sync {
+    fn as_youtube_backend(&mut self) -> Option<&mut crate::player::youtube_backend::YouTubeBackend> {
+        None
+    }
+
     // ===== Playback Control =====
 
     fn play(&mut self) -> Result<()>;
