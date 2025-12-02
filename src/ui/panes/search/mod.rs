@@ -294,6 +294,41 @@ impl SearchPane {
         }
     }
 
+    fn render_full_detail(
+        &mut self,
+        frame: &mut ratatui::prelude::Frame,
+        area: ratatui::prelude::Rect,
+        ctx: &Ctx,
+    ) -> anyhow::Result<()> {
+        use ratatui::layout::Layout;
+        use ratatui::widgets::Paragraph;
+        
+        let chunks = Layout::vertical([
+            Constraint::Length(1), // Breadcrumb
+            Constraint::Min(0),     // Content
+        ]).split(area);
+        
+        // Render breadcrumb
+        let breadcrumb_text = if let Some(detail) = &self.detail_view {
+            match detail {
+                DetailView::Playlist(p) => format!("Search > Playlist: {}", p.title),
+                DetailView::Album(a) => format!("Search > Album: {} - {}", a.title, a.artist.name),
+                DetailView::Artist(a) => format!("Search > Artist: {}", a.name),
+            }
+        } else {
+            "Search > Detail".to_string()
+        };
+        
+        let breadcrumb = Paragraph::new(breadcrumb_text)
+            .style(ctx.config.theme.borders_style);
+        frame.render_widget(breadcrumb, chunks[0]);
+        
+        // Render track list
+        self.render_song_column(frame, chunks[1], ctx);
+        
+        Ok(())
+    }
+
     fn fetch_playlist_detail(&mut self, ctx: &Ctx, playlist_id: String) {
         // Save current results before switching
         if self.layout_mode == LayoutMode::ThreeColumn {
@@ -565,7 +600,22 @@ impl SearchPane {
                 CommonAction::Select => {}
                 CommonAction::InvertSelection => {}
                 CommonAction::Rename => {}
-                CommonAction::Close => {}
+                CommonAction::Close | CommonAction::Left => {
+                    // Back navigation from FullDetail mode
+                    if self.layout_mode == LayoutMode::FullDetail {
+                        self.layout_mode = LayoutMode::ThreeColumn;
+                        self.detail_view = None;
+                        
+                        // Restore previous state or search results
+                        if let Some(backup) = self.search_results_backup.take() {
+                            self.songs_dir = backup;
+                        } else if let Some(prev) = self.previous_dir_stack.pop() {
+                            self.songs_dir = prev;
+                        }
+                        
+                        ctx.render()?;
+                    }
+                }
                 CommonAction::Confirm => {
                     match self.inputs.activate_focused() {
                         ActionResult::Search => {
@@ -1202,6 +1252,16 @@ impl Pane for SearchPane {
         area: ratatui::prelude::Rect,
         ctx: &Ctx,
     ) -> anyhow::Result<()> {
+        // Check layout mode and route to appropriate rendering
+        match self.layout_mode {
+            LayoutMode::FullDetail => {
+                return self.render_full_detail(frame, area, ctx);
+            }
+            LayoutMode::ThreeColumn => {
+                // Continue with existing three-column rendering
+            }
+        }
+        
         let widths = &ctx.config.theme.column_widths;
         let [previous_area, current_area_init, preview_area] = *Layout::horizontal([
             Constraint::Percentage(widths[0]),
