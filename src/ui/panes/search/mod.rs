@@ -890,27 +890,37 @@ impl SearchPane {
                 CommonAction::Rename => {}
                 CommonAction::Close => {}
                 CommonAction::Confirm if self.songs_dir.marked().is_empty() => {
+                    log::info!("Enter key pressed on search result");
                     if let Some(selected) = self.songs_dir.selected() {
+                        log::info!("Selected item file: {}", selected.file);
                         if let Some(type_) = selected.metadata.get("type").and_then(|v| v.first()) {
+                            log::info!("Item type: {}", type_);
                             // Route to detail views based on item type
                             match type_.as_str() {
                                 "playlist" => {
+                                    log::info!("Fetching playlist detail");
                                     self.fetch_playlist_detail(ctx, selected.file.clone());
                                     ctx.render()?;
                                     return Ok(());
                                 }
                                 "album" => {
+                                    log::info!("Fetching album detail");
                                     self.fetch_album_detail(ctx, selected.file.clone());
                                     ctx.render()?;
                                     return Ok(());
                                 }
                                 "artist" => {
+                                    log::info!("Fetching artist detail");
                                     self.fetch_artist_detail(ctx, selected.file.clone());
                                     ctx.render()?;
                                     return Ok(());
                                 }
-                                _ => {}
+                                _ => {
+                                    log::info!("Unknown type, falling through to play logic");
+                                }
                             }
+                        } else {
+                            log::info!("No type metadata found");
                         }
                         
                         // Default: play the selected song/video
