@@ -941,7 +941,7 @@ impl SearchPane {
                         ctx.render()?;
                     }
                 }
-                CommonAction::Confirm => {}
+                // Removed empty CommonAction::Confirm => {} - it did nothing useful
                 CommonAction::FocusInput => {}
                 CommonAction::AddOptions { kind: AddKind::Action(opts) } => {
                     let (hovered_song_idx, enqueue) = self.enqueue(opts.all);
