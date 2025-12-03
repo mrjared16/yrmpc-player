@@ -250,6 +250,8 @@ impl SearchPane {
     ) {
         let config = &ctx.config;
         let column_right_padding: u16 = config.theme.scrollbar.is_some().into();
+        
+        // Build title with filter and visual mode indicator
         let title = self.songs_dir.filter().as_ref().map(|v| {
             format!(
                 "[FILTER]: {v}{} ",
@@ -259,6 +261,14 @@ impl SearchPane {
                     ""
                 }
             )
+        }).or_else(|| {
+            // If no filter, show visual mode indicator
+            if matches!(self.selection_mode, SelectionMode::Visual { .. }) {
+                let marked_count = self.songs_dir.marked().len();
+                Some(format!("(VISUAL - {} selected)", marked_count))
+            } else {
+                None
+            }
         });
 
         let block = {
@@ -308,12 +318,20 @@ impl SearchPane {
             Constraint::Min(0),     // Content
         ]).split(area);
         
-        // Render breadcrumb
+        // Render breadcrumb with visual mode indicator
         let breadcrumb_text = if let Some(detail) = &self.detail_view {
-            match detail {
+            let base = match detail {
                 DetailView::Playlist(p) => format!("Search > Playlist: {}", p.title),
                 DetailView::Album(a) => format!("Search > Album: {} - {}", a.title, a.artist.name),
                 DetailView::Artist(a) => format!("Search > Artist: {}", a.name),
+            };
+            
+            // Add visual mode indicator if in visual mode
+            if matches!(self.selection_mode, SelectionMode::Visual { .. }) {
+                let marked_count = self.songs_dir.marked().len();
+                format!("{} (VISUAL - {} selected)", base, marked_count)
+            } else {
+                base
             }
         } else {
             "Search > Detail".to_string()
@@ -889,7 +907,7 @@ impl SearchPane {
                 }
                 CommonAction::Rename => {}
                 CommonAction::Close => {}
-                CommonAction::Confirm if self.songs_dir.marked().is_empty() => {
+                CommonAction::Confirm => {
                     log::info!("Enter key pressed on search result");
                     if let Some(selected) = self.songs_dir.selected() {
                         log::info!("Selected item file: {}", selected.file);
@@ -1405,6 +1423,10 @@ impl Pane for SearchPane {
                     }
                 }
 
+                // Log counts RIGHT AFTER grouping, BEFORE any moves
+                log::info!("[SEARCH DEBUG] SearchResult received, grouped: {} artists, {} albums, {} songs, {} videos, {} others", 
+                    artists.len(), albums.len(), songs.len(), videos.len(), others.len());
+
                 let mut grouped_data = Vec::new();
 
                 if !artists.is_empty() {
@@ -1445,6 +1467,8 @@ impl Pane for SearchPane {
 
                 status_info!("Found {} matching items", grouped_data.len());
                 self.songs_dir = Dir::new(grouped_data);
+                self.phase = Phase::BrowseResults { filter_input_on: false };
+                log::info!("[SEARCH DEBUG] Phase set to BrowseResults, songs_dir has {} items", self.songs_dir.len());
                 ctx.render()?;
             }
             ("fetch_playlist", MpdQueryResult::PlaylistDetail(details)) => {

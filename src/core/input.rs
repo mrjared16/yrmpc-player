@@ -1,4 +1,4 @@
-use std::time::Duration;
+// use std::time::Duration;
 
 use crossbeam::channel::Sender;
 use crossterm::event::Event;
@@ -13,11 +13,11 @@ fn input_poll_task(event_tx: &Sender<AppEvent>) {
     // Sometimes in there are inputs left in the buffer(because of tmux maybe?)
     // before starting to read inputs (from reading terminal sequences), this
     // results in random stuff happening in the program. Simply drain them.
-    drain_crossterm_events();
+    // drain_crossterm_events();
 
     let mut mouse_event_tracker = MouseEventTracker::default();
     loop {
-        match crossterm::event::poll(Duration::from_millis(250)) {
+        match crossterm::event::poll(std::time::Duration::from_millis(250)) {
             Ok(true) => match crossterm::event::read() {
                 Ok(Event::Mouse(mouse)) => {
                     if let Some(ev) = mouse_event_tracker.track_and_get(mouse)
@@ -49,8 +49,8 @@ fn input_poll_task(event_tx: &Sender<AppEvent>) {
     }
 }
 
-fn drain_crossterm_events() {
-    while crossterm::event::poll(Duration::from_millis(0)).unwrap_or(false) {
-        let _ = crossterm::event::read();
-    }
-}
+// fn drain_crossterm_events() {
+//     while crossterm::event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
+//         let _ = crossterm::event::read();
+//     }
+// }

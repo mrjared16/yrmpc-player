@@ -75,6 +75,9 @@ rstest = "0.25.0"
 test-case = "3.3.1"
 insta = "1.40.0"
 env_logger = "0.11.0"
+portable-pty = "0.8.1"
+vt100 = "0.15.2"
+expectrl = "0.8.0"
 
 [workspace.dependencies]
 clap = { version = "4.5.40", features = ["derive", "cargo", "string" ] }

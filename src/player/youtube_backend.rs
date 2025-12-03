@@ -412,8 +412,12 @@ impl YouTubeBackend {
     pub fn browse_playlist(&self, playlist_id: &str) -> Result<PlaylistDetails> {
         log::debug!("YouTubeBackend: browse_playlist(id='{}')", playlist_id);
         
+        // Strip "playlist:" prefix if present (IDs come prefixed from search results)
+        let raw_id = playlist_id.strip_prefix("playlist:").unwrap_or(playlist_id);
+        log::debug!("YouTubeBackend: browse_playlist raw_id='{}'", raw_id);
+        
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
-        let playlist_id = PlaylistID::from_raw(playlist_id);
+        let playlist_id = PlaylistID::from_raw(raw_id);
         
         let details_query = GetPlaylistDetailsQuery::new(playlist_id.clone());
         let tracks_query = GetPlaylistTracksQuery::new(playlist_id.clone());
@@ -487,8 +491,12 @@ impl YouTubeBackend {
     pub fn browse_album(&self, album_id: &str) -> Result<AlbumDetails> {
         log::debug!("YouTubeBackend: browse_album(id='{}')", album_id);
         
+        // Strip "album:" prefix if present (IDs come prefixed from search results)
+        let raw_id = album_id.strip_prefix("album:").unwrap_or(album_id);
+        log::debug!("YouTubeBackend: browse_album raw_id='{}'", raw_id);
+        
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
-        let album_id = AlbumID::from_raw(album_id);
+        let album_id = AlbumID::from_raw(raw_id);
         
         let query = GetAlbumQuery::new(album_id.clone());
         let result = self.rt.block_on(async move {
@@ -538,15 +546,18 @@ impl YouTubeBackend {
     pub fn browse_artist(&self, artist_id: &str) -> Result<ArtistDetails> {
         log::debug!("YouTubeBackend: browse_artist(id='{}')", artist_id);
         
+        // Strip "artist:" prefix if present (IDs come prefixed from search results)
+        let raw_id = artist_id.strip_prefix("artist:").unwrap_or(artist_id);
+        log::debug!("YouTubeBackend: browse_artist raw_id='{}'", raw_id);
+        
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
-        let artist_id = ArtistChannelID::from_raw(artist_id);
+        let artist_id = ArtistChannelID::from_raw(raw_id);
         
         let query = GetArtistQuery::new(artist_id.clone());
         let result = self.rt.block_on(async move {
             api.query(query).await
         }).map_err(|e| {
             log::error!("YouTubeBackend browse_artist failed for id='{}': {}", artist_id.get_raw(), e);
-                log::error!("YouTubeBackend browse_artist failed for id='{}': {}", artist_id.get_raw(), e);
             e
         })?;
 
@@ -879,12 +890,20 @@ impl MusicBackend for YouTubeBackend {
 
     fn playlist_info(&mut self) -> Result<Vec<Song>> {
         let app_state = self.app_state.read().unwrap();
-        Ok(app_state.get_queue().iter().map(|item| item.song.clone()).collect())
+        Ok(app_state.get_queue().iter().map(|item| {
+            let mut song = item.song.clone();
+            song.id = Some(item.id);  // Sync song.id with queue item ID
+            song
+        }).collect())
     }
 
     fn current_song(&mut self) -> Result<Option<Song>> {
         let app_state = self.app_state.read().unwrap();
-        Ok(app_state.get_current().map(|item| item.song.clone()))
+        Ok(app_state.get_current().map(|item| {
+            let mut song = item.song.clone();
+            song.id = Some(item.id);  // Sync song.id with queue item ID
+            song
+        }))
     }
 
     // ===== Queue Management =====
@@ -1196,6 +1215,8 @@ impl MusicBackend for YouTubeBackend {
         } else {
             return Ok(vec![]);
         };
+        
+        use ytmapi_rs::parse::BasicSearchResultCommunityPlaylist;
 
         // Use general SearchQuery to get all types of results
         let results = self.rt.block_on(async move {

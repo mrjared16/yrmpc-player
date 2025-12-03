@@ -12,6 +12,7 @@ use crate::{
         mpd_client::{Filter, FilterKind, MpdClient, MpdCommand, SingleOrRange, Tag},
         proto_client::ProtoClient,
     },
+    player::backend::MusicBackend,
     shared::macros::{status_info, status_warn},
 };
 
@@ -890,8 +891,54 @@ impl MpdClientExt for crate::player::Client<'_> {
             crate::player::Client::Mpd(b) => {
                 b.client.enqueue_multiple(items, autoplay_idx, position, replace)
             }
-            crate::player::Client::Mpv(_) | crate::player::Client::YouTube(_) => {
-                log::debug!("enqueue_multiple not fully supported in MPV/YouTube backend");
+            crate::player::Client::Mpv(_) => {
+                log::debug!("enqueue_multiple not fully supported in MPV backend");
+                Ok(())
+            }
+            crate::player::Client::YouTube(backend) => {
+                log::debug!("enqueue_multiple for YouTube backend: {} items, replace={}, autoplay_idx={:?}", items.len(), replace, autoplay_idx);
+                
+                if replace {
+                    backend.clear()?;
+                }
+                
+                let queue_len_before = backend.playlist_info().map(|q| q.len()).unwrap_or(0);
+                
+                // Add each item to the queue
+                for item in items.iter() {
+                    match item {
+                        Enqueue::File { path } => {
+                            log::debug!("YouTube: adding file to queue: {}", path);
+                            // Add the song to the queue (None = end of queue)
+                            backend.add(path, None)?;
+                        }
+                        Enqueue::Playlist { name } => {
+                            log::debug!("YouTube: loading playlist: {}", name);
+                            // For playlists, try to load them
+                            backend.load_playlist(name, None)?;
+                        }
+                        Enqueue::Find { filter: _ } => {
+                            log::warn!("Find filter not supported for YouTube backend");
+                        }
+                    }
+                }
+                
+                // If autoplay was requested, play the song at the correct index
+                if let Some(play_idx) = autoplay_idx {
+                    if let Ok(songs) = backend.playlist_info() {
+                        // The autoplay_idx is relative to the items we just added
+                        // So the actual index in the queue is queue_len_before + play_idx
+                        let target_idx = if replace { play_idx } else { queue_len_before + play_idx };
+                        log::debug!("YouTube: autoplay requested, play_idx={}, target_idx={}, queue_len={}", play_idx, target_idx, songs.len());
+                        if let Some(song) = songs.get(target_idx) {
+                            if let Some(id) = song.id {
+                                log::debug!("YouTube: playing song id={}", id);
+                                let _ = backend.play_id(id);
+                            }
+                        }
+                    }
+                }
+                
                 Ok(())
             }
         }

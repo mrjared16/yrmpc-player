@@ -25,14 +25,24 @@ pub fn init_console() -> Result<LoggerHandle, FlexiLoggerError> {
 
 #[allow(dead_code)]
 fn init_release(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
-    let uid = rustix::process::geteuid();
+    let file_spec = if let Ok(custom_path) = std::env::var("RMPC_LOG_FILE") {
+        // Use custom log file path (for E2E tests)
+        let path = std::path::PathBuf::from(&custom_path);
+        FileSpec::default()
+            .directory(path.parent().unwrap_or(std::path::Path::new("/tmp")))
+            .basename(path.file_stem().unwrap().to_string_lossy())
+            .suppress_timestamp()
+    } else {
+        // Default: /tmp/rmpc_{uid}.log
+        let uid = rustix::process::geteuid();
+        FileSpec::default()
+            .directory(std::env::temp_dir())
+            .basename(format!("rmpc_{}", uid.as_raw()))
+            .suppress_timestamp()
+    };
+    
     flexi_logger::Logger::try_with_env_or_str("debug")?
-        .log_to_file(
-            FileSpec::default()
-                .directory(std::env::temp_dir())
-                .basename(format!("rmpc_{}", uid.as_raw()))
-                .suppress_timestamp(),
-        )
+        .log_to_file(file_spec)
         .add_writer("status_bar", Box::new(StatusBarWriter::new(tx)))
         .format_for_files(structured_detailed_format)
         .set_palette("1;3;15;4;13".to_string())
@@ -41,13 +51,24 @@ fn init_release(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> 
 
 #[allow(dead_code)]
 fn init_debug(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
-    let uid = rustix::process::geteuid();
+    let file_spec = if let Ok(custom_path) = std::env::var("RMPC_LOG_FILE") {
+        // Use custom log file path (for E2E tests)
+        FileSpec::default()
+            .directory(std::path::PathBuf::from(&custom_path).parent().unwrap_or(std::path::Path::new("/tmp")))
+            .basename(std::path::PathBuf::from(&custom_path).file_stem().unwrap().to_string_lossy())
+            .suppress_timestamp()
+    } else {
+        // Default: /tmp/rmpc_{uid}.log
+        let uid = rustix::process::geteuid();
+        FileSpec::default()
+            .directory(std::env::temp_dir())
+            .basename(format!("rmpc_{}", uid.as_raw()))
+            .suppress_timestamp()
+    };
+    
     flexi_logger::Logger::try_with_env_or_str("debug")?
         .log_to_file_and_writer(
-            FileSpec::default()
-                .directory(std::env::temp_dir())
-                .basename(format!("rmpc_{}", uid.as_raw()))
-                .suppress_timestamp(),
+            file_spec,
             Box::new(AppEventChannelWriter::new(tx.clone())),
         )
         .add_writer("status_bar", Box::new(StatusBarWriter::new(tx)))
