@@ -28,6 +28,14 @@ pub struct Args {
 
     #[command(flatten)]
     pub partition: Partition,
+
+    /// Path to a script file for headless execution
+    #[arg(long)]
+    pub headless_script: Option<PathBuf>,
+
+    /// Path to a log file for UI state
+    #[arg(long)]
+    pub debug_ui_log: Option<PathBuf>,
 }
 
 #[derive(Debug, clap::Args)]

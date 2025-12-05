@@ -382,7 +382,7 @@ fn main() -> Result<()> {
 
             let tx_clone = event_tx.clone();
 
-            let ctx = Ctx::try_new(
+            let mut ctx = Ctx::try_new(
                 &mut client,
                 config,
                 tx_clone,
@@ -421,6 +421,14 @@ fn main() -> Result<()> {
             let enable_mouse = ctx.config.enable_mouse;
             let terminal = Terminal::setup(enable_mouse).context("Failed to setup terminal")?;
             core::input::init(event_tx.clone())?;
+
+            if let Some(path) = args.debug_ui_log {
+                ctx.set_debug_ui_log(Some(path));
+            }
+
+            if let Some(path) = args.headless_script {
+                core::headless::run_script(path, event_tx.clone())?;
+            }
 
             let event_loop_handle = core::event_loop::init(ctx, event_rx, terminal)?;
 

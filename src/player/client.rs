@@ -26,7 +26,7 @@ use crate::{
         mpd_client::{Filter, MpdCommand, SingleOrRange},
         proto_client::ProtoClient,
     },
-    player::{backend::MusicBackend, mpd_backend::MpdBackend, mpv_backend::MpvBackend, youtube_backend::YouTubeBackend},
+    player::{backend::MusicBackend, mpd_backend::MpdBackend, mpv_backend::MpvBackend, youtube},
     shared::mpd_client_ext::{MpdClientExt, PartitionedOutput},
 };
 use std::sync::{Arc, RwLock};
@@ -36,7 +36,7 @@ use std::sync::{Arc, RwLock};
 pub enum Client<'name> {
     Mpd(MpdBackend<'name>),
     Mpv(MpvBackend),
-    YouTube(YouTubeBackend),
+    YouTube(youtube::YouTubeClient),
 }
 
 impl<'name> Client<'name> {
@@ -96,9 +96,9 @@ impl<'name> Client<'name> {
                 Client::new_mpv(&socket)
             }
             PlayerBackend::YouTube => {
-                let socket = mpv_socket.unwrap_or_else(|| "/tmp/rmpc-mpv.sock".to_string());
-                let backend = YouTubeBackend::new(app_state, std::path::Path::new(&socket), youtube_config)?;
-                Ok(Client::YouTube(backend))
+                let socket_path = std::path::Path::new("/tmp/yrmpc-yt.sock");
+                let client = youtube::YouTubeClient::connect(socket_path)?;
+                Ok(Client::YouTube(client))
             }
         }
     }

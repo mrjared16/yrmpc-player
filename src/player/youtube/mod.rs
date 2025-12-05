@@ -54,20 +54,20 @@
 //! ```
 //!
 //! CLI commands:
-//! ```bash
-//! rmpc play
-//! rmpc pause
-//! rmpc next
-//! rmpc stop
-//! ```
 
 pub mod api;
 pub mod client;
+pub mod config;
 pub mod details;
+pub mod error;
 pub mod protocol;
 pub mod server;
+pub mod services;
 pub mod stream;
 
 pub use client::YouTubeClient;
+pub use config::YouTubeConfig;
 pub use details::{AlbumDetails, ArtistDetails, PlaylistDetails};
+pub use error::{YouTubeError, Result};
 pub use server::YouTubeServer;
+pub use services::{ApiService, PlaybackService, QueueService};

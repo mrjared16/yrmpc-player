@@ -181,7 +181,26 @@ impl<'ui> Ui<'ui> {
             modal.render(frame, ctx)?;
         }
 
+        self.debug_log_ui(ctx);
+
         Ok(())
+    }
+
+    fn debug_log_ui(&mut self, ctx: &mut Ctx) {
+        if let Some(path) = &ctx.debug_ui_log {
+            let mut state = serde_json::Map::new();
+            state.insert("active_tab".to_string(), serde_json::json!(format!("{:?}", ctx.active_tab)));
+
+            if let Ok(Panes::Search(p)) = self.panes.get_mut(&PaneType::Search, ctx) {
+                state.insert("search".to_string(), p.debug_dump());
+            }
+
+            if let Ok(file) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                let mut writer = std::io::BufWriter::new(file);
+                use std::io::Write;
+                let _ = writeln!(writer, "{}", serde_json::to_string(&state).unwrap_or_default());
+            }
+        }
     }
 
     pub fn handle_mouse_event(&mut self, event: MouseEvent, ctx: &mut Ctx) -> Result<()> {

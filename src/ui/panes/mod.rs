@@ -284,6 +284,10 @@ pub(crate) trait Pane {
     fn resize(&mut self, area: Rect, ctx: &Ctx) -> Result<()> {
         Ok(())
     }
+
+    fn debug_dump(&self) -> serde_json::Value {
+        serde_json::json!({})
+    }
 }
 
 pub(crate) mod browser {

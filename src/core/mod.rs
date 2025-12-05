@@ -6,3 +6,4 @@ pub mod input;
 pub mod scheduler;
 pub mod socket;
 pub mod work;
+pub mod headless;

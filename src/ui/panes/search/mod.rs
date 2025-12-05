@@ -174,6 +174,15 @@ impl SearchPane {
         }
     }
 
+    fn debug_dump(&self) -> serde_json::Value {
+        let results: Vec<String> = self.songs_dir.items.iter().map(|s| s.file.clone()).collect();
+        serde_json::json!({
+            "input": self.get_current_query_string(),
+            "results": results,
+            "phase": format!("{:?}", self.phase),
+        })
+    }
+
     fn items<'a>(&'a self, all: bool) -> Box<dyn Iterator<Item = (usize, &'a Song)> + 'a> {
         if all {
             Box::new(self.songs_dir.items.iter().enumerate())
@@ -189,7 +198,24 @@ impl SearchPane {
     fn enqueue(&self, all: bool) -> (Option<usize>, Vec<Enqueue>) {
         let items = self
             .items(all)
-            .map(|(_, item)| Enqueue::File { path: item.file.clone() })
+            .filter_map(|(_, item)| {
+                // Only enqueue actual songs/videos, not playlists/albums/artists
+                let item_type = item.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
+                match item_type {
+                    Some("song" | "video") | None => {
+                        // Songs, videos, or items without type (assume playable)
+                        Some(Enqueue::File { path: item.file.clone() })
+                    }
+                    Some("playlist" | "album" | "artist") => {
+                        // Skip non-playable items
+                        None
+                    }
+                    Some(_) => {
+                        // Unknown type, skip to be safe
+                        None
+                    }
+                }
+            })
             .collect_vec();
 
         let hovered = self.songs_dir.selected().map(|s| s.file.as_str());
@@ -618,7 +644,7 @@ impl SearchPane {
                 CommonAction::Select => {}
                 CommonAction::InvertSelection => {}
                 CommonAction::Rename => {}
-                CommonAction::Close | CommonAction::Left => {
+                CommonAction::Close => {
                     // Back navigation from FullDetail mode
                     if self.layout_mode == LayoutMode::FullDetail {
                         self.layout_mode = LayoutMode::ThreeColumn;
@@ -946,6 +972,12 @@ impl SearchPane {
                         let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
                         if !items.is_empty() {
+                            log::error!("=== PLAYING SONG FROM SEARCH ===");
+                            for (idx, item) in items.iter().enumerate() {
+                                if let crate::shared::mpd_client_ext::Enqueue::File { path } = item {
+                                    log::error!("Song #{}: file='{}'", idx, path);
+                                }
+                            }
                             Client::resolve_and_enqueue(
                                 ctx,
                                 items,

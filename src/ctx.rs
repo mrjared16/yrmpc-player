@@ -76,6 +76,7 @@ pub struct Ctx {
     pub(crate) last_status_update: Instant,
     pub(crate) song_played: Option<Duration>,
     pub(crate) stickers_supported: StickersSupport,
+    pub(crate) debug_ui_log: Option<std::path::PathBuf>,
 }
 
 #[bon]
@@ -142,7 +143,12 @@ impl Ctx {
             song_played: None,
             last_status_update: Instant::now(),
             stickers_supported,
+            debug_ui_log: None,
         })
+    }
+
+    pub(crate) fn set_debug_ui_log(&mut self, path: Option<std::path::PathBuf>) {
+        self.debug_ui_log = path;
     }
 
     // TODO: Error comes from crossebeam, try to remove later if it gets solved

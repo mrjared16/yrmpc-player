@@ -229,6 +229,8 @@ impl YouTubeBackend {
     /// Uses LRU cache with 1-hour TTL to minimize API calls
     /// Includes retry logic for transient failures
     fn get_stream_url(&self, video_id: &str) -> Result<String> {
+        log::error!("=== get_stream_url CALLED ===");
+        log::error!("Input video_id: '{}'", video_id);
         match self.get_stream_url_with_retry(video_id, 2) {
             Ok(url) => Ok(url),
             Err(e) => {
@@ -489,11 +491,12 @@ impl YouTubeBackend {
 
     /// Browse album details including tracks and artist info
     pub fn browse_album(&self, album_id: &str) -> Result<AlbumDetails> {
-        log::debug!("YouTubeBackend: browse_album(id='{}')", album_id);
+        log::error!("=== browse_album CALLED ===");
+        log::error!("Input album_id: '{}'", album_id);
         
         // Strip "album:" prefix if present (IDs come prefixed from search results)
         let raw_id = album_id.strip_prefix("album:").unwrap_or(album_id);
-        log::debug!("YouTubeBackend: browse_album raw_id='{}'", raw_id);
+        log::error!("After strip_prefix, raw_id: '{}'", raw_id);
         
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
         let album_id = AlbumID::from_raw(raw_id);
@@ -544,11 +547,12 @@ impl YouTubeBackend {
 
     /// Browse artist details including top songs and albums
     pub fn browse_artist(&self, artist_id: &str) -> Result<ArtistDetails> {
-        log::debug!("YouTubeBackend: browse_artist(id='{}')", artist_id);
+        log::error!("=== browse_artist CALLED ===");
+        log::error!("Input artist_id: '{}'", artist_id);
         
         // Strip "artist:" prefix if present (IDs come prefixed from search results)
         let raw_id = artist_id.strip_prefix("artist:").unwrap_or(artist_id);
-        log::debug!("YouTubeBackend: browse_artist raw_id='{}'", raw_id);
+        log::error!("After strip_prefix, raw_id: '{}'", raw_id);
         
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
         let artist_id = ArtistChannelID::from_raw(raw_id);
@@ -1256,17 +1260,35 @@ impl MusicBackend for YouTubeBackend {
                 },
                 Some(ytmapi_rs::parse::TopResultType::Artist) => {
                     if let Some(bid) = result.browse_id {
-                        (format!("artist:{}", bid), "artist")
+                        // Only add "artist:" prefix if not already present
+                        let file = if bid.starts_with("artist:") {
+                            bid
+                        } else {
+                            format!("artist:{}", bid)
+                        };
+                        (file, "artist")
                     } else { continue; }
                 },
                 Some(ytmapi_rs::parse::TopResultType::Album(_)) => {
                     if let Some(bid) = result.browse_id {
-                        (format!("album:{}", bid), "album")
+                        // Only add "album:" prefix if not already present
+                        let file = if bid.starts_with("album:") {
+                            bid
+                        } else {
+                            format!("album:{}", bid)
+                        };
+                        (file, "album")
                     } else { continue; }
                 },
                 Some(ytmapi_rs::parse::TopResultType::Playlist) => {
                     if let Some(bid) = result.browse_id {
-                        (format!("playlist:{}", bid), "playlist")
+                        // Only add "playlist:" prefix if not already present
+                        let file = if bid.starts_with("playlist:") {
+                            bid
+                        } else {
+                            format!("playlist:{}", bid)
+                        };
+                        (file, "playlist")
                     } else { continue; }
                 },
                 _ => continue,
@@ -1298,9 +1320,17 @@ impl MusicBackend for YouTubeBackend {
                 metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
             }
 
+            let artist_id = artist.browse_id.get_raw();
+            // Only add "artist:" prefix if it doesn't already have one
+            let file = if artist_id.starts_with("artist:") {
+                artist_id.to_string()
+            } else {
+                format!("artist:{}", artist_id)
+            };
+
             songs.push(Song {
                 id: None,
-                file: format!("artist:{}", artist.browse_id.get_raw()), // Prefix with artist: for easy identification
+                file, // Prefix with artist: for easy identification
                 duration: None,
                 metadata,
                 last_modified: None,
@@ -1320,9 +1350,17 @@ impl MusicBackend for YouTubeBackend {
                 metadata.insert("thumbnail".to_string(), vec![thumb.url.clone()]);
             }
 
+            // Only add "album:" prefix if not already present
+            let album_id = album.album_id.get_raw();
+            let file = if album_id.starts_with("album:") {
+                album_id.to_string()
+            } else {
+                format!("album:{}", album_id)
+            };
+
             songs.push(Song {
                 id: None,
-                file: format!("album:{}", album.album_id.get_raw()),
+                file,
                 duration: None,
                 metadata,
                 last_modified: None,

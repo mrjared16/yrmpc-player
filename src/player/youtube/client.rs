@@ -27,6 +27,7 @@ use crate::{
 };
 
 /// Client that connects to YouTube server
+#[derive(Debug)]
 pub struct YouTubeClient {
     reader: BufReader<UnixStream>,
     writer: BufWriter<UnixStream>,
@@ -35,11 +36,29 @@ pub struct YouTubeClient {
 impl YouTubeClient {
     /// Connect to server at given socket path
     pub fn connect(socket_path: &Path) -> Result<Self> {
-        let stream = UnixStream::connect(socket_path)
-            .with_context(|| format!("Failed to connect to {}", socket_path.display()))?;
+        // Try to connect to existing daemon
+        let stream = match UnixStream::connect(socket_path) {
+            Ok(s) => s,
+            Err(e) => {
+                eprintln!("\n❌ YouTube daemon not running!\n");
+                eprintln!("Start the daemon first:");
+                eprintln!("  systemctl --user start rmpcd");
+                eprintln!("");
+                eprintln!("Or install as a service:");
+                eprintln!("  ./setup/rmpcd-install");
+                eprintln!("");
+                eprintln!("Or run manually:");
+                eprintln!("  rmpcd");
+                eprintln!("");
+                eprintln!("Error: {}", e);
+                std::process::exit(1);
+            }
+        };
 
         stream.set_read_timeout(Some(Duration::from_secs(30)))?;
         stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+
+        log::info!("Connected to YouTube daemon at {}", socket_path.display());
 
         Ok(Self {
             reader: BufReader::new(stream.try_clone()?),
@@ -73,6 +92,32 @@ impl YouTubeClient {
     /// Shutdown the server
     pub fn shutdown(&mut self) -> Result<()> {
         self.request_ok(ServerCommand::Shutdown)
+    }
+
+    /// Try to clone the underlying stream (for idle connections)
+    pub fn try_clone_stream(&self) -> Result<UnixStream> {
+        // We need to clone from either reader or writer
+        // Since BufReader/BufWriter don't expose the stream, we'll return an error for now
+        // This is used for idle connections which YouTube client handles differently
+        anyhow::bail!("Stream cloning not supported for YouTube client")
+    }
+
+    /// Enter idle mode (no-op for YouTube, handled by server)
+    pub fn enter_idle(&mut self) -> Result<()> {
+        // YouTube daemon handles idle internally
+        Ok(())
+    }
+
+    /// Read idle response
+    pub fn read_response(&mut self) -> Result<Vec<crate::mpd::commands::IdleEvent>> {
+        // YouTube daemon doesn't use MPD's idle protocol
+        Ok(vec![])
+    }
+
+    /// Reconnect to server
+    pub fn reconnect(&mut self) -> Result<()> {
+        // TODO: Implement reconnection logic
+        anyhow::bail!("Reconnection not yet implemented for YouTube client")
     }
 }
 
