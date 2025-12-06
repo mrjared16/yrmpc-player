@@ -204,7 +204,8 @@ impl SearchPane {
                 match item_type {
                     Some("song" | "video") | None => {
                         // Songs, videos, or items without type (assume playable)
-                        Some(Enqueue::File { path: item.file.clone() })
+                        // Use Enqueue::Song to preserve full metadata
+                        Some(Enqueue::Song { song: item.clone() })
                     }
                     Some("playlist" | "album" | "artist") => {
                         // Skip non-playable items
@@ -224,9 +225,13 @@ impl SearchPane {
                 .iter()
                 .enumerate()
                 .filter_map(|(idx, item)| {
-                    if let Enqueue::File { path } = item { Some((idx, path)) } else { None }
+                    match item {
+                        Enqueue::Song { song } => Some((idx, song.file.as_str())),
+                        Enqueue::File { path } => Some((idx, path.as_str())),
+                        _ => None,
+                    }
                 })
-                .find(|(_, path)| path == &hovered)
+                .find(|(_, path)| *path == hovered)
                 .map(|(idx, _)| idx)
         } else {
             None
@@ -967,22 +972,23 @@ impl SearchPane {
                             log::info!("No type metadata found");
                         }
                         
-                        // Default: play the selected song/video
-                        let (hovered_song_idx, items) = self.enqueue(true);
+                        // Default: play the selected song/video ONLY (not all songs)
+                        // enqueue(false) = only selected item, enqueue(true) = all items
+                        let (hovered_song_idx, items) = self.enqueue(false);
                         let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
                         if !items.is_empty() {
-                            log::error!("=== PLAYING SONG FROM SEARCH ===");
+                            log::info!("Playing single song from search: {} item(s)", items.len());
                             for (idx, item) in items.iter().enumerate() {
                                 if let crate::shared::mpd_client_ext::Enqueue::File { path } = item {
-                                    log::error!("Song #{}: file='{}'", idx, path);
+                                    log::info!("Song #{}: file='{}'", idx, path);
                                 }
                             }
                             Client::resolve_and_enqueue(
                                 ctx,
                                 items,
                                 Position::Replace,
-                                AutoplayKind::Hovered,
+                                AutoplayKind::First,  // Use First for single song - guarantees playback
                                 current_song_idx,
                                 hovered_song_idx,
                             );

@@ -203,8 +203,8 @@ fn client_task(
                             buffer.push_back(msg);
 
                             log::trace!(buffer:?; "Got requests. Trying to receive client from idle thread");
-                            health!(client_write.write_all(b"noidle\n"), "Failed to write noidle command to MPD");
-                            log::trace!("Sent noidle command to MPD");
+                            health!(client_write.write_noidle(), "Failed to write noidle command");
+                            log::trace!("Sent noidle command (if applicable)");
 
                             let client = health!(client_return_rx.recv(), "Failed to receive client from idle thread");
                             let mut client = ClientDropGuard::new(client_return_tx, client);

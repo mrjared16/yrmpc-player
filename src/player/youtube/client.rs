@@ -68,12 +68,17 @@ impl YouTubeClient {
 
     /// Send command and receive response
     fn request(&mut self, cmd: ServerCommand) -> Result<ServerResponse> {
+        log::debug!("YouTubeClient::request - writing command");
         framing::write_message(&mut self.writer, &cmd)?;
-        framing::read_message(&mut self.reader)
+        log::debug!("YouTubeClient::request - reading response");
+        let response = framing::read_message(&mut self.reader);
+        log::debug!("YouTubeClient::request - got response: {:?}", response.as_ref().map(|r| format!("{:?}", r).chars().take(100).collect::<String>()));
+        response
     }
 
     /// Send command and expect Ok response
     fn request_ok(&mut self, cmd: ServerCommand) -> Result<()> {
+        log::debug!("YouTubeClient::request_ok - sending command: {:?}", std::mem::discriminant(&cmd));
         match self.request(cmd)? {
             ServerResponse::Ok => Ok(()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
@@ -96,10 +101,8 @@ impl YouTubeClient {
 
     /// Try to clone the underlying stream (for idle connections)
     pub fn try_clone_stream(&self) -> Result<UnixStream> {
-        // We need to clone from either reader or writer
-        // Since BufReader/BufWriter don't expose the stream, we'll return an error for now
-        // This is used for idle connections which YouTube client handles differently
-        anyhow::bail!("Stream cloning not supported for YouTube client")
+        // Clone from the reader's underlying stream
+        self.reader.get_ref().try_clone().context("Failed to clone YouTube client stream")
     }
 
     /// Enter idle mode (no-op for YouTube, handled by server)
@@ -118,6 +121,21 @@ impl YouTubeClient {
     pub fn reconnect(&mut self) -> Result<()> {
         // TODO: Implement reconnection logic
         anyhow::bail!("Reconnection not yet implemented for YouTube client")
+    }
+
+    /// Play song at specific position (0-indexed)
+    pub fn play_pos(&mut self, pos: usize) -> Result<()> {
+        self.request_ok(ServerCommand::PlayPos(pos))
+    }
+
+    /// Add song with full metadata (preferred over add for preserving metadata)
+    pub fn add_song(&mut self, song: &Song, position: Option<u32>) -> Result<()> {
+        let song_data = SongData::from(song.clone());
+        log::debug!("YouTubeClient::add_song sending AddSong command: file={}, title={:?}", 
+            song_data.file, song_data.title);
+        let result = self.request_ok(ServerCommand::AddSong { song: song_data, position });
+        log::debug!("YouTubeClient::add_song result: {:?}", result.as_ref().map(|_| "Ok"));
+        result
     }
 }
 

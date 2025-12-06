@@ -106,7 +106,11 @@ impl YouTubeServer {
 
         loop {
             let cmd: ServerCommand = match framing::read_message(&mut reader) {
-                Ok(cmd) => cmd,
+                Ok(cmd) => {
+                    // Use debug level for frequent polling commands
+                    log::debug!("Received command: {:?}", std::mem::discriminant(&cmd));
+                    cmd
+                }
                 Err(e) => {
                     log::debug!("Client disconnected: {}", e);
                     break;
@@ -115,14 +119,16 @@ impl YouTubeServer {
 
             let response = self.handle_command(cmd);
 
+            log::debug!("Sending response: {:?}", std::mem::discriminant(&response));
             if let Err(e) = framing::write_message(&mut writer, &response) {
-                log::error!("Failed to send response: {}", e);
+                log::debug!("Connection closed: {}", e);
                 break;
             }
 
             // Check for shutdown
             if matches!(response, ServerResponse::Ok) && !self.running.load(Ordering::SeqCst) {
                 break;
+
             }
         }
 
@@ -181,6 +187,12 @@ impl YouTubeServer {
             ServerCommand::PlayId(id) => self.play_id(id),
 
             ServerCommand::Add { uri, position } => self.add_to_queue(&uri, position),
+            ServerCommand::AddSong { song, position } => {
+                log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
+                let result = self.add_song_to_queue(song, position);
+                log::info!("AddSong result: {:?}", result);
+                result
+            }
             ServerCommand::DeleteId(id) => {
                 match self.queue.remove(id) {
                     Ok(_) => ServerResponse::Ok,
@@ -285,7 +297,7 @@ impl YouTubeServer {
     }
 
     fn add_to_queue(&self, uri: &str, position: Option<u32>) -> ServerResponse {
-        // Create simple song from URI
+        // Create simple song from URI (legacy - prefer add_song_to_queue)
         let mut song = Song::default();
         song.file = uri.to_string();
         song.metadata.insert("title".into(), vec![uri.to_string()]);
@@ -295,14 +307,32 @@ impl YouTubeServer {
         ServerResponse::Ok
     }
 
+    /// Add song with full metadata from SongData
+    fn add_song_to_queue(&self, song_data: SongData, position: Option<u32>) -> ServerResponse {
+        let song = song_data.to_song();
+        let _id = self.queue.add(song, position);
+        ServerResponse::Ok
+    }
+
     fn play_position(&self, pos: usize) -> ServerResponse {
         match self.queue.get_by_index(pos) {
             Ok(song) => {
                 let video_id = song.file.clone();
+                
+                // Extract metadata for MPRIS
+                let title = song.metadata.get("title")
+                    .and_then(|v| v.first())
+                    .map(|s| s.as_str())
+                    .unwrap_or(&video_id);
+                let artist = song.metadata.get("artist")
+                    .and_then(|v| v.first())
+                    .map(|s| s.as_str())
+                    .unwrap_or("");
+                
                 match self.playback.get_stream_url(&video_id) {
                     Ok(url) => {
                         self.queue.set_current(Some(pos));
-                        match self.playback.play(&url) {
+                        match self.playback.play(&url, title, artist) {
                             Ok(_) => {
                                 self.prefetch_upcoming();
                                 ServerResponse::Ok

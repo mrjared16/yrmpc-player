@@ -71,12 +71,15 @@ impl PlaybackService {
         }
     }
 
-    /// Play URL
-    pub fn play(&self, url: &str) -> Result<()> {
+    /// Play URL with metadata
+    pub fn play(&self, url: &str, _title: &str, _artist: &str) -> Result<()> {
         self.mpv.lock().send_command(vec!["loadfile", url, "replace"])?;
+        // TODO: MPRIS metadata - media-title property access fails
+        // Need to investigate correct MPV property or use script-message
         self.mpv.lock().set_property("pause", serde_json::json!(false))?;
         Ok(())
     }
+
 
     /// Pause playback
     pub fn pause(&self) -> Result<()> {

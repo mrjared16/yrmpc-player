@@ -433,7 +433,8 @@ impl<'name> Client<'name> {
             }
             Client::YouTube(b) => {
                 let stream = b.try_clone_stream()?;
-                Ok(Box::new(stream))
+                // Wrap in YouTubeStream so it doesn't write noidle
+                Ok(Box::new(YouTubeStream(stream)))
             }
         }
     }
@@ -855,11 +856,42 @@ impl<'name> Client<'name> {
 
 pub trait ClientStream: std::io::Write + Send {
     fn shutdown_both(&mut self) -> std::io::Result<()>;
+    
+    /// Write MPD "noidle" command. Returns Ok without writing for non-MPD backends.
+    fn write_noidle(&mut self) -> std::io::Result<()> {
+        // Default implementation writes noidle for MPD compatibility
+        self.write_all(b"noidle\n")?;
+        self.flush()
+    }
 }
 
 impl ClientStream for crate::mpd::client::TcpOrUnixStream {
     fn shutdown_both(&mut self) -> std::io::Result<()> {
         self.shutdown_both()
+    }
+    // Uses default write_noidle (writes the command)
+}
+
+/// Wrapper for YouTube Unix stream that doesn't write noidle
+pub struct YouTubeStream(pub std::os::unix::net::UnixStream);
+
+impl std::io::Write for YouTubeStream {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.0.write(buf)
+    }
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.0.flush()
+    }
+}
+
+impl ClientStream for YouTubeStream {
+    fn shutdown_both(&mut self) -> std::io::Result<()> {
+        self.0.shutdown(std::net::Shutdown::Both)
+    }
+    
+    /// YouTube doesn't use MPD idle protocol, so don't write noidle
+    fn write_noidle(&mut self) -> std::io::Result<()> {
+        Ok(()) // No-op for YouTube
     }
 }
 

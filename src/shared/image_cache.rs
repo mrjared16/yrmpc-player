@@ -60,8 +60,8 @@ impl ImageCache {
         let pending = self.pending.clone();
         let picker = self.picker.clone();
 
-        tokio::spawn(async move {
-            let result = fetch_and_process(&url, picker).await;
+        std::thread::spawn(move || {
+            let result = fetch_and_process_sync(&url, picker);
 
             let mut pending = pending.lock().unwrap();
             pending.remove(&url);
@@ -81,8 +81,8 @@ impl ImageCache {
     }
 }
 
-async fn fetch_and_process(url: &str, picker: Picker) -> Result<Arc<Mutex<Protocol>>> {
-    let bytes = reqwest::get(url).await?.bytes().await?;
+fn fetch_and_process_sync(url: &str, picker: Picker) -> Result<Arc<Mutex<Protocol>>> {
+    let bytes = reqwest::blocking::get(url)?.bytes()?;
     let img = ImageReader::new(Cursor::new(bytes))
         .with_guessed_format()?
         .decode()?;

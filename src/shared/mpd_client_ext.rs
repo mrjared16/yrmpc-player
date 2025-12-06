@@ -39,11 +39,30 @@ pub trait MpdClientExt {
             }
         };
 
+        // Clone app_state for the queue refresh query
+        let app_state = ctx.app_state.clone();
+        
         ctx.command(move |client| {
             client.enqueue_multiple(items, autoplay_idx, position, replace)?;
             Ok(())
         });
+        
+        // For YouTube backend, trigger a queue refresh to update the UI
+        // This is necessary because YouTube backend doesn't have MPD-style idle events
+        if matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube) {
+            log::debug!("Triggering queue refresh after YouTube enqueue");
+            ctx.query()
+                .id(crate::shared::mpd_query::GLOBAL_QUEUE_UPDATE)
+                .replace_id("playlist")
+                .query(move |client| {
+                    let queue = client.playlist_info()?;
+                    // Sync to AppState
+                    app_state.write().unwrap().replace_queue(queue.clone());
+                    Ok(crate::MpdQueryResult::Queue(Some(queue)))
+                });
+        }
     }
+
     fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError>;
     fn enqueue_multiple(
         &mut self,
@@ -88,6 +107,8 @@ pub enum MpdDelete {
 #[derive(Debug, Clone)]
 pub enum Enqueue {
     File { path: String },
+    /// Song with full metadata (used by YouTube backend)
+    Song { song: crate::domain::Song },
     Playlist { name: String },
     Find { filter: Vec<(Tag, FilterKind, String)> },
 }
@@ -139,6 +160,7 @@ impl<T: MpdClient + MpdCommand + ProtoClient> MpdClientExt for T {
         for item in items {
             match item {
                 Enqueue::File { path } => self.send_add(&path, position),
+                Enqueue::Song { song } => self.send_add(&song.file, position), // MPD uses file path
                 Enqueue::Playlist { name } => self.send_load_playlist(&name, position),
                 Enqueue::Find { filter } => self.send_find_add(
                     &filter
@@ -406,6 +428,7 @@ impl<T: MpdClient + MpdCommand + ProtoClient> MpdClientExt for T {
         for item in items {
             match item {
                 Enqueue::File { path } => uris.push(path),
+                Enqueue::Song { song } => uris.push(song.file), // Extract file path
                 Enqueue::Playlist { name } => {
                     let playlist = self.list_playlist(&name)?.0;
                     uris.extend(playlist);
@@ -437,6 +460,7 @@ impl<T: MpdClient + MpdCommand + ProtoClient> MpdClientExt for T {
         for item in items {
             match item {
                 Enqueue::File { path } => uris.push(path),
+                Enqueue::Song { song } => uris.push(song.file), // Extract file path
                 Enqueue::Playlist { name } => {
                     let playlist = self.list_playlist(&name)?.0;
                     uris.extend(playlist);
@@ -908,9 +932,15 @@ impl MpdClientExt for crate::player::Client<'_> {
                 for item in items.iter() {
                     match item {
                         Enqueue::File { path } => {
-                            log::debug!("YouTube: adding file to queue: {}", path);
-                            // Add the song to the queue (None = end of queue)
+                            log::debug!("YouTube: adding file to queue (no metadata): {}", path);
+                            // Legacy: Add the song to the queue without metadata
                             backend.add(path, None)?;
+                        }
+                        Enqueue::Song { song } => {
+                            let title = song.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or(&song.file);
+                            log::info!("YouTube: adding song to queue: {} ({})", title, &song.file);
+                            // Add song with full metadata
+                            backend.add_song(song, None)?;
                         }
                         Enqueue::Playlist { name } => {
                             log::debug!("YouTube: loading playlist: {}", name);
@@ -923,19 +953,13 @@ impl MpdClientExt for crate::player::Client<'_> {
                     }
                 }
                 
-                // If autoplay was requested, play the song at the correct index
+                // If autoplay was requested, play the song at the correct position
                 if let Some(play_idx) = autoplay_idx {
-                    if let Ok(songs) = backend.playlist_info() {
-                        // The autoplay_idx is relative to the items we just added
-                        // So the actual index in the queue is queue_len_before + play_idx
-                        let target_idx = if replace { play_idx } else { queue_len_before + play_idx };
-                        log::debug!("YouTube: autoplay requested, play_idx={}, target_idx={}, queue_len={}", play_idx, target_idx, songs.len());
-                        if let Some(song) = songs.get(target_idx) {
-                            if let Some(id) = song.id {
-                                log::debug!("YouTube: playing song id={}", id);
-                                let _ = backend.play_id(id);
-                            }
-                        }
+                    // Calculate the actual position in the queue
+                    let target_pos = if replace { play_idx } else { queue_len_before + play_idx };
+                    log::info!("YouTube: autoplay at position {} (replace={}, play_idx={})", target_pos, replace, play_idx);
+                    if let Err(e) = backend.play_pos(target_pos) {
+                        log::error!("YouTube: failed to play position {}: {}", target_pos, e);
                     }
                 }
                 

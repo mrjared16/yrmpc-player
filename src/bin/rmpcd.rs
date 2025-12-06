@@ -25,25 +25,31 @@ fn find_default_cookie_file() -> Option<PathBuf> {
     
     for loc in locations.into_iter().flatten() {
         if loc.exists() {
-            eprintln!("[INFO] Found cookie file at {:?}", loc);
+            log::info!("Found cookie file at {:?}", loc);
             return Some(loc);
         }
     }
     
-    eprintln!("[WARN] No cookie file found. Search, browse may not work.");
-    eprintln!("[HINT] Export cookies from browser to ~/.config/rmpc/cookie.txt");
+    log::warn!("No cookie file found. Search, browse may not work.");
+    log::info!("HINT: Export cookies from browser to ~/.config/rmpc/cookie.txt");
     None
 }
 
 fn main() -> Result<()> {
+    // Initialize logger so log::info!, log::debug! etc work
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("info")
+    ).format_timestamp(Some(env_logger::fmt::TimestampPrecision::Millis))
+     .init();
+    
     let args = Args::parse();
     
     // Determine cookie file path
     let cookie_path = args.cookies.or_else(find_default_cookie_file);
     
-    eprintln!("[INFO] Starting YouTube daemon at {:?}", args.socket);
+    log::info!("Starting YouTube daemon at {:?}", args.socket);
     if let Some(ref path) = cookie_path {
-        eprintln!("[INFO] Using cookies from {:?}", path);
+        log::info!("Using cookies from {:?}", path);
     }
     
     // Create YouTube server
@@ -52,7 +58,7 @@ fn main() -> Result<()> {
         cookie_path.as_deref().and_then(|p| p.to_str()),
     )?;
     
-    eprintln!("[INFO] YouTube daemon ready, entering event loop...");
+    log::info!("YouTube daemon ready, entering event loop...");
     
     // Run server (blocks until shutdown)
     server.run()

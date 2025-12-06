@@ -30,13 +30,16 @@ impl QueueService {
     }
 
     /// Add song to queue, returns assigned ID
-    pub fn add(&self, song: Song, position: Option<u32>) -> u32 {
+    pub fn add(&self, mut song: Song, position: Option<u32>) -> u32 {
         let mut queue = self.queue.lock();
         let mut next_id = self.next_id.lock();
         
         let id = *next_id;
         *next_id += 1;
 
+        // Set the song's ID so it can be looked up later
+        song.id = Some(id);
+        
         let item = QueueItem { id, song };
 
         match position {

@@ -105,12 +105,51 @@ impl MpvIpc {
     }
 
     pub fn set_property(&mut self, property: &str, value: Value) -> Result<()> {
-        let val_str = match value {
-            Value::String(s) => s,
-            v => v.to_string(),
-        };
-        self.send_command(vec!["set_property", property, &val_str])?;
-        Ok(())
+        // Use set_property_native which accepts the JSON value directly
+        let request_id = self.request_id;
+        self.request_id += 1;
+
+        let cmd_obj = serde_json::json!({
+            "command": ["set_property", property, value],
+            "request_id": request_id
+        });
+
+        let mut json_str = serde_json::to_string(&cmd_obj)
+            .context("Failed to serialize command")?;
+        json_str.push('\n');
+
+        self.writer.write_all(json_str.as_bytes())
+            .context("Failed to write to MPV socket")?;
+        self.writer.flush()
+            .context("Failed to flush MPV socket")?;
+
+        // Read response
+        loop {
+            let mut line = String::new();
+            match self.reader.read_line(&mut line) {
+                Ok(0) => return Err(anyhow::anyhow!("MPV socket closed")),
+                Ok(_) => {
+                    if let Ok(resp) = serde_json::from_str::<MpvResponse>(&line) {
+                        if let Some(id) = resp.request_id {
+                            if id == request_id {
+                                if let Some(err) = resp.error {
+                                    if err != "success" {
+                                        return Err(anyhow::anyhow!("MPV error: {}", err));
+                                    }
+                                }
+                                return Ok(());
+                            }
+                        }
+                    }
+                }
+                Err(e) => {
+                    if e.kind() == std::io::ErrorKind::WouldBlock {
+                        continue;
+                    }
+                    return Err(anyhow::Error::new(e).context("Failed to read from MPV socket"));
+                }
+            }
+        }
     }
 
     pub fn receive_message(&mut self) -> Result<MpvResponse> {

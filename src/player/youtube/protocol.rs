@@ -23,6 +23,8 @@ pub enum ServerCommand {
 
     // Queue management
     Add { uri: String, position: Option<u32> },
+    /// Add song with full metadata (preferred over Add for preserving metadata)
+    AddSong { song: SongData, position: Option<u32> },
     DeleteId(u32),
     Clear,
     MoveId { from: u32, to: u32 },
@@ -187,17 +189,21 @@ pub mod framing {
     pub fn write_message<W: Write, T: Serialize>(writer: &mut W, msg: &T) -> Result<()> {
         let json = serde_json::to_vec(msg)?;
         let len = json.len() as u32;
+        log::debug!("framing::write_message - serialized {} bytes", len);
         writer.write_all(&len.to_le_bytes())?;
         writer.write_all(&json)?;
         writer.flush()?;
+        log::debug!("framing::write_message - flushed successfully");
         Ok(())
     }
 
     /// Read a message with length prefix
     pub fn read_message<R: Read, T: for<'de> Deserialize<'de>>(reader: &mut R) -> Result<T> {
         let mut len_bytes = [0u8; 4];
+        log::debug!("framing::read_message - reading length bytes");
         reader.read_exact(&mut len_bytes).context("Failed to read message length")?;
         let len = u32::from_le_bytes(len_bytes) as usize;
+        log::debug!("framing::read_message - message length: {} bytes", len);
 
         if len > 10 * 1024 * 1024 {
             anyhow::bail!("Message too large: {} bytes", len);
@@ -205,6 +211,7 @@ pub mod framing {
 
         let mut buf = vec![0u8; len];
         reader.read_exact(&mut buf).context("Failed to read message body")?;
+        log::debug!("framing::read_message - read {} bytes, deserializing", len);
         serde_json::from_slice(&buf).context("Failed to parse message")
     }
 }
