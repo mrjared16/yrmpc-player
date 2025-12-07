@@ -11,7 +11,7 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 
-use super::protocol::{BrowseEntry, ServerCommand, ServerResponse, SongData, framing};
+use super::protocol::{BrowseEntry, ServerCommand, ServerResponse, SongData, SearchItemData, framing};
 use crate::{
     domain::{PlaybackState, QueuePosition, Song, Status},
     mpd::{
@@ -25,6 +25,65 @@ use crate::{
     },
     player::backend::MusicBackend,
 };
+
+/// Convert SearchItemData to Song for UI compatibility
+/// This maintains backward compatibility with the existing UI which expects Song
+fn search_item_data_to_song(item: SearchItemData) -> Option<Song> {
+    match item {
+        SearchItemData::Song(p) => Some(song_from_playable(&p, "song")),
+        SearchItemData::Video(p) => Some(song_from_playable(&p, "video")),
+        SearchItemData::Artist(b) => Some(song_from_browsable(&b, "artist")),
+        SearchItemData::Album(b) => Some(song_from_browsable(&b, "album")),
+        SearchItemData::Playlist(b) => Some(song_from_browsable(&b, "playlist")),
+        SearchItemData::Header(h) => {
+            let mut song = Song::default();
+            song.metadata.insert("type".into(), vec!["header".into()]);
+            song.metadata.insert("title".into(), vec![h]);
+            Some(song)
+        }
+    }
+}
+
+fn song_from_playable(p: &super::protocol::PlayableData, item_type: &str) -> Song {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("title".into(), vec![p.title.clone()]);
+    metadata.insert("artist".into(), vec![p.artist.clone()]);
+    metadata.insert("type".into(), vec![item_type.into()]);
+    if let Some(ref album) = p.album {
+        metadata.insert("album".into(), vec![album.clone()]);
+    }
+    if let Some(ref thumb) = p.thumbnail {
+        metadata.insert("thumbnail".into(), vec![thumb.clone()]);
+    }
+    Song {
+        id: None,
+        file: p.video_id.clone(),
+        duration: p.duration_ms.map(Duration::from_millis),
+        metadata,
+        last_modified: None,
+        added: None,
+    }
+}
+
+fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> Song {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("title".into(), vec![b.title.clone()]);
+    metadata.insert("type".into(), vec![item_type.into()]);
+    if let Some(ref subtitle) = b.subtitle {
+        metadata.insert("subtitle".into(), vec![subtitle.clone()]);
+    }
+    if let Some(ref thumb) = b.thumbnail {
+        metadata.insert("thumbnail".into(), vec![thumb.clone()]);
+    }
+    Song {
+        id: None,
+        file: b.browse_path.clone(),
+        duration: None,
+        metadata,
+        last_modified: None,
+        added: None,
+    }
+}
 
 /// Client that connects to YouTube server
 #[derive(Debug)]
@@ -266,8 +325,11 @@ impl MusicBackend for YouTubeClient {
         }
 
         match self.request(ServerCommand::Search { query: query.to_string() })? {
-            ServerResponse::SearchResults(songs) => {
-                Ok(songs.into_iter().map(|sd| sd.to_song()).collect())
+            ServerResponse::SearchResults(items) => {
+                // Convert SearchItemData to Song for UI compatibility
+                Ok(items.into_iter().filter_map(|item| {
+                    search_item_data_to_song(item)
+                }).collect())
             }
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
@@ -350,8 +412,15 @@ impl MusicBackend for YouTubeClient {
         Ok(vec![])
     }
 
-    fn get_search_suggestions(&mut self, _query: String) -> Result<Vec<String>> {
-        Ok(vec![])
+    fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
+        if query.is_empty() {
+            return Ok(vec![]);
+        }
+        match self.request(ServerCommand::GetSearchSuggestions { query })? {
+            ServerResponse::Suggestions(suggestions) => Ok(suggestions),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
     }
 
     // === Playlist Management (stubs) ===

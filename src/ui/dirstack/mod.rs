@@ -202,6 +202,22 @@ impl DirStackItem for Song {
             if let Some(year) = self.metadata.get("year").and_then(|v| v.first()) {
                 spans.push(Span::from(format!(" ({})", year)));
             }
+        } else if item_type == "playlist" {
+            // Playlists: show title and author
+            if let Some(title) = self.metadata.get("title").and_then(|v| v.first()) {
+                spans.push(Span::styled(title.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
+            }
+            if let Some(subtitle) = self.metadata.get("subtitle").and_then(|v| v.first()) {
+                spans.push(Span::from(format!(" - {}", subtitle)));
+            }
+        } else if item_type == "video" {
+            // Videos: show title and channel
+            if let Some(title) = self.metadata.get("title").and_then(|v| v.first()) {
+                spans.push(Span::styled(title.to_string(), Style::default()));
+            }
+            if let Some(artist) = self.metadata.get("artist").and_then(|v| v.first()) {
+                spans.push(Span::styled(format!(" - {}", artist), Style::default().fg(Color::DarkGray)));
+            }
         } else {
             // Default song rendering
             spans.extend(config.theme.browser_song_format.0.iter().map(|prop| {

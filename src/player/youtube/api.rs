@@ -15,6 +15,7 @@ use ytmapi_rs::{
     query::{
         GetAlbumQuery, GetArtistQuery, GetLibraryAlbumsQuery, GetLibraryArtistsQuery,
         GetLibraryPlaylistsQuery, GetLibrarySongsQuery, GetWatchPlaylistQuery, SearchQuery,
+        GetSearchSuggestionsQuery,
     },
 };
 
@@ -89,18 +90,24 @@ impl YouTubeApi {
         if cleaned.is_empty() { None } else { Some(cleaned.to_string()) }
     }
 
-    /// Search for music
-    pub fn search(&self, query: &str) -> Result<Vec<Song>> {
+
+    /// Search for music - returns type-safe SearchItem enum
+    /// 
+    /// This is the new recommended search method that uses the domain::search types
+    /// for exhaustive type matching and proper separation of playable vs browsable items.
+    pub fn search_items(&self, query: &str) -> Result<Vec<crate::domain::search::SearchItem>> {
+        use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem, SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
+        
         let raw_query = query;
         let query = match Self::sanitize_query(raw_query) {
             Some(q) => q,
             None => {
-                log::debug!("YouTube API: search called with empty/invalid query, skipping");
+                log::debug!("YouTube API: search_items called with empty/invalid query, skipping");
                 return Ok(Vec::new());
             }
         };
 
-        log::debug!("YouTube API: search(query='{}', raw='{}')", query, raw_query);
+        log::debug!("YouTube API: search_items(query='{}', raw='{}')", query, raw_query);
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
 
         let query_for_log = query.clone();
@@ -111,127 +118,111 @@ impl YouTubeApi {
                 api.query(search_query).await
             })
             .map_err(|e| {
-                log::error!("YouTube API search failed for query='{}': {}", query_for_log, e);
+                log::error!("YouTube API search_items failed for query='{}': {}", query_for_log, e);
                 e
             })?;
 
-        let mut songs = Vec::new();
-
-        // Helper to add section header
-        let add_header = |songs: &mut Vec<Song>, title: &str| {
-            let mut s = Song::default();
-            s.metadata.insert("type".into(), vec!["header".into()]);
-            s.metadata.insert("title".into(), vec![title.into()]);
-            songs.push(s);
-            log::debug!("Added section header: '{}'", title);
-        };
-
-        // Log search results structure
-        log::info!("Search results for '{}': top_results={}, artists={}, albums={}, songs={}, videos={}, playlists={}",
-            query_for_log,
-            results.top_results.len(),
-            results.artists.len(),
-            results.albums.len(),
-            results.songs.len(),
-            results.videos.len(),
-            results.community_playlists.len()
-        );
+        let mut items = Vec::new();
 
         // Top results
         if !results.top_results.is_empty() {
-            log::debug!("Processing {} top results", results.top_results.len());
-            add_header(&mut songs, "Top Result");
-            for (idx, r) in results.top_results.iter().enumerate() {
-                log::debug!("  Top result {}: name='{}', type={:?}, browse_id={:?}, video_id={:?}",
-                    idx, r.result_name, r.result_type, r.browse_id, r.video_id);
-                if let Some(song) = self.parse_top_result(r.clone()) {
-                    log::debug!("    ✓ Parsed successfully: file={}, type={:?}",
-                        song.file, song.metadata.get("type"));
-                    songs.push(song);
-                } else {
-                    log::warn!("    ✗ Failed to parse top result: {:?}", r);
+            log::info!("search_items: {} top_results found for '{}'", results.top_results.len(), query_for_log);
+            items.push(SearchItem::Header("Top Result".into()));
+            for (idx, r) in results.top_results.into_iter().enumerate() {
+                log::debug!("  TopResult[{}]: name='{}', type={:?}, video_id={:?}, browse_id={:?}, byline={:?}, artist={:?}", 
+                    idx, r.result_name, r.result_type, r.video_id, r.browse_id, r.byline, r.artist);
+                match SearchItem::try_from(r) {
+                    Ok(item) => items.push(item),
+                    Err(e) => log::warn!("  TopResult[{}] conversion failed: {}", idx, e),
                 }
             }
         } else {
-            log::warn!("No top results returned from YouTube API");
+            log::warn!("search_items: No top_results from API for '{}'", query_for_log);
         }
 
         // Artists
         if !results.artists.is_empty() {
-            add_header(&mut songs, "Artists");
+            items.push(SearchItem::Header("Artists".into()));
             for a in results.artists {
-                let mut s = Song::default();
-                s.file = format!("artist:{}", a.browse_id.get_raw());
-                s.metadata.insert("title".into(), vec![a.artist]);
-                s.metadata.insert("type".into(), vec!["artist".into()]);
-                if let Some(subs) = a.subscribers {
-                    s.metadata.insert("subtitle".into(), vec![subs]);
-                }
-                if let Some(thumb) = a.thumbnails.last() {
-                    s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
-                }
-                songs.push(s);
+                items.push(SearchItem::from(a));
             }
         }
 
         // Albums
         if !results.albums.is_empty() {
-            add_header(&mut songs, "Albums");
+            items.push(SearchItem::Header("Albums".into()));
             for a in results.albums {
-                let mut s = Song::default();
-                s.file = format!("album:{}", a.album_id.get_raw());
-                s.metadata.insert("title".into(), vec![a.title]);
-                s.metadata.insert("artist".into(), vec![a.artist]);
-                s.metadata.insert("year".into(), vec![a.year]);
-                s.metadata.insert("type".into(), vec!["album".into()]);
-                if let Some(thumb) = a.thumbnails.last() {
-                    s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
-                }
-                songs.push(s);
+                items.push(SearchItem::from(a));
             }
         }
 
         // Songs
         if !results.songs.is_empty() {
-            add_header(&mut songs, "Songs");
-            for song in results.songs {
-                let mut s = Song::default();
-                s.file = song.video_id.get_raw().to_string();
-                s.metadata.insert("title".into(), vec![song.title]);
-                s.metadata.insert("artist".into(), vec![song.artist]);
-                if let Some(album) = song.album {
-                    s.metadata.insert("album".into(), vec![album.name]);
-                }
-                s.metadata.insert("type".into(), vec!["song".into()]);
-                if let Some(thumb) = song.thumbnails.last() {
-                    s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
-                }
-                s.duration = Self::parse_duration(&song.duration);
-                songs.push(s);
+            items.push(SearchItem::Header("Songs".into()));
+            for s in results.songs {
+                items.push(SearchItem::from(s));
             }
         }
 
         // Videos
         if !results.videos.is_empty() {
-            add_header(&mut songs, "Videos");
-            for video in results.videos {
-                if let Some(s) = self.parse_video_result(video) {
-                    songs.push(s);
+            items.push(SearchItem::Header("Videos".into()));
+            for v in results.videos {
+                if let Ok(item) = SearchItem::try_from(v) {
+                    items.push(item);
                 }
             }
         }
 
-        // Community playlists
+        // Featured playlists (curated by YouTube Music)
+        if !results.featured_playlists.is_empty() {
+            items.push(SearchItem::Header("Featured Playlists".into()));
+            for p in results.featured_playlists {
+                items.push(SearchItem::from(p));
+            }
+        }
+
+        // Community playlists (user-created)
         if !results.community_playlists.is_empty() {
-            add_header(&mut songs, "Playlists");
-            for pl in results.community_playlists {
-                if let Some(s) = self.parse_playlist_result(pl) {
-                    songs.push(s);
-                }
+            items.push(SearchItem::Header("Playlists".into()));
+            for p in results.community_playlists {
+                items.push(SearchItem::from(p));
             }
         }
 
-        Ok(songs)
+        log::info!("search_items returned {} items for '{}'", items.len(), query_for_log);
+        Ok(items)
+    }
+
+    /// Get search suggestions for autocomplete
+    pub fn get_suggestions(&self, query: &str) -> Result<Vec<String>> {
+        if query.trim().is_empty() {
+            return Ok(vec![]);
+        }
+
+        log::debug!("YouTube API: get_suggestions(query='{}')", query);
+        let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
+
+        let query_str = query.to_string();
+        let suggestions = self
+            .rt
+            .block_on(async move {
+                let suggestion_query = GetSearchSuggestionsQuery::new(query_str);
+                api.query(suggestion_query).await
+            })
+            .map_err(|e| {
+                log::error!("YouTube API get_suggestions failed: {}", e);
+                e
+            })?;
+
+        // Extract suggestion strings
+        let result: Vec<String> = suggestions
+            .into_iter()
+            .map(|s| s.get_text())
+            .collect();
+
+        log::debug!("get_suggestions returned {} suggestions", result.len());
+        Ok(result)
     }
 
     /// Browse an album, artist, or playlist
@@ -342,6 +333,7 @@ impl YouTubeApi {
         use ytmapi_rs::parse::TopResultType;
 
         let mut s = Song::default();
+        let result_name = r.result_name.clone();
         s.metadata.insert("title".into(), vec![r.result_name]);
 
         if let Some(artist) = r.artist {
@@ -353,27 +345,56 @@ impl YouTubeApi {
 
         match r.result_type {
             Some(TopResultType::Artist) => {
-                s.file = format!("artist:{}", r.browse_id?);
+                // P1 fix: Handle Artists without browse_id
+                // Some Artists in TopResults don't have browse_id but we can still display them
+                if let Some(browse_id) = r.browse_id {
+                    s.file = format!("artist:{}", browse_id);
+                } else {
+                    // Use sanitized name as fallback ID - user can still see the artist
+                    // but browsing won't work
+                    log::warn!("TopResult Artist '{}' has no browse_id, using name as fallback", result_name);
+                    s.file = format!("artist:name:{}", result_name.replace(' ', "_"));
+                    s.metadata.insert("browsable".into(), vec!["false".into()]);
+                }
                 s.metadata.insert("type".into(), vec!["artist".into()]);
             }
             Some(TopResultType::Album(_)) => {
-                s.file = format!("album:{}", r.browse_id?);
+                if let Some(browse_id) = r.browse_id {
+                    s.file = format!("album:{}", browse_id);
+                } else {
+                    log::warn!("TopResult Album '{}' has no browse_id", result_name);
+                    return None;
+                }
                 s.metadata.insert("type".into(), vec!["album".into()]);
             }
             Some(TopResultType::Song) | Some(TopResultType::Video) => {
-                s.file = r.video_id?;
+                if let Some(video_id) = r.video_id {
+                    s.file = video_id;
+                } else {
+                    log::warn!("TopResult Song/Video '{}' has no video_id", result_name);
+                    return None;
+                }
                 s.metadata.insert("type".into(), vec!["song".into()]);
             }
             Some(TopResultType::Playlist) => {
-                s.file = format!("playlist:{}", r.browse_id?);
+                if let Some(browse_id) = r.browse_id {
+                    s.file = format!("playlist:{}", browse_id);
+                } else {
+                    log::warn!("TopResult Playlist '{}' has no browse_id", result_name);
+                    return None;
+                }
                 s.metadata.insert("type".into(), vec!["playlist".into()]);
             }
             _ => {
-                // Fallback
+                // Fallback: try video_id first, then browse_id
                 if let Some(id) = r.video_id {
                     s.file = id;
                     s.metadata.insert("type".into(), vec!["song".into()]);
+                } else if let Some(id) = r.browse_id {
+                    s.file = format!("unknown:{}", id);
+                    s.metadata.insert("type".into(), vec!["unknown".into()]);
                 } else {
+                    log::warn!("TopResult '{}' has no video_id or browse_id", result_name);
                     return None;
                 }
             }
@@ -475,5 +496,91 @@ mod tests {
     fn test_not_authenticated_by_default() {
         let api = YouTubeApi::new().unwrap();
         assert!(!api.is_authenticated());
+    }
+
+    mod parse_top_result_tests {
+        use super::*;
+        use ytmapi_rs::common::Thumbnail;
+        use ytmapi_rs::parse::{TopResult, TopResultType};
+
+        fn create_test_api() -> YouTubeApi {
+            YouTubeApi::new().unwrap()
+        }
+
+        #[test]
+        fn test_artist_with_browse_id() {
+            let api = create_test_api();
+            let result = TopResult {
+                result_name: "Test Artist".into(),
+                result_type: Some(TopResultType::Artist),
+                thumbnails: vec![],
+                artist: None,
+                album: None,
+                duration: None,
+                year: None,
+                subscribers: Some("1K subscribers".into()),
+                plays: None,
+                publisher: None,
+                byline: None,
+                browse_id: Some("UC12345".into()),
+                video_id: None,
+            };
+
+            let song = api.parse_top_result(result).unwrap();
+            assert_eq!(song.file, "artist:UC12345");
+            assert_eq!(song.metadata.get("type"), Some(&vec!["artist".into()]));
+        }
+
+        #[test]
+        fn test_artist_without_browse_id_uses_fallback() {
+            let api = create_test_api();
+            let result = TopResult {
+                result_name: "KIMLONG".into(),
+                result_type: Some(TopResultType::Artist),
+                thumbnails: vec![],
+                artist: None,
+                album: None,
+                duration: None,
+                year: None,
+                subscribers: Some("4.47K subscribers".into()),
+                plays: None,
+                publisher: None,
+                byline: None,
+                browse_id: None,  // No browse_id - this is the P1 bug case
+                video_id: None,
+            };
+
+            let song = api.parse_top_result(result);
+            // P1 fix: Should not return None, should use fallback
+            assert!(song.is_some(), "Artist without browse_id should still parse");
+            
+            let song = song.unwrap();
+            assert_eq!(song.file, "artist:name:KIMLONG");
+            assert_eq!(song.metadata.get("type"), Some(&vec!["artist".into()]));
+            assert_eq!(song.metadata.get("browsable"), Some(&vec!["false".into()]));
+        }
+
+        #[test]
+        fn test_song_without_video_id_returns_none() {
+            let api = create_test_api();
+            let result = TopResult {
+                result_name: "Test Song".into(),
+                result_type: Some(TopResultType::Song),
+                thumbnails: vec![],
+                artist: Some("Test Artist".into()),
+                album: None,
+                duration: None,
+                year: None,
+                subscribers: None,
+                plays: None,
+                publisher: None,
+                byline: None,
+                browse_id: None,
+                video_id: None,  // Songs need video_id
+            };
+
+            let song = api.parse_top_result(result);
+            assert!(song.is_none(), "Song without video_id should return None");
+        }
     }
 }

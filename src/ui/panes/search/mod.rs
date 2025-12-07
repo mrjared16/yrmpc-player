@@ -1444,69 +1444,83 @@ impl Pane for SearchPane {
                 ctx.render()?;
             }
             (SEARCH, MpdQueryResult::SearchResult { data }) => {
-                let mut artists = Vec::new();
-                let mut albums = Vec::new();
-                let mut songs = Vec::new();
-                let mut videos = Vec::new();
-                let mut others = Vec::new();
-
+                // Elegant solution: Use headers as section markers
+                // Server sends: [Header("Top Result"), Song, Header("Artists"), Artist, ...]
+                // We track which section each item belongs to based on preceding header
+                
+                use std::collections::HashMap;
+                
+                let mut sections: HashMap<String, Vec<Song>> = HashMap::new();
+                let mut current_section = String::from("unknown");
+                
+                // Mapping from header titles to config section names
+                let header_to_section = |title: &str| -> String {
+                    match title.to_lowercase().as_str() {
+                        "top result" | "top results" => "top_results".to_string(),
+                        "songs" => "songs".to_string(),
+                        "artists" => "artists".to_string(),
+                        "albums" => "albums".to_string(),
+                        "playlists" | "featured playlists" | "community playlists" => "playlists".to_string(),
+                        "videos" => "videos".to_string(),
+                        other => other.to_lowercase().replace(" ", "_"),
+                    }
+                };
+                
+                // Process items, tracking current section
                 for song in data {
                     let type_ = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
-                    match type_ {
-                        "artist" => artists.push(song),
-                        "album" => albums.push(song),
-                        "song" => songs.push(song),
-                        "video" => videos.push(song),
-                        _ => others.push(song),
+                    
+                    if type_ == "header" {
+                        // This is a section marker - remember it
+                        if let Some(title) = song.metadata.get("title").and_then(|v| v.first()) {
+                            current_section = header_to_section(title);
+                        }
+                    } else {
+                        // This is a regular item - assign to current section
+                        sections.entry(current_section.clone()).or_default().push(song);
                     }
                 }
-
-                // Log counts RIGHT AFTER grouping, BEFORE any moves
-                log::info!("[SEARCH DEBUG] SearchResult received, grouped: {} artists, {} albums, {} songs, {} videos, {} others", 
-                    artists.len(), albums.len(), songs.len(), videos.len(), others.len());
-
-                let mut grouped_data = Vec::new();
-
-                if !artists.is_empty() {
-                    let mut header = Song::default();
-                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                    header.metadata.insert("title".to_string(), vec!["Artists".to_string()]);
-                    grouped_data.push(header);
-                    grouped_data.extend(artists);
-                }
-
-                if !albums.is_empty() {
-                    let mut header = Song::default();
-                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                    header.metadata.insert("title".to_string(), vec!["Albums".to_string()]);
-                    grouped_data.push(header);
-                    grouped_data.extend(albums);
-                }
-
-                if !songs.is_empty() {
-                    let mut header = Song::default();
-                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                    header.metadata.insert("title".to_string(), vec!["Songs".to_string()]);
-                    grouped_data.push(header);
-                    grouped_data.extend(songs);
-                }
-
-                if !videos.is_empty() {
-                    let mut header = Song::default();
-                    header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                    header.metadata.insert("title".to_string(), vec!["Videos".to_string()]);
-                    grouped_data.push(header);
-                    grouped_data.extend(videos);
+                
+                // Log what we found per section
+                let section_counts: Vec<String> = sections.iter()
+                    .map(|(k, v)| format!("{}:{}", k, v.len()))
+                    .collect();
+                log::info!("[SEARCH] Sections found: {}", section_counts.join(", "));
+                
+                // Build display list based on config order
+                let mut display_data = Vec::new();
+                let config_sections = &ctx.config.search.sections;
+                
+                fn section_display_name(section: &str) -> &'static str {
+                    match section {
+                        "top_results" => "Top Results",
+                        "songs" => "Songs",
+                        "artists" => "Artists",
+                        "albums" => "Albums",
+                        "playlists" => "Playlists",
+                        "videos" => "Videos",
+                        _ => "Other",
+                    }
                 }
                 
-                if !others.is_empty() {
-                    grouped_data.extend(others);
+                for section in config_sections {
+                    if let Some(items) = sections.get_mut(section) {
+                        if !items.is_empty() {
+                            // Add section header
+                            let mut header = Song::default();
+                            header.metadata.insert("type".to_string(), vec!["header".to_string()]);
+                            header.metadata.insert("title".to_string(), vec![section_display_name(section).to_string()]);
+                            display_data.push(header);
+                            // Add items
+                            display_data.extend(items.drain(..));
+                        }
+                    }
                 }
-
-                status_info!("Found {} matching items", grouped_data.len());
-                self.songs_dir = Dir::new(grouped_data);
+                
+                status_info!("Found {} matching items", display_data.len());
+                self.songs_dir = Dir::new(display_data);
                 self.phase = Phase::BrowseResults { filter_input_on: false };
-                log::info!("[SEARCH DEBUG] Phase set to BrowseResults, songs_dir has {} items", self.songs_dir.len());
+                log::info!("[SEARCH] Phase set to BrowseResults, songs_dir has {} items", self.songs_dir.len());
                 ctx.render()?;
             }
             ("fetch_playlist", MpdQueryResult::PlaylistDetail(details)) => {

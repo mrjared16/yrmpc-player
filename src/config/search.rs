@@ -11,17 +11,26 @@ pub struct Search {
     pub search_button: bool,
     pub mode: FilterKind,
     pub tags: Vec<SearchableTag>,
+    /// Order and visibility of search result sections
+    /// Valid values: "top_results", "songs", "artists", "albums", "playlists", "videos"
+    pub sections: Vec<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SearchFile {
+    #[serde(default)]
     case_sensitive: bool,
     #[serde(default)]
     ignore_diacritics: bool,
-    #[serde(default = "defaults::bool::<false>")]
+    #[serde(default)]
     search_button: bool,
+    #[serde(default)]
     mode: FilterKindFile,
+    #[serde(default)]
     tags: Vec<SearchableTagFile>,
+    /// Order and visibility of search result sections
+    #[serde(default = "default_sections")]
+    sections: Vec<String>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -34,6 +43,17 @@ pub struct SearchableTag {
 pub struct SearchableTagFile {
     label: String,
     value: String,
+}
+
+/// Default search result sections order
+fn default_sections() -> Vec<String> {
+    vec![
+        "top_results".to_string(),
+        "songs".to_string(),
+        "artists".to_string(),
+        "albums".to_string(),
+        "playlists".to_string(),
+    ]
 }
 
 impl TryFrom<SearchFile> for Search {
@@ -59,6 +79,11 @@ impl TryFrom<SearchFile> for Search {
                     .map(|SearchableTagFile { value, label }| SearchableTag { label, value })
                     .collect_vec()
             },
+            sections: if value.sections.is_empty() {
+                default_sections()
+            } else {
+                value.sections
+            },
         })
     }
 }
@@ -83,6 +108,7 @@ impl Default for SearchFile {
                 SearchableTagFile { value: "genre".to_string(), label: "Genre".to_string() },
             ]
             .to_vec(),
+            sections: default_sections(),
         }
     }
 }

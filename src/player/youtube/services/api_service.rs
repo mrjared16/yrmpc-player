@@ -2,6 +2,7 @@
 
 use anyhow::Result;
 use crate::domain::Song;
+use crate::domain::search::SearchItem;
 use super::super::api::YouTubeApi;
 
 /// API service manages YouTube Music API interactions
@@ -22,9 +23,9 @@ impl ApiService {
         self.api.load_cookies(path)
     }
 
-    /// Search for songs
-    pub fn search(&self, query: &str) -> Result<Vec<Song>> {
-        self.api.search(query)
+    /// Search for music - returns type-safe SearchItem enum
+    pub fn search_items(&self, query: &str) -> Result<Vec<SearchItem>> {
+        self.api.search_items(query)
     }
 
     /// Browse artist/album/playlist
@@ -33,9 +34,7 @@ impl ApiService {
     }
 
     /// Get search suggestions (autocomplete)
-    pub fn get_suggestions(&self, _query: &str) -> Result<Vec<String>> {
-        // TODO: YouTubeApi doesn't have get_search_suggestions yet
-        // Return empty for now, can add later
-        Ok(vec![])
+    pub fn get_suggestions(&self, query: &str) -> Result<Vec<String>> {
+        self.api.get_suggestions(query)
     }
 }

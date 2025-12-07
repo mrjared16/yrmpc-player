@@ -42,6 +42,8 @@ pub enum ServerCommand {
     // Search/browse
     Search { query: String },
     Browse { path: String },
+    /// Get search suggestions for autocomplete
+    GetSearchSuggestions { query: String },
 
     // Library
     GetLibrary { category: String },
@@ -59,9 +61,12 @@ pub enum ServerResponse {
     Status(StatusData),
     Song(Option<SongData>),
     Playlist(Vec<SongData>),
-    SearchResults(Vec<SongData>),
+    /// Type-safe search results 
+    SearchResults(Vec<SearchItemData>),
     BrowseResults(Vec<BrowseEntry>),
     Library(Vec<BrowseEntry>),
+    /// Search suggestions for autocomplete
+    Suggestions(Vec<String>),
     Volume(u8),
     Pong,
 }
@@ -167,6 +172,108 @@ impl SongData {
             duration: self.duration_ms.map(Duration::from_millis),
             metadata,
             ..Default::default()
+        }
+    }
+}
+
+/// Serializable search item data with type safety
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SearchItemData {
+    Song(PlayableData),
+    Video(PlayableData),
+    Artist(BrowsableData),
+    Album(BrowsableData),
+    Playlist(BrowsableData),
+    Header(String),
+}
+
+/// Data for playable items (songs/videos)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlayableData {
+    pub video_id: String,
+    pub title: String,
+    pub artist: String,
+    pub album: Option<String>,
+    pub duration_ms: Option<u64>,
+    pub thumbnail: Option<String>,
+}
+
+/// Data for browsable items (artists/albums/playlists)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrowsableData {
+    pub browse_id: Option<String>,
+    pub browse_path: String,
+    pub title: String,
+    pub subtitle: Option<String>,
+    pub thumbnail: Option<String>,
+    pub can_queue: bool,
+}
+
+impl From<crate::domain::search::SearchItem> for SearchItemData {
+    fn from(item: crate::domain::search::SearchItem) -> Self {
+        use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem, Displayable};
+        
+        match item {
+            SearchItem::Playable(PlayableItem::Song(s)) => SearchItemData::Song(PlayableData {
+                video_id: s.video_id,
+                title: s.title,
+                artist: s.artist,
+                album: s.album,
+                duration_ms: s.duration.map(|d| d.as_millis() as u64),
+                thumbnail: s.thumbnail,
+            }),
+            SearchItem::Playable(PlayableItem::Video(v)) => SearchItemData::Video(PlayableData {
+                video_id: v.video_id,
+                title: v.title,
+                artist: v.channel,
+                album: None,
+                duration_ms: v.duration.map(|d| d.as_millis() as u64),
+                thumbnail: v.thumbnail,
+            }),
+            SearchItem::Browsable(BrowsableItem::Artist(a)) => SearchItemData::Artist(BrowsableData {
+                browse_id: a.browse_id.clone(),
+                browse_path: format!("artist:{}", a.browse_id.as_ref().unwrap_or(&a.name)),
+                title: a.name,
+                subtitle: a.subscribers,
+                thumbnail: a.thumbnail,
+                can_queue: false,
+            }),
+            SearchItem::Browsable(BrowsableItem::Album(a)) => SearchItemData::Album(BrowsableData {
+                browse_id: Some(a.album_id.clone()),
+                browse_path: format!("album:{}", a.album_id),
+                title: a.title,
+                subtitle: Some(format!("{}{}", a.artist, a.year.as_ref().map(|y| format!(" · {}", y)).unwrap_or_default())),
+                thumbnail: a.thumbnail,
+                can_queue: true,
+            }),
+            SearchItem::Browsable(BrowsableItem::Playlist(p)) => SearchItemData::Playlist(BrowsableData {
+                browse_id: Some(p.playlist_id.clone()),
+                browse_path: format!("playlist:{}", p.playlist_id),
+                title: p.title,
+                subtitle: Some(format!("{}{}", p.author, p.track_count.as_ref().map(|c| format!(" · {} tracks", c)).unwrap_or_default())),
+                thumbnail: p.thumbnail,
+                can_queue: true,
+            }),
+            SearchItem::Header(h) => SearchItemData::Header(h),
+        }
+    }
+}
+
+impl SearchItemData {
+    /// Convert to SongData for backward compatibility with queue operations
+    pub fn to_song_data(&self) -> Option<SongData> {
+        match self {
+            SearchItemData::Song(p) | SearchItemData::Video(p) => Some(SongData {
+                id: None,
+                file: p.video_id.clone(),
+                title: Some(p.title.clone()),
+                artist: Some(p.artist.clone()),
+                album: p.album.clone(),
+                duration_ms: p.duration_ms,
+                thumbnail: p.thumbnail.clone(),
+                item_type: Some(if matches!(self, SearchItemData::Song(_)) { "song" } else { "video" }.into()),
+            }),
+            _ => None,
         }
     }
 }

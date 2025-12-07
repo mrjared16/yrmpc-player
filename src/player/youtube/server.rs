@@ -23,7 +23,7 @@ use anyhow::{Context, Result};
 
 use super::{
     protocol::{
-        BrowseEntry, ServerCommand, ServerResponse, SongData, StatusData, framing,
+        BrowseEntry, ServerCommand, ServerResponse, SongData, StatusData, SearchItemData, framing,
     },
     services::{ApiService, PlaybackService, QueueService},
 };
@@ -201,6 +201,11 @@ impl YouTubeServer {
             }
             ServerCommand::Clear => {
                 self.queue.clear();
+                // P0-2 fix: Stop MPV playback when queue is cleared
+                // This ensures MPRIS doesn't show stale metadata
+                if let Err(e) = self.playback.stop() {
+                    log::warn!("Failed to stop playback on clear: {}", e);
+                }
                 ServerResponse::Ok
             }
             ServerCommand::MoveId { from, to } => {
@@ -236,9 +241,9 @@ impl YouTubeServer {
             ServerCommand::GetPlaylist => self.get_playlist(),
 
             ServerCommand::Search { query } => {
-                match self.api.search(&query) {
-                    Ok(songs) => {
-                        ServerResponse::SearchResults(songs.into_iter().map(SongData::from).collect())
+                match self.api.search_items(&query) {
+                    Ok(items) => {
+                        ServerResponse::SearchResults(items.into_iter().map(SearchItemData::from).collect())
                     }
                     Err(e) => ServerResponse::Error(e.to_string()),
                 }
@@ -251,6 +256,13 @@ impl YouTubeServer {
                             songs.into_iter().map(|s| BrowseEntry::File(SongData::from(s))).collect(),
                         )
                     }
+                    Err(e) => ServerResponse::Error(e.to_string()),
+                }
+            }
+
+            ServerCommand::GetSearchSuggestions { query } => {
+                match self.api.get_suggestions(&query) {
+                    Ok(suggestions) => ServerResponse::Suggestions(suggestions),
                     Err(e) => ServerResponse::Error(e.to_string()),
                 }
             }
@@ -372,14 +384,14 @@ impl YouTubeServer {
 
     fn previous_track(&self) -> ServerResponse {
         match self.queue.previous_index() {
-            Some(idx) => self.play_position(idx),
             Some(0) => {
-                // Restart current track
+                // At first track, restart current track
                 match self.playback.seek(0.0, "absolute") {
                     Ok(_) => ServerResponse::Ok,
                     Err(e) => ServerResponse::Error(e.to_string()),
                 }
             }
+            Some(idx) => self.play_position(idx),
             None => ServerResponse::Error("No previous track".into()),
         }
     }
