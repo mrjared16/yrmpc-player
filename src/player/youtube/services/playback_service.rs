@@ -72,10 +72,20 @@ impl PlaybackService {
     }
 
     /// Play URL with metadata
-    pub fn play(&self, url: &str, _title: &str, _artist: &str) -> Result<()> {
+    /// Sets force-media-title BEFORE loadfile so MPRIS shows proper metadata
+    pub fn play(&self, url: &str, title: &str, artist: &str) -> Result<()> {
+        // MPRIS fix: Set force-media-title before loadfile
+        // This ensures MPRIS (playerctl, KDE Connect, etc.) shows song title instead of URL
+        let media_title = if artist.is_empty() {
+            title.to_string()
+        } else {
+            format!("{} - {}", artist, title)
+        };
+        
+        log::debug!("Setting force-media-title to: {}", media_title);
+        self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
+        
         self.mpv.lock().send_command(vec!["loadfile", url, "replace"])?;
-        // TODO: MPRIS metadata - media-title property access fails
-        // Need to investigate correct MPV property or use script-message
         self.mpv.lock().set_property("pause", serde_json::json!(false))?;
         Ok(())
     }
