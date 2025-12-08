@@ -8,14 +8,14 @@ use ratatui::{
 
 use super::{Modal, RectExt};
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::keys::CommonAction,
     ctx::Ctx,
+    backends::{PartitionedOutput, PartitionedOutputKind},
     shared::{
         id::{self, Id},
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
-        mpd_client_ext::{PartitionedOutput, PartitionedOutputKind},
     },
     ui::{UiEvent, dirstack::DirState},
 };
@@ -70,7 +70,7 @@ impl OutputsModal {
                 }
             }
 
-            Ok(MpdQueryResult::Outputs(client.list_partitioned_outputs(&current_partition)?))
+            Ok(QueryResult::Outputs(client.list_partitioned_outputs(&current_partition)?))
         });
     }
 
@@ -78,7 +78,7 @@ impl OutputsModal {
         let current_partition = ctx.status.partition.clone();
         ctx.query().id("refresh_outputs").replace_id("refresh_outputs").query(move |client| {
             let outputs = client.list_partitioned_outputs(&current_partition)?;
-            Ok(MpdQueryResult::Outputs(outputs))
+            Ok(QueryResult::Outputs(outputs))
         });
     }
 }
@@ -152,11 +152,11 @@ impl Modal for OutputsModal {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: &mut MpdQueryResult,
+        data: &mut QueryResult,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            ("refresh_outputs", MpdQueryResult::Outputs(outputs)) => {
+            ("refresh_outputs", QueryResult::Outputs(outputs)) => {
                 self.outputs = std::mem::take(outputs);
                 ctx.render()?;
             }

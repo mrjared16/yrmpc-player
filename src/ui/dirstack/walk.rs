@@ -116,7 +116,7 @@ mod test {
     };
 
     fn song(name: &str) -> DirOrSong {
-        DirOrSong::Song(Song { file: name.to_owned(), ..Default::default() })
+        DirOrSong::Song(Song { uri: name.to_owned(), ..Default::default() })
     }
 
     #[test]

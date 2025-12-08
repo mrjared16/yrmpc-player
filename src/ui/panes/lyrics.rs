@@ -9,12 +9,12 @@ use ratatui::{
 use super::Pane;
 use crate::{
     ctx::Ctx,
+    backends::run_status_update,
     shared::{
         ext::duration::DurationExt,
         key_event::KeyEvent,
         lrc::Lrc,
         macros::status_error,
-        mpd_query::run_status_update,
     },
     ui::UiEvent,
 };

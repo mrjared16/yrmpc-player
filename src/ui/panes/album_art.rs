@@ -3,7 +3,7 @@ use ratatui::{Frame, layout::Rect};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::{album_art::ImageMethod, tabs::PaneType},
     ctx::Ctx,
     shared::key_event::KeyEvent,
@@ -37,7 +37,7 @@ impl AlbumArtPane {
         let (_, current_song) = ctx.find_current_song_in_queue()?;
 
         let disabled_protos = &ctx.config.album_art.disabled_protocols;
-        let song_uri = current_song.file.as_str();
+        let song_uri = current_song.uri.as_str();
         if disabled_protos.iter().any(|proto| song_uri.starts_with(proto)) {
             log::debug!(uri = song_uri; "Not downloading album art because the protocol is disabled");
             return None;
@@ -50,7 +50,7 @@ impl AlbumArtPane {
             let result = client.find_album_art(&song_uri)?;
             log::debug!(elapsed:? = start.elapsed(), size = result.as_ref().map(|v|v.len()); "Found album art");
 
-            Ok(MpdQueryResult::AlbumArt(result))
+            Ok(QueryResult::AlbumArt(result))
         });
 
         Some(())
@@ -103,7 +103,7 @@ impl Pane for AlbumArtPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         is_visible: bool,
         _ctx: &Ctx,
     ) -> Result<()> {
@@ -111,10 +111,10 @@ impl Pane for AlbumArtPane {
             return Ok(());
         }
         match (id, data) {
-            (ALBUM_ART, MpdQueryResult::AlbumArt(Some(data))) => {
+            (ALBUM_ART, QueryResult::AlbumArt(Some(data))) => {
                 self.album_art.show(data)?;
             }
-            (ALBUM_ART, MpdQueryResult::AlbumArt(None)) => {
+            (ALBUM_ART, QueryResult::AlbumArt(None)) => {
                 self.album_art.show_default()?;
             }
             _ => {}
@@ -178,10 +178,8 @@ mod tests {
     use crate::{
         config::{Config, album_art::ImageMethod, tabs::PaneType},
         domain::{song::Song, status::State},
-        shared::{
-            events::{ClientRequest, WorkRequest},
-            mpd_query::MpdQuery,
-        },
+        shared::events::{ClientRequest, WorkRequest},
+        backends::messaging::Query,
         tests::fixtures::{client_request_channel, ctx, work_request_channel},
         ui::{
             UiEvent,
@@ -199,7 +197,7 @@ mod tests {
         client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
     ) {
         let rx = client_request_channel.1.clone();
-        let mut ctx = ctx(work_request_channel, client_request_channel);
+        let mut ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
         let selected_song_id = 333;
         let mut config = Config::default();
         config.album_art.method = method;
@@ -214,7 +212,7 @@ mod tests {
         if should_search {
             assert!(matches!(
                 rx.recv_timeout(Duration::from_millis(100)).unwrap(),
-                ClientRequest::Query(MpdQuery {
+                ClientRequest::Query(Query {
                     id: ALBUM_ART,
                     replace_id: Some(ALBUM_ART),
                     target: Some(PaneType::AlbumArt),
@@ -239,7 +237,7 @@ mod tests {
         client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
     ) {
         let rx = client_request_channel.1.clone();
-        let mut ctx = ctx(work_request_channel, client_request_channel);
+        let mut ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
         let selected_song_id = 333;
         let mut config = Config::default();
         config.album_art.method = method;
@@ -254,7 +252,7 @@ mod tests {
         if should_search {
             assert!(matches!(
                 rx.recv_timeout(Duration::from_millis(100)).unwrap(),
-                ClientRequest::Query(MpdQuery {
+                ClientRequest::Query(Query {
                     id: ALBUM_ART,
                     replace_id: Some(ALBUM_ART),
                     target: Some(PaneType::AlbumArt),

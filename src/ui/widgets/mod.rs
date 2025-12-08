@@ -12,6 +12,12 @@ pub mod tabs;
 pub mod volume;
 pub(crate) mod element;
 pub mod item_list;
+pub mod queue_panel;
+pub mod queue_view;
+pub mod interactive_list_view;
+pub mod list_view_state;
+pub mod filter_state;
+pub mod browse_stack;
 
 fn get_line_offset(line_width: u16, text_area_width: u16, alignment: Alignment) -> u16 {
     match alignment {

@@ -54,7 +54,7 @@ unicode-segmentation = "1.12.0"
 
 # YouTube Music
 ytmapi-rs = { path = "../youtui/ytmapi-rs" }
-rusty_ytdl = "0.7.4"
+# NOTE: Removed rusty_ytdl - now using unified StreamExtractor (pytubefix + yt-dlp fallback)
 tokio = { version = "1", features = ["full"] }
 lru = "0.12"
 ratatui-image = "8.0.2"

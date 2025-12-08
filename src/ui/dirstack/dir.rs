@@ -225,12 +225,30 @@ where
         }
     }
 
+    /// Move to next focusable item, skipping headers
     pub fn next(&mut self, scrolloff: usize, wrap: bool) {
-        self.state.next(scrolloff, wrap);
+        let len = self.items.len();
+        for _ in 0..len {
+            self.state.next(scrolloff, wrap);
+            match self.state.get_selected() {
+                Some(idx) if idx < len && self.items[idx].is_focusable() => break,
+                None => break,
+                _ => {} // Skip non-focusable, continue
+            }
+        }
     }
 
+    /// Move to previous focusable item, skipping headers
     pub fn prev(&mut self, scrolloff: usize, wrap: bool) {
-        self.state.prev(scrolloff, wrap);
+        let len = self.items.len();
+        for _ in 0..len {
+            self.state.prev(scrolloff, wrap);
+            match self.state.get_selected() {
+                Some(idx) if idx < len && self.items[idx].is_focusable() => break,
+                None => break,
+                _ => {} // Skip non-focusable, continue
+            }
+        }
     }
 
     pub fn select_idx_opt(&mut self, idx: Option<usize>, scrolloff: usize) {

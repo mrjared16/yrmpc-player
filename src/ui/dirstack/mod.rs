@@ -22,7 +22,7 @@ use crate::{
     config::theme::properties::{Property, SongProperty},
     ctx::Ctx,
     domain::Song,
-    shared::mpd_query::PreviewGroup,
+    backends::messaging::PreviewGroup,
     ui::panes::browser::SongExt,
 };
 
@@ -41,13 +41,20 @@ pub trait DirStackItem {
     fn to_list_item_simple<'a>(&self, ctx: &Ctx) -> ListItem<'a> {
         self.to_list_item(ctx, false, false, None)
     }
+    
+    /// Whether this item can receive focus during navigation.
+    /// Headers and other non-interactive items should return false.
+    /// Navigation will skip non-focusable items.
+    fn is_focusable(&self) -> bool {
+        true
+    }
 }
 
 impl DirStackItem for DirOrSong {
     fn as_path(&self) -> &str {
         match self {
             DirOrSong::Dir { name, .. } => name,
-            DirOrSong::Song(s) => &s.file,
+            DirOrSong::Song(s) => &s.uri,
         }
     }
 
@@ -131,7 +138,7 @@ impl DirStackItem for DirOrSong {
 
 impl DirStackItem for Song {
     fn as_path(&self) -> &str {
-        &self.file
+        &self.uri
     }
 
     fn is_file(&self) -> bool {
@@ -145,7 +152,28 @@ impl DirStackItem for Song {
     }
 
     fn matches(&self, song_format: &[Property<SongProperty>], ctx: &Ctx, filter: &str) -> bool {
-        SongExt::matches(self, song_format, filter, ctx)
+        // First try the song_format-based matching
+        if SongExt::matches(self, song_format, filter, ctx) {
+            return true;
+        }
+        // Fallback: also check title and artist directly (for consistency with filter_matches)
+        let filter_lower = filter.to_lowercase();
+        if let Some(title) = self.metadata.get("title").and_then(|v| v.first()) {
+            if title.to_lowercase().contains(&filter_lower) {
+                return true;
+            }
+        }
+        if let Some(artist) = self.metadata.get("artist").and_then(|v| v.first()) {
+            if artist.to_lowercase().contains(&filter_lower) {
+                return true;
+            }
+        }
+        if let Some(album) = self.metadata.get("album").and_then(|v| v.first()) {
+            if album.to_lowercase().contains(&filter_lower) {
+                return true;
+            }
+        }
+        false
     }
 
     fn to_list_item<'a>(
@@ -243,6 +271,11 @@ impl DirStackItem for Song {
         } else {
             ListItem::from(value)
         }
+    }
+
+    fn is_focusable(&self) -> bool {
+        // Headers should not receive focus during navigation
+        self.item_type() != Some("header")
     }
 }
 

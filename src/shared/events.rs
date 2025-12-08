@@ -8,10 +8,10 @@ use super::{
     ipc::ipc_stream::IpcStream,
     lrc::{LrcIndex, LrcIndexEntry},
     mouse_event::MouseEvent,
-    mpd_query::{MpdCommand, MpdQuery, MpdQueryResult, MpdQuerySync},
     ytdlp::{SearchItem, YtDlpHostKind},
 };
 use crate::{
+    backends::messaging::{PlayerCommand, Query, QueryResult, QuerySync},
     config::{
         Config,
         Size,
@@ -23,13 +23,8 @@ use crate::{
     ui::UiAppEvent,
 };
 
-#[derive(Debug)]
-#[allow(unused)]
-pub(crate) enum ClientRequest {
-    Query(MpdQuery),
-    QuerySync(MpdQuerySync),
-    Command(MpdCommand),
-}
+// Re-export ClientRequest from backends::messaging for backward compatibility
+pub use crate::backends::messaging::ClientRequest;
 
 #[derive(Debug)]
 #[allow(unused)]
@@ -48,7 +43,7 @@ pub(crate) enum WorkRequest {
         interactive: bool,
         position: Option<QueuePosition>,
     },
-    Command(Command),
+    Command(Command),  // cli::Command for remote commands
 }
 
 #[derive(Debug)]
@@ -56,7 +51,7 @@ pub(crate) enum WorkRequest {
 pub(crate) enum WorkDone {
     LyricsIndexed { index: LrcIndex },
     SingleLrcIndexed { lrc_entry: Option<LrcIndexEntry> },
-    MpdCommandFinished { id: &'static str, target: Option<PaneType>, data: MpdQueryResult },
+    QueryFinished { id: &'static str, target: Option<PaneType>, data: QueryResult },
     SearchYtResults { items: Vec<SearchItem>, position: Option<QueuePosition> },
     None,
 }

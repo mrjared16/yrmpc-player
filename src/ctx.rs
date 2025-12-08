@@ -12,10 +12,11 @@ use crossbeam::channel::{SendError, Sender, bounded};
 
 use crate::{
     AppEvent,
-    MpdCommand,
-    MpdQuery,
-    MpdQueryResult,
+    PlayerCommand,
+    Query,
+    QueryResult,
     WorkRequest,
+    backends::BackendCapability,
     config::{
         Config,
         album_art::ImageMethod,
@@ -26,13 +27,11 @@ use crate::{
     mpd::{
         version::Version,
     },
-    player::client::Client,
+    backends::{BackendDispatcher, BackendActions, QuerySync},
     shared::{
         events::ClientRequest,
         lrc::{Lrc, LrcIndex, get_lrc_path},
         macros::{status_error, status_warn},
-        mpd_client_ext::MpdClientExt,
-        mpd_query::MpdQuerySync,
         ring_vec::RingVec,
         image_cache::ImageCache,
     },
@@ -58,6 +57,8 @@ pub struct Ctx {
     stickers: HashMap<String, HashMap<String, String>>,
     pub(crate) active_tab: TabName,
     pub(crate) supported_commands: HashSet<String>,
+    /// Backend capabilities (cached at init from backend)
+    pub(crate) capabilities: &'static [BackendCapability],
     pub(crate) db_update_start: Option<Instant>,
     #[debug(skip)]
     pub(crate) app_event_sender: Sender<AppEvent>,
@@ -77,12 +78,16 @@ pub struct Ctx {
     pub(crate) song_played: Option<Duration>,
     pub(crate) stickers_supported: StickersSupport,
     pub(crate) debug_ui_log: Option<std::path::PathBuf>,
+    /// Whether the queue side panel is visible (toggle with 'Q')
+    pub(crate) queue_panel_visible: bool,
+    /// Previous tab before expanding to Queue (for back navigation with 'h')
+    pub(crate) previous_tab: Option<TabName>,
 }
 
 #[bon]
 impl Ctx {
     pub(crate) fn try_new(
-        client: &mut Client<'_>,
+        client: &mut BackendDispatcher<'_>,
         mut config: Config,
         app_event_sender: Sender<AppEvent>,
         work_sender: Sender<WorkRequest>,
@@ -96,12 +101,16 @@ impl Ctx {
             use crate::config::PlayerBackend;
             match config.backend {
                 PlayerBackend::YouTube => StickersSupport::UnsupportedAndChecked,
-                PlayerBackend::Mpd | PlayerBackend::Mpv => StickersSupport::Supported,
+                PlayerBackend::Mpd => StickersSupport::Supported,
             }
         } else {
             StickersSupport::Unsupported
         };
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
+
+        // Capture backend capabilities at init time (static, never changes)
+        let capabilities = client.backend_mut().capabilities();
+        log::info!(capabilities:? = capabilities; "Backend capabilities");
 
         let image_cache = ImageCache::new(app_event_sender.clone());
 
@@ -130,6 +139,7 @@ impl Ctx {
             stickers: HashMap::new(),
             active_tab,
             supported_commands,
+            capabilities,
             db_update_start: None,
             app_event_sender,
             work_sender,
@@ -144,11 +154,43 @@ impl Ctx {
             last_status_update: Instant::now(),
             stickers_supported,
             debug_ui_log: None,
+            queue_panel_visible: false,
+            previous_tab: None,
         })
     }
 
     pub(crate) fn set_debug_ui_log(&mut self, path: Option<std::path::PathBuf>) {
         self.debug_ui_log = path;
+    }
+
+    // =========================================================================
+    // BACKEND CAPABILITY CHECKS
+    // =========================================================================
+    // Use ctx.supports(BackendCapability::X) to check if features are available.
+
+    /// Check if the current backend is MPD
+    pub fn is_mpd(&self) -> bool {
+        matches!(self.config.backend, crate::config::PlayerBackend::Mpd)
+    }
+
+    /// Check if the current backend is YouTube
+    pub fn is_youtube(&self) -> bool {
+        matches!(self.config.backend, crate::config::PlayerBackend::YouTube)
+    }
+
+    /// Check if this backend supports a specific capability.
+    /// 
+    /// Uses static slice lookup - O(n) for n=6 capabilities, faster than HashSet for small n.
+    /// 
+    /// # Example
+    /// ```ignore
+    /// if !ctx.supports(BackendCapability::Stickers) {
+    ///     status_warn!("Stickers not supported by this backend");
+    ///     return Ok(());
+    /// }
+    /// ```
+    pub fn supports(&self, cap: BackendCapability) -> bool {
+        self.capabilities.contains(&cap)
     }
 
     // TODO: Error comes from crossebeam, try to remove later if it gets solved
@@ -193,7 +235,7 @@ impl Ctx {
                     self.query().id(FETCH_SONG_STICKERS).replace_id(FETCH_SONG_STICKERS).query(
                         |client| {
                             let stickers = client.fetch_song_stickers(uris)?;
-                            Ok(MpdQueryResult::SongStickers(stickers))
+                            Ok(QueryResult::SongStickers(stickers))
                         },
                     );
                 }
@@ -203,11 +245,11 @@ impl Ctx {
 
     pub(crate) fn query_sync<T: Send + Sync + 'static>(
         &self,
-        on_done: impl FnOnce(&mut Client<'_>) -> Result<T> + Send + 'static,
+        on_done: impl FnOnce(&mut BackendDispatcher<'_>) -> Result<T> + Send + 'static,
     ) -> Result<T> {
         let (tx, rx) = bounded(1);
-        let query = MpdQuerySync {
-            callback: Box::new(|client| Ok(MpdQueryResult::Any(Box::new((on_done)(client)?)))),
+        let query = QuerySync {
+            callback: Box::new(|client| Ok(QueryResult::Any(Box::new((on_done)(client)?)))),
             tx,
         };
 
@@ -216,27 +258,27 @@ impl Ctx {
             bail!("Failed to send sync query request");
         }
 
-        if let MpdQueryResult::Any(any) = rx.recv()? {
+        if let QueryResult::Any(any) = rx.recv()? {
             if let Ok(val) = any.downcast::<T>() {
                 return Ok(*val);
             }
             bail!("Received unknown type answer for sync query request",);
         }
 
-        bail!("Received unknown MpdQueryResult for sync query request");
+        bail!("Received unknown QueryResult for sync query request");
     }
 
     #[builder(finish_fn(name = query))]
     pub(crate) fn query(
         &self,
-        #[builder(finish_fn)] on_done: impl FnOnce(&mut Client<'_>) -> Result<MpdQueryResult>
+        #[builder(finish_fn)] on_done: impl FnOnce(&mut BackendDispatcher<'_>) -> Result<QueryResult>
         + Send
         + 'static,
         id: &'static str,
         target: Option<PaneType>,
         replace_id: Option<&'static str>,
     ) {
-        let query = MpdQuery { id, target, replace_id, callback: Box::new(on_done) };
+        let query = Query { id, target, replace_id, callback: Box::new(on_done) };
         if let Err(err) = self.client_request_sender.send(ClientRequest::Query(query)) {
             log::error!(error:? = err; "Failed to send query request");
         }
@@ -244,11 +286,11 @@ impl Ctx {
 
     pub(crate) fn command(
         &self,
-        callback: impl FnOnce(&mut Client<'_>) -> Result<()> + Send + 'static,
+        callback: impl FnOnce(&mut BackendDispatcher<'_>) -> Result<()> + Send + 'static,
     ) {
         if let Err(err) = self
             .client_request_sender
-            .send(ClientRequest::Command(MpdCommand { callback: Box::new(callback) }))
+            .send(ClientRequest::Command(PlayerCommand { callback: Box::new(callback) }))
         {
             log::error!(error:? = err; "Failed to send command request");
         }
@@ -273,7 +315,7 @@ impl Ctx {
             return Ok(None);
         };
 
-        let path = get_lrc_path(lyrics_dir, &song.file)?;
+        let path = get_lrc_path(lyrics_dir, &song.uri)?;
         log::debug!(path:?; "getting lrc at path");
         match std::fs::read_to_string(&path) {
             Ok(lrc) => return Ok(Some(lrc.parse()?)),

@@ -44,7 +44,7 @@ impl DirOrSong {
     pub fn dir_name_or_file(&self) -> Cow<'_, str> {
         match self {
             DirOrSong::Dir { name, .. } => Cow::Borrowed(name),
-            DirOrSong::Song(song) => Cow::Borrowed(&song.file),
+            DirOrSong::Song(song) => Cow::Borrowed(&song.uri),
         }
     }
 
@@ -378,8 +378,8 @@ impl CmpByProp {
                 ignore_the_other,
             ),
             SongProperty::File => CmpByProp::opt_str(
-                Some(&a.file),
-                Some(&b.file),
+                Some(&a.uri),
+                Some(&b.uri),
                 fold_case,
                 ignore_the,
                 ignore_the_other,
@@ -483,7 +483,7 @@ mod ordtest {
     fn song_mtime(name: &str, metadata: &[(&str, &str)], mtime: &str) -> DirOrSong {
         DirOrSong::Song(Song {
             id: Some(new_id()),
-            file: name.to_string(),
+            uri: name.to_string(),
             duration: Some(Duration::from_secs(1)),
             metadata: metadata
                 .iter()

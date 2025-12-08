@@ -14,11 +14,13 @@ use playlists::PlaylistsPane;
 use progress_bar::ProgressBarPane;
 use property::PropertyPane;
 use queue::QueuePane;
+use queue_pane_v2::QueuePaneV2;
 use ratatui::{
     Frame,
     prelude::Rect,
 };
 use search::SearchPane;
+use search_pane_v2::SearchPaneV2;
 use strum::Display;
 use tabs::TabsPane;
 use tag_browser::TagBrowserPane;
@@ -28,7 +30,7 @@ use volume::VolumePane;
 use self::{frame_count::FrameCountPane, logs::LogsPane};
 use super::UiEvent;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::{
         keys::CommonAction,
         tabs::PaneType,
@@ -58,7 +60,9 @@ pub mod playlists;
 pub mod progress_bar;
 pub mod property;
 pub mod queue;
+pub mod queue_pane_v2;
 pub mod search;
+pub mod search_pane_v2;
 pub mod tabs;
 pub mod tag_browser;
 pub mod volume;
@@ -66,6 +70,7 @@ pub mod volume;
 #[derive(Debug, Display, strum::EnumDiscriminants)]
 pub enum Panes<'pane_ref, 'pane> {
     Queue(&'pane_ref mut QueuePane),
+    QueueV2(&'pane_ref mut QueuePaneV2),
     #[cfg(debug_assertions)]
     Logs(&'pane_ref mut LogsPane),
     Directories(&'pane_ref mut DirectoriesPane),
@@ -76,6 +81,7 @@ pub enum Panes<'pane_ref, 'pane> {
     PlaylistsLegacy(&'pane_ref mut PlaylistsPane),
     Library(&'pane_ref mut LibraryPane),
     Search(&'pane_ref mut SearchPane),
+    SearchV2(&'pane_ref mut SearchPaneV2),
     AlbumArt(&'pane_ref mut AlbumArtPane),
     Lyrics(&'pane_ref mut LyricsPane),
     ProgressBar(&'pane_ref mut ProgressBarPane),
@@ -95,7 +101,8 @@ impl<P: Pane + std::fmt::Debug> BoxedPane for P {}
 
 #[derive(Debug)]
 pub struct PaneContainer<'panes> {
-    pub queue: QueuePane,
+    pub queue: QueuePaneV2,
+    pub queue_legacy: Option<QueuePane>,
     #[cfg(debug_assertions)]
     pub logs: LogsPane,
     pub directories: DirectoriesPane,
@@ -106,6 +113,7 @@ pub struct PaneContainer<'panes> {
     pub playlists: PlaylistsPane,
     pub library: LibraryPane,
     pub search: SearchPane,
+    pub search_v2: Option<SearchPaneV2>,
     pub album_art: AlbumArtPane,
     pub lyrics: LyricsPane,
     pub progress_bar: ProgressBarPane,
@@ -119,8 +127,12 @@ pub struct PaneContainer<'panes> {
 
 impl<'panes> PaneContainer<'panes> {
     pub fn new(ctx: &Ctx) -> Result<Self> {
+        // Check legacy config to decide which pane to use
+        let use_legacy_queue = ctx.config.legacy_panes.queue;
+        
         Ok(Self {
-            queue: QueuePane::new(ctx),
+            queue: QueuePaneV2::new(ctx),
+            queue_legacy: if use_legacy_queue { Some(QueuePane::new(ctx)) } else { None },
             #[cfg(debug_assertions)]
             logs: LogsPane::new(),
             directories: DirectoriesPane::new(ctx),
@@ -131,6 +143,7 @@ impl<'panes> PaneContainer<'panes> {
             playlists: PlaylistsPane::new(ctx),
             library: LibraryPane::new(ctx),
             search: SearchPane::new(ctx),
+            search_v2: if !ctx.config.legacy_panes.search { Some(SearchPaneV2::new(ctx)) } else { None },
             album_art: AlbumArtPane::new(ctx),
             lyrics: LyricsPane::new(ctx),
             progress_bar: ProgressBarPane::new(),
@@ -176,7 +189,14 @@ impl<'panes> PaneContainer<'panes> {
         ctx: &Ctx,
     ) -> Result<Panes<'pane_ref, 'panes>> {
         match pane {
-            PaneType::Queue => Ok(Panes::Queue(&mut self.queue)),
+            PaneType::Queue => {
+                // Route to legacy or new queue pane based on config
+                if let Some(ref mut legacy) = self.queue_legacy {
+                    Ok(Panes::Queue(legacy))
+                } else {
+                    Ok(Panes::QueueV2(&mut self.queue))
+                }
+            }
             #[cfg(debug_assertions)]
             PaneType::Logs => Ok(Panes::Logs(&mut self.logs)),
             PaneType::Directories => Ok(Panes::Directories(&mut self.directories)),
@@ -185,7 +205,14 @@ impl<'panes> PaneContainer<'panes> {
             PaneType::Albums => Ok(Panes::Albums(&mut self.albums)),
             PaneType::Playlists => Ok(Panes::Playlists(&mut self.playlists_new)),
             PaneType::Library => Ok(Panes::Library(&mut self.library)),
-            PaneType::Search => Ok(Panes::Search(&mut self.search)),
+            PaneType::Search => {
+                // Route to legacy or new search pane based on config
+                if let Some(ref mut v2) = self.search_v2 {
+                    Ok(Panes::SearchV2(v2))
+                } else {
+                    Ok(Panes::Search(&mut self.search))
+                }
+            }
             PaneType::AlbumArt => Ok(Panes::AlbumArt(&mut self.album_art)),
             PaneType::Lyrics => Ok(Panes::Lyrics(&mut self.lyrics)),
             PaneType::ProgressBar => Ok(Panes::ProgressBar(&mut self.progress_bar)),
@@ -216,6 +243,7 @@ macro_rules! pane_call {
     ($screen:ident, $fn:ident($($param:expr),+)) => {
         match &mut $screen {
             Panes::Queue(s) => s.$fn($($param),+),
+            Panes::QueueV2(s) => s.$fn($($param),+),
             #[cfg(debug_assertions)]
             Panes::Logs(s) => s.$fn($($param),+),
             Panes::Directories(s) => s.$fn($($param),+),
@@ -224,6 +252,7 @@ macro_rules! pane_call {
             Panes::Albums(s) => s.$fn($($param),+),
             Panes::Playlists(s) => s.$fn($($param),+),
             Panes::Search(s) => s.$fn($($param),+),
+            Panes::SearchV2(s) => s.$fn($($param),+),
             Panes::AlbumArt(s) => s.$fn($($param),+),
             Panes::Lyrics(s) => s.$fn($($param),+),
             Panes::ProgressBar(s) => s.$fn($($param),+),
@@ -270,7 +299,7 @@ pub(crate) trait Pane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
@@ -306,9 +335,9 @@ pub(crate) mod browser {
         },
         ctx::Ctx,
         domain::{Song, PlaybackState as State},
+        backends::PreviewGroup,
         shared::{
             ext::{duration::DurationExt, span::SpanExt, num::NumExt},
-            mpd_query::PreviewGroup,
         },
     };
     use std::time::Duration;
@@ -373,7 +402,7 @@ pub(crate) mod browser {
                 start_of_line_spacer.clone(),
                 Span::styled("File", key_style),
                 separator.clone(),
-                Span::from(self.file.clone()),
+                Span::from(self.uri.clone()),
             ]);
             info_group.push(file.into());
 
@@ -488,7 +517,7 @@ pub(crate) mod browser {
 
             let mut result = vec![info_group, tags_group];
 
-            let stickers = ctx.song_stickers(&self.file);
+            let stickers = ctx.song_stickers(&self.uri);
             if let Some(stickers) = stickers
                 && !stickers.is_empty()
             {
@@ -522,11 +551,11 @@ pub(crate) mod browser {
         }
 
         fn file_name(&self) -> Option<Cow<'_, str>> {
-            std::path::Path::new(&self.file).file_stem().map(|file_name| file_name.to_string_lossy())
+            std::path::Path::new(&self.uri).file_stem().map(|file_name| file_name.to_string_lossy())
         }
 
         fn file_ext(&self) -> Option<Cow<'_, str>> {
-            std::path::Path::new(&self.file).extension().map(|ext| ext.to_string_lossy())
+            std::path::Path::new(&self.uri).extension().map(|ext| ext.to_string_lossy())
         }
 
         fn format<'song>(
@@ -538,7 +567,7 @@ pub(crate) mod browser {
             match property {
                 SongProperty::Filename => self.file_name(),
                 SongProperty::FileExtension => self.file_ext(),
-                SongProperty::File => Some(Cow::Borrowed(self.file.as_str())),
+                SongProperty::File => Some(Cow::Borrowed(self.uri.as_str())),
                 SongProperty::Title => {
                     self.metadata.get("title").map(|v| strategy.resolve_vec(v, tag_separator))
                 }
@@ -581,7 +610,7 @@ pub(crate) mod browser {
                     Some(value.to_lowercase().contains(&filter.to_lowercase()))
                 }
                 PropertyKindOrText::Sticker(key) => ctx
-                    .song_stickers(&self.file)
+                    .song_stickers(&self.uri)
                     .and_then(|s| s.get(key))
                     .map(|value| value.to_lowercase().contains(&filter.to_lowercase()))
                     .or_else(|| {
@@ -634,7 +663,7 @@ pub(crate) mod browser {
                 Some(Line::styled((*value).ellipsize(max_len, symbols).to_string(), style))
             }
             PropertyKindOrText::Sticker(key) => ctx
-                .song_stickers(&self.file)
+                .song_stickers(&self.uri)
                 .and_then(|s| s.get(key))
                 .map(|value| {
                     Line::styled(value.ellipsize(max_len, symbols).to_string(), style)
@@ -785,7 +814,7 @@ impl Property<SongProperty> {
         match &self.kind {
             PropertyKindOrText::Text(value) => Some((*value).clone()),
             PropertyKindOrText::Sticker(key) => song
-                .and_then(|s| ctx.song_stickers(&s.file))
+                .and_then(|s| ctx.song_stickers(&s.uri))
                 .and_then(|s| s.get(key))
                 .cloned()
                 .or_else(|| self.default(song, tag_separator, strategy, ctx)),
@@ -879,7 +908,7 @@ impl Property<PropertyKind> {
             PropertyKindOrText::Text(value) => Some(Either::Left(Span::styled(value, style))),
             PropertyKindOrText::Sticker(key) => {
                 if let Some(sticker) =
-                    song.and_then(|s| ctx.song_stickers(&s.file)).and_then(|s| s.get(key))
+                    song.and_then(|s| ctx.song_stickers(&s.uri)).and_then(|s| s.get(key))
                 {
                     Some(Either::Left(Span::styled(sticker, style)))
                 } else {

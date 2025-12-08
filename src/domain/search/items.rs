@@ -77,7 +77,7 @@ impl From<&SongItem> for Song {
 
         Song {
             id: None,
-            file: item.video_id.clone(),
+            uri: item.video_id.clone(),
             duration: item.duration,
             metadata,
             last_modified: None,
@@ -92,14 +92,14 @@ impl From<&VideoItem> for Song {
         metadata.insert("title".to_string(), vec![item.title.clone()]);
         metadata.insert("artist".to_string(), vec![item.channel.clone()]);
         metadata.insert("type".to_string(), vec!["video".to_string()]);
-        
+
         if let Some(ref thumb) = item.thumbnail {
             metadata.insert("thumbnail".to_string(), vec![thumb.clone()]);
         }
 
         Song {
             id: None,
-            file: item.video_id.clone(),
+            uri: item.video_id.clone(),
             duration: item.duration,
             metadata,
             last_modified: None,

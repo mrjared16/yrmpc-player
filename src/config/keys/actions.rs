@@ -59,6 +59,11 @@ pub enum GlobalAction {
         command: Arc<Vec<String>>,
         description: Option<String>,
     },
+    ToggleQueuePanel,
+    /// Expand queue panel to full Queue tab (remembers previous tab)
+    ExpandQueueToTab,
+    /// Go back to previous tab (from Queue tab)
+    GoBack,
 }
 
 #[derive(Debug, serde::Serialize, serde::Deserialize, Clone, PartialEq)]
@@ -112,6 +117,9 @@ pub enum GlobalActionFile {
         description: Option<String>,
     },
     AddRandom,
+    ToggleQueuePanel,
+    ExpandQueueToTab,
+    GoBack,
 }
 
 impl From<GlobalActionFile> for GlobalAction {
@@ -166,6 +174,9 @@ impl From<GlobalActionFile> for GlobalAction {
             GlobalActionFile::Partition { name, autocreate } => {
                 GlobalAction::Partition { name, autocreate }
             }
+            GlobalActionFile::ToggleQueuePanel => GlobalAction::ToggleQueuePanel,
+            GlobalActionFile::ExpandQueueToTab => GlobalAction::ExpandQueueToTab,
+            GlobalActionFile::GoBack => GlobalAction::GoBack,
         }
     }
 }
@@ -214,6 +225,9 @@ impl ToDescription for GlobalAction {
             GlobalAction::ToggleConsumeOnOff => "Toggle consume mode on or off, skipping oneshot".into(),
             GlobalAction::Partition { name: Some(name), .. }=> format!("Switch to '{name}' partition").into(),
             GlobalAction::Partition { name: None, .. }=> "Open partition management modal".into(),
+            GlobalAction::ToggleQueuePanel => "Toggle queue side panel visibility".into(),
+            GlobalAction::ExpandQueueToTab => "Expand queue panel to full Queue tab".into(),
+            GlobalAction::GoBack => "Go back to previous tab".into(),
         }
     }
 }

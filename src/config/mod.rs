@@ -89,11 +89,33 @@ pub struct Config {
     pub backend: PlayerBackend,
     pub mpv_socket: Option<String>,
     pub youtube: YouTubeConfig,
+    pub legacy_panes: LegacyPanes,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
 pub struct YouTubeConfig {
     pub auth_file: Option<String>,
+}
+
+/// Configuration for legacy pane implementations
+/// Default is true (use legacy) for backward compatibility
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct LegacyPanes {
+    /// Use legacy QueuePane instead of QueuePaneV2
+    #[serde(default = "defaults::bool::<false>")]
+    pub queue: bool,
+    /// Use legacy SearchPane instead of new BrowseStack-based SearchPane
+    #[serde(default = "defaults::bool::<true>")]
+    pub search: bool,
+}
+
+impl Default for LegacyPanes {
+    fn default() -> Self {
+        Self {
+            queue: false,  // QueuePaneV2 is stable
+            search: true,  // SearchPane migration not complete
+        }
+    }
 }
 
 #[derive(Debug, Default, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -109,8 +131,6 @@ pub enum PlayerBackend {
     #[default]
     #[serde(rename = "mpd")]
     Mpd,
-    #[serde(rename = "mpv")]
-    Mpv,
     #[serde(rename = "youtube")]
     YouTube,
 }
@@ -197,6 +217,8 @@ pub struct ConfigFile {
     pub mpv_socket: Option<String>,
     #[serde(default)]
     pub youtube: YouTubeConfigFile,
+    #[serde(default)]
+    pub legacy_panes: LegacyPanes,
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
@@ -268,6 +290,7 @@ impl Default for ConfigFile {
             backend: PlayerBackend::default(),
             mpv_socket: None,
             youtube: YouTubeConfigFile::default(),
+            legacy_panes: LegacyPanes::default(),
         }
     }
 }
@@ -509,6 +532,7 @@ impl ConfigFile {
             youtube: YouTubeConfig {
                 auth_file: self.youtube.auth_file.map(|v| tilde_expand(&v).into_owned()),
             },
+            legacy_panes: self.legacy_panes,
         };
 
         if skip_album_art_check {

@@ -5,15 +5,15 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::{
         mpd_client::{Filter, FilterKind, Tag},
     },
-    player::Client,
-    shared::{key_event::KeyEvent, mouse_event::MouseEvent, mpd_client_ext::Enqueue},
+    backends::{BackendDispatcher, Enqueue},
+    shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
         browser::BrowserPane,
@@ -69,7 +69,7 @@ impl Pane for DirectoriesPane {
                         .filter_map(|v| v.into_dir_or_song(playlist_display_mode))
                         .sorted_by(|a, b| a.with_custom_sort(&sort).cmp(&b.with_custom_sort(&sort)))
                         .collect::<Vec<_>>();
-                    Ok(MpdQueryResult::DirOrSong { data: result, path: None })
+                    Ok(QueryResult::DirOrSong { data: result, path: None })
                 },
             );
             self.initialized = true;
@@ -93,7 +93,7 @@ impl Pane for DirectoriesPane {
                                 a.with_custom_sort(&sort).cmp(&b.with_custom_sort(&sort))
                             })
                             .collect::<Vec<_>>();
-                        Ok(MpdQueryResult::DirOrSong { data: result, path: None })
+                        Ok(QueryResult::DirOrSong { data: result, path: None })
                     },
                 );
             }
@@ -120,12 +120,12 @@ impl Pane for DirectoriesPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            (FETCH_DATA, MpdQueryResult::DirOrSong { data, path }) => {
+            (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
                 let Some(path) = path else {
                     log::error!(path:?, current_path:? = self.stack().path(); "Cannot insert data because path is not provided");
                     return Ok(());
@@ -135,7 +135,7 @@ impl Pane for DirectoriesPane {
                 self.fetch_data_internal(ctx)?;
                 ctx.render()?;
             }
-            (INIT, MpdQueryResult::DirOrSong { data, path: _ }) => {
+            (INIT, QueryResult::DirOrSong { data, path: _ }) => {
                 self.stack = DirStack::new(data);
                 self.fetch_data_internal(ctx)?;
                 ctx.render()?;
@@ -170,7 +170,7 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
     fn list_songs_in_item(
         &self,
         item: DirOrSong,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| {
             Ok(match item {
                 DirOrSong::Dir { full_path, playlist: false, .. } => client.find(
@@ -213,7 +213,7 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
                                 Ok(val) => val,
                                 Err(err) => {
                                     log::error!(error:? = err; "Failed to get lsinfo for dir",);
-                                    return Ok(MpdQueryResult::DirOrSong {
+                                    return Ok(QueryResult::DirOrSong {
                                         data: Vec::new(),
                                         path: None,
                                     });
@@ -227,7 +227,7 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
                             .collect()
                         };
 
-                        Ok(MpdQueryResult::DirOrSong { data, path: Some(next_path) })
+                        Ok(QueryResult::DirOrSong { data, path: Some(next_path) })
                     });
             }
             DirOrSong::Song(_) => {}
@@ -250,7 +250,7 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
                     dir_or_playlist_found = true;
                     Enqueue::File { path: full_path.to_owned() }
                 }
-                DirOrSong::Song(song) => Enqueue::File { path: song.file.clone() },
+                DirOrSong::Song(song) => Enqueue::File { path: song.uri.clone() },
             })
             .collect_vec();
 

@@ -280,7 +280,7 @@ mod tests {
 
     fn create_test_song(name: &str) -> Song {
         Song {
-            file: format!("{}.mp3", name),
+            uri: format!("{}.mp3", name),
             metadata: HashMap::from([
                 ("title".to_string(), vec![name.to_string()]),
             ]),
@@ -396,6 +396,6 @@ mod tests {
         
         state.replace_queue(new_songs);
         assert_eq!(state.len(), 2);
-        assert!(state.get_queue()[0].song.file.contains("new1"));
+        assert!(state.get_queue()[0].song.uri.contains("new1"));
     }
 }

@@ -5,12 +5,12 @@ use crossbeam::channel::{Receiver, Sender};
 
 use crate::{
     config::{Config, cli_config::CliConfig},
-    mpd::{mpd_client::MpdCommand, proto_client::ProtoClient},
+    mpd::{mpd_client::Command, proto_client::ProtoClient},
+    backends::PlayerCommand as QueryCmd,
     shared::{
         events::{AppEvent, ClientRequest, WorkDone, WorkRequest},
         lrc::LrcIndex,
         macros::try_skip,
-        mpd_query::MpdCommand as QueryCmd,
         ytdlp::YtDlp,
     },
 };
@@ -46,7 +46,7 @@ fn handle_work_request(
             } else {
                 let url = YtDlp::search_single(kind, &query)?;
                 let files = YtDlp::init_and_download(config, &url)?;
-                let cb = move |client: &mut crate::player::Client<'_>| -> anyhow::Result<()> {
+                let cb = move |client: &mut crate::backends::BackendDispatcher<'_>| -> anyhow::Result<()> {
                     if let Some(mpd) = client.as_mpd_mut() {
                         mpd.send_start_cmd_list()?;
                         for f in &files {

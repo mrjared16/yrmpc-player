@@ -22,7 +22,7 @@ use crate::{
         commands::idle::IdleEvent,
         errors::MpdError,
     },
-    player::client::Client,
+    backends::BackendDispatcher,
     shared::{
         events::{AppEvent, ClientRequest, WorkDone},
         macros::{status_error, try_break, try_skip},
@@ -32,7 +32,7 @@ use crate::{
 pub fn init(
     client_rx: Receiver<ClientRequest>,
     event_tx: Sender<AppEvent>,
-    client: Client<'static>,
+    client: BackendDispatcher<'static>,
     config: Arc<Config>,
 ) -> io::Result<std::thread::JoinHandle<()>> {
     std::thread::Builder::new()
@@ -76,13 +76,13 @@ fn should_skip_request(buffer: &VecDeque<ClientRequest>, request: &ClientRequest
 fn client_task(
     request_rx: &Receiver<ClientRequest>,
     event_tx: &Sender<AppEvent>,
-    client: Client<'_>,
+    client: BackendDispatcher<'_>,
     config: &Config,
 ) {
     // TODO probably a good idea to drop the channels on each reconnect loop
     let mut first_loop = true;
     let (client_received_tx, client_received_rx) = &bounded::<()>(0);
-    let (client_return_tx, client_return_rx) = &bounded::<Client<'_>>(1);
+    let (client_return_tx, client_return_rx) = &bounded::<BackendDispatcher<'_>>(1);
 
     std::thread::scope(|s| {
         client_return_tx.send(client).expect("Client init to succeed");
@@ -134,8 +134,18 @@ fn client_task(
                                     Ok(events) => break events,
                                     Err(err) => {
                                         if let Some(MpdError::TimedOut(_)) = err.downcast_ref::<MpdError>() {
-                                            log::trace!("Idle timeout, restarting idle");
-                                            continue;
+                                            log::trace!("Idle timeout, yielding to request thread");
+                                            // IMPORTANT: Always break on timeout to yield the client.
+                                            //
+                                            // For MPD: `noidle` can interrupt read_response() via socket,
+                                            //          but timeouts are rare (default: infinite wait).
+                                            //
+                                            // For YouTube: `write_noidle()` is a no-op, so this is the ONLY
+                                            //              way to yield the client to the request thread.
+                                            //
+                                            // Breaking here ensures the request thread gets a chance to
+                                            // process requests regardless of backend implementation.
+                                            break vec![];
                                         }
 
                                         log::error!(error:? = err; "Encountered error while reading idle events");
@@ -285,16 +295,16 @@ mod drop_guard {
 
     use crossbeam::channel::Sender;
 
-    use crate::player::client::Client;
+    use crate::backends::BackendDispatcher;
 
     #[derive(Debug)]
     pub struct ClientDropGuard<'sender, 'client> {
-        tx: &'sender Sender<Client<'client>>,
-        client: Option<Client<'client>>,
+        tx: &'sender Sender<BackendDispatcher<'client>>,
+        client: Option<BackendDispatcher<'client>>,
     }
 
     impl<'sender, 'client> ClientDropGuard<'sender, 'client> {
-        pub fn new(tx: &'sender Sender<Client<'client>>, client: Client<'client>) -> Self {
+        pub fn new(tx: &'sender Sender<BackendDispatcher<'client>>, client: BackendDispatcher<'client>) -> Self {
             Self { tx, client: Some(client) }
         }
     }
@@ -311,7 +321,7 @@ mod drop_guard {
     }
 
     impl<'client> std::ops::Deref for ClientDropGuard<'_, 'client> {
-        type Target = Client<'client>;
+        type Target = BackendDispatcher<'client>;
 
         fn deref(&self) -> &Self::Target {
             self.client.as_ref().expect("Cannot deref because client was None")
@@ -327,7 +337,7 @@ mod drop_guard {
 
 fn check_connection(
     first_loop: bool,
-    client: &mut Client<'_>,
+    client: &mut BackendDispatcher<'_>,
     client_rx: &Receiver<ClientRequest>,
     event_tx: &Sender<AppEvent>,
     config: &Config,
@@ -353,9 +363,9 @@ fn check_connection(
     }
 }
 
-fn handle_client_request(client: &mut Client<'_>, request: ClientRequest) -> Result<WorkDone> {
+fn handle_client_request(client: &mut BackendDispatcher<'_>, request: ClientRequest) -> Result<WorkDone> {
     match request {
-        ClientRequest::Query(query) => Ok(WorkDone::MpdCommandFinished {
+        ClientRequest::Query(query) => Ok(WorkDone::QueryFinished {
             id: query.id,
             target: query.target,
             data: (query.callback)(client)?,

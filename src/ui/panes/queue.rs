@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::HashSet;
 
 use anyhow::Result;
@@ -10,12 +11,12 @@ use ratatui::{
     prelude::{Constraint, Layout, Rect},
     style::{Style, Styled, Stylize},
     text::{Line, Span, Text},
-    widgets::{Block, Borders, Cell, Row, Table, TableState},
+    widgets::{Block, Borders, Cell, ListState, Row, Table, TableState},
 };
 
 use super::{CommonAction, Pane};
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::{
         keys::{
             GlobalAction,
@@ -35,13 +36,12 @@ use crate::{
     mpd::{
         mpd_client::SingleOrRange,
     },
-    player::Client,
+    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions},
     shared::{
         ext::{btreeset_ranges::BTreeSetRanges, rect::RectExt},
         key_event::KeyEvent,
         macros::{modal, status_error, status_info, status_warn},
         mouse_event::{MouseEvent, MouseEventKind, calculate_scrollbar_position},
-        mpd_client_ext::{Enqueue, MpdClientExt},
     },
     ui::{
         UiEvent,
@@ -61,12 +61,15 @@ use crate::{
             },
             select_modal::SelectModal,
         },
+        widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode},
     },
 };
 
 #[derive(Debug)]
 pub struct QueuePane {
     queue: Dir<Song, TableState>,
+    list_state: ListState,  // For rich mode rendering
+    render_mode: QueueRenderMode,
     filter_input_mode: bool,
     header: Vec<String>,
     column_widths: Vec<Constraint>,
@@ -84,8 +87,56 @@ enum Areas {
     FilterArea,
 }
 
+/// Render mode for the queue pane (configurable)
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum QueueRenderMode {
+    /// Legacy table format (Artist | Title | Album | Duration)
+    #[default]
+    Table,
+    /// Rich 2-line format with thumbnails
+    Rich,
+}
+
 const ADD_TO_PLAYLIST: &str = "add_to_playlist";
 const ADD_TO_PLAYLIST_MULTIPLE: &str = "add_to_playlist_multiple";
+
+/// Wrapper that provides ListItemDisplay with playing context
+struct QueueSongView<'a> {
+    song: &'a Song,
+    is_current: bool,
+}
+
+impl<'a> QueueSongView<'a> {
+    fn new(song: &'a Song, is_current: bool) -> Self {
+        Self { song, is_current }
+    }
+}
+
+impl crate::domain::display::ListItemDisplay for QueueSongView<'_> {
+    fn primary_text(&self) -> Cow<'_, str> {
+        self.song.primary_text()
+    }
+
+    fn secondary_text(&self) -> Option<Cow<'_, str>> {
+        self.song.secondary_text()
+    }
+
+    fn thumbnail_url(&self) -> Option<&str> {
+        self.song.thumbnail_url()
+    }
+
+    fn type_icon(&self) -> &str {
+        self.song.type_icon()
+    }
+
+    fn duration_text(&self) -> Option<Cow<'_, str>> {
+        self.song.duration_text()
+    }
+
+    fn is_playing(&self) -> bool {
+        self.is_current
+    }
+}
 
 impl QueuePane {
     pub fn new(ctx: &Ctx) -> Self {
@@ -93,6 +144,8 @@ impl QueuePane {
 
         Self {
             queue: Dir::new(ctx.queue.clone()),
+            list_state: ListState::default(),
+            render_mode: QueueRenderMode::Rich,  // Default to Rich mode for streaming
             filter_input_mode: false,
             header,
             column_widths,
@@ -119,9 +172,9 @@ impl QueuePane {
     }
 
     fn enqueue_items(&self, all: bool) -> (Vec<Enqueue>, Option<usize>) {
-        let hovered = self.queue.selected().map(|s| s.file.as_str());
+        let hovered = self.queue.selected().map(|s| s.uri.as_str());
         self.items(all).fold((Vec::new(), None), |mut acc, (idx, song)| {
-            let path = song.file.clone();
+            let path = song.uri.clone();
             if hovered.as_ref().is_some_and(|hovered| hovered == &path) {
                 acc.1 = Some(idx);
             }
@@ -144,6 +197,63 @@ impl QueuePane {
         } else {
             Box::new(self.queue.marked().iter().map(|idx| (*idx, &self.queue.items[*idx])))
         }
+    }
+
+    /// Render the queue using the rich 2-line format with thumbnails
+    fn render_rich(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> anyhow::Result<()> {
+        let config = &ctx.config;
+        
+        // Find current song ID for is_playing detection
+        let current_song_id = ctx.find_current_song_in_queue()
+            .map(|(_, song)| song.id);
+        
+        // Create wrapper items with playing context
+        let items: Vec<QueueSongView<'_>> = self.queue.items.iter()
+            .map(|song| {
+                let is_current = current_song_id.is_some_and(|id| id == song.id);
+                QueueSongView::new(song, is_current)
+            })
+            .collect();
+        
+        // Sync list_state selection with queue state
+        if let Some(selected) = self.queue.state.inner.selected() {
+            self.list_state.select(Some(selected));
+        }
+        
+        // Configure ItemListWidget for rich mode
+        let item_config = ItemListConfig {
+            mode: ListRenderMode::Rich,
+            thumbnail_width: 6,
+            row_height: 3,
+        };
+        
+        let widget = ItemListWidget::new(&items, ctx)
+            .config(item_config)
+            .highlight_style(config.theme.current_item_style)
+            .filter(self.queue.filter());
+        
+        // Render with block border
+        let border_style = config.as_border_style();
+        let block = Block::default()
+            .borders(Borders::TOP)
+            .border_style(border_style);
+        
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        frame.render_stateful_widget(widget, inner, &mut self.list_state);
+        
+        // Render scrollbar if configured
+        if let Some(scrollbar) = config.as_styled_scrollbar()
+            && self.areas[Areas::Scrollbar].width > 0
+        {
+            frame.render_stateful_widget(
+                scrollbar,
+                self.areas[Areas::Scrollbar],
+                self.queue.state.as_scrollbar_state_ref(),
+            );
+        }
+        
+        Ok(())
     }
 
     fn open_context_menu(&mut self, ctx: &Ctx) {
@@ -177,8 +287,12 @@ impl QueuePane {
                 Some(section)
             })
             .list_section(ctx, |mut section| {
-                let items = self.queue.items.iter().map(|song| song.file.clone()).collect_vec();
+                let items = self.queue.items.iter().map(|song| song.uri.clone()).collect_vec();
                 section.add_item("Add queue to playlist", |ctx| {
+                    if !ctx.supports(BackendCapability::SavedPlaylists) {
+                        status_warn!("Saved playlists not supported by this backend");
+                        return Ok(());
+                    }
                     let playlists = ctx.query_sync(move |client| {
                         Ok(client.list_playlists()?.into_iter().map(|p| p.name).collect_vec())
                     })?;
@@ -202,6 +316,10 @@ impl QueuePane {
                     Ok(())
                 });
                 section.add_item("Save queue as playlist", move |ctx| {
+                    if !ctx.supports(BackendCapability::SavedPlaylists) {
+                        status_warn!("Saved playlists not supported by this backend");
+                        return Ok(());
+                    }
                     modal!(
                         ctx,
                         InputModal::new(ctx)
@@ -234,10 +352,14 @@ impl QueuePane {
                         Ok(())
                     })
                     .item("Clear queue", |ctx| {
-                        ctx.command(|client| {
-                            client.clear()?;
-                            Ok(())
-                        });
+                        // Use query (not command) to trigger UI refresh
+                        ctx.query()
+                            .id("queue_clear_action")
+                            .query(|client| {
+                                client.clear()?;
+                                let queue = client.playlist_info()?;
+                                Ok(crate::QueryResult::Queue(Some(queue)))
+                            });
                         Ok(())
                     });
                 Some(section)
@@ -256,6 +378,16 @@ impl Pane for QueuePane {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> anyhow::Result<()> {
         let Ctx { config, .. } = ctx;
         self.calculate_areas(area, ctx)?;
+
+        // Dispatch based on render mode
+        match self.render_mode {
+            QueueRenderMode::Rich => {
+                return self.render_rich(frame, area, ctx);
+            }
+            QueueRenderMode::Table => {
+                // Continue with Table rendering below
+            }
+        }
 
         let filter_text = self
             .queue
@@ -633,12 +765,12 @@ impl Pane for QueuePane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            (ADD_TO_PLAYLIST, MpdQueryResult::AddToPlaylist { playlists, song_file }) => {
+            (ADD_TO_PLAYLIST, QueryResult::AddToPlaylist { playlists, song_file }) => {
                 modal!(
                     ctx,
                     SelectModal::builder()
@@ -667,7 +799,7 @@ impl Pane for QueuePane {
             }
             (
                 ADD_TO_PLAYLIST_MULTIPLE,
-                MpdQueryResult::AddToPlaylistMultiple { playlists, song_files },
+                QueryResult::AddToPlaylistMultiple { playlists, song_files },
             ) => {
                 modal!(
                     ctx,
@@ -767,7 +899,15 @@ impl Pane for QueuePane {
                             ])
                             .action(Action::Single {
                                 on_confirm: Box::new(|ctx| {
-                                    ctx.command(|client| Ok(client.clear()?));
+                                    // Use query (not command) to trigger UI refresh
+                                    ctx.query()
+                                        .id("queue_clear_action")
+                                        .query(|client| {
+                                            client.clear()?;
+                                            // Return empty queue for instant UI refresh
+                                            let queue = client.playlist_info()?;
+                                            Ok(crate::QueryResult::Queue(Some(queue)))
+                                        });
                                     Ok(())
                                 }),
                                 confirm_label: Some("Clear"),
@@ -829,11 +969,11 @@ impl Pane for QueuePane {
                         if let Some(end) = sor.end {
                             for idx in sor.start..end {
                                 if let Some(marked_song) = self.queue.items.get(idx) {
-                                    selected_uris.push(marked_song.file.clone());
+                                    selected_uris.push(marked_song.uri.clone());
                                 }
                             }
                         } else if let Some(marked_song) = self.queue.items.get(sor.start) {
-                            selected_uris.push(marked_song.file.clone());
+                            selected_uris.push(marked_song.uri.clone());
                         }
                     });
 
@@ -846,7 +986,7 @@ impl Pane for QueuePane {
                                 .sorted()
                                 .collect_vec();
 
-                            Ok(MpdQueryResult::AddToPlaylistMultiple {
+                            Ok(QueryResult::AddToPlaylistMultiple {
                                 playlists,
                                 song_files: selected_uris,
                             })
@@ -855,7 +995,7 @@ impl Pane for QueuePane {
                 }
                 QueueActions::AddToPlaylist => {
                     if let Some(selected_song) = self.queue.selected() {
-                        let uri = selected_song.file.clone();
+                        let uri = selected_song.uri.clone();
                         ctx.query()
                             .id(ADD_TO_PLAYLIST)
                             .replace_id(ADD_TO_PLAYLIST)
@@ -867,7 +1007,7 @@ impl Pane for QueuePane {
                                     .map(|v| v.name)
                                     .sorted()
                                     .collect_vec();
-                                Ok(MpdQueryResult::AddToPlaylist { playlists, song_file: uri })
+                                Ok(QueryResult::AddToPlaylist { playlists, song_file: uri })
                             });
                     }
                 }
@@ -1102,7 +1242,7 @@ impl Pane for QueuePane {
                     let (enqueue, _hovered_song_idx) = self.enqueue_items(options.all);
 
                     if !enqueue.is_empty() {
-                        Client::resolve_and_enqueue(
+                        BackendDispatcher::resolve_and_enqueue(
                             ctx,
                             enqueue,
                             options.position,
@@ -1213,7 +1353,7 @@ impl Pane for QueuePane {
                     kind: SaveKind::Playlist { name, all, duplicates_strategy },
                 } => {
                     let song_paths: Vec<String> =
-                        self.items(all).map(|(_, song)| song.file.clone()).collect();
+                        self.items(all).map(|(_, song)| song.uri.clone()).collect();
                     if song_paths.is_empty() {
                         status_warn!("No songs selected to save");
                         return Ok(());
@@ -1223,7 +1363,7 @@ impl Pane for QueuePane {
                 }
                 CommonAction::Save { kind: SaveKind::Modal { all, duplicates_strategy } } => {
                     let song_paths: Vec<String> =
-                        self.items(all).map(|(_, song)| song.file.clone()).collect();
+                        self.items(all).map(|(_, song)| song.uri.clone()).collect();
                     if song_paths.is_empty() {
                         status_warn!("No songs selected to save");
                         return Ok(());
@@ -1235,7 +1375,7 @@ impl Pane for QueuePane {
                     kind: DeleteKind::Playlist { name, all, confirmation },
                 } => {
                     let song_paths: HashSet<String> =
-                        self.items(all).map(|(_, song)| song.file.clone()).collect();
+                        self.items(all).map(|(_, song)| song.uri.clone()).collect();
                     if song_paths.is_empty() {
                         status_warn!("No songs selected to delete");
                         return Ok(());
@@ -1252,7 +1392,7 @@ impl Pane for QueuePane {
                     kind: DeleteKind::Modal { all, confirmation },
                 } => {
                     let song_paths: HashSet<String> =
-                        self.items(all).map(|(_, song)| song.file.clone()).collect();
+                        self.items(all).map(|(_, song)| song.uri.clone()).collect();
                     if song_paths.is_empty() {
                         status_warn!("No songs selected to delete");
                         return Ok(());
@@ -1266,7 +1406,7 @@ impl Pane for QueuePane {
             match action {
                 GlobalAction::ExternalCommand { command, .. } => {
                     let songs =
-                        create_env(ctx, self.items(false).map(|(_, song)| song.file.as_str()));
+                        create_env(ctx, self.items(false).map(|(_, song)| song.uri.as_str()));
                     run_external(command.clone(), songs);
                 }
                 _ => {

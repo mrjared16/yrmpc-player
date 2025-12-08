@@ -3,12 +3,12 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::commands::lsinfo::LsInfoEntry,
-    player::Client,
+    backends::BackendDispatcher,
     shared::{
         key_event::KeyEvent,
         mouse_event::MouseEvent,
@@ -61,7 +61,7 @@ impl Pane for PlaylistPane {
             let target = PaneType::Playlists;
             ctx.query().id(INIT).replace_id(INIT).target(target).query(move |_client| {
                 // For now, just return empty list - playlists will be populated from search or library
-                Ok(MpdQueryResult::LsInfo { data: vec![], path: None })
+                Ok(QueryResult::LsInfo { data: vec![], path: None })
             });
 
             self.initialized = true;
@@ -100,12 +100,12 @@ impl Pane for PlaylistPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            (INIT, MpdQueryResult::LsInfo { data, path: _ }) => {
+            (INIT, QueryResult::LsInfo { data, path: _ }) => {
                 let data: Vec<DirOrSong> = data.into_iter().map(DirOrSong::name_only).collect();
                 self.stack = DirStack::new(data);
                 if let Some(sel) = self.stack.current().selected() {
@@ -113,7 +113,7 @@ impl Pane for PlaylistPane {
                 }
                 ctx.render()?;
             }
-            (FETCH_DATA, MpdQueryResult::DirOrSong { data, path }) => {
+            (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
                 if let Some(path) = path {
                     self.stack.insert(path, data);
                     self.fetch_data_internal(ctx)?;
@@ -150,7 +150,7 @@ impl BrowserPane<DirOrSong> for PlaylistPane {
     fn list_songs_in_item(
         &self,
         item: DirOrSong,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => {
@@ -205,7 +205,7 @@ impl BrowserPane<DirOrSong> for PlaylistPane {
                                 _ => None,
                             }
                         }).collect();
-                        Ok(MpdQueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                        Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
                     });
                 } else {
                     // MPD playlist - use listplaylistinfo
@@ -216,7 +216,7 @@ impl BrowserPane<DirOrSong> for PlaylistPane {
                     ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
                         let songs = client.list_playlist_info(&name_clone, None)?;
                         let mapped: Vec<DirOrSong> = songs.into_iter().map(|song| DirOrSong::Song(song.into())).collect();
-                        Ok(MpdQueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                        Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
                     });
                 }
                 return Ok(());

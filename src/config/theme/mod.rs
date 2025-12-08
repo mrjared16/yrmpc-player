@@ -231,8 +231,8 @@ pub struct ListDisplayConfig {
 }
 
 impl ListDisplayConfig {
-    fn default_thumbnail_width() -> u16 { 4 }
-    fn default_row_height() -> u16 { 2 }
+    fn default_thumbnail_width() -> u16 { 6 }
+    fn default_row_height() -> u16 { 3 }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]

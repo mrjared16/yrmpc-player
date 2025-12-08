@@ -15,12 +15,11 @@ use crate::{
         mpd_client::{Filter, Tag},
         version::Version,
     },
-    player::client::Client,
+    backends::{BackendDispatcher, BackendActions},
     shared::{
         ext::duration::DurationExt,
         lrc::{LrcIndex, get_lrc_path},
         macros::status_error,
-        mpd_client_ext::MpdClientExt,
         ytdlp::{YtDlp, YtDlpHostKind},
     },
 };
@@ -29,7 +28,7 @@ impl Command {
     pub fn execute(
         mut self,
         config: &CliConfig,
-    ) -> Result<Box<dyn FnOnce(&mut Client<'_>) -> Result<()> + Send + 'static>> {
+    ) -> Result<Box<dyn FnOnce(&mut BackendDispatcher<'_>) -> Result<()> + Send + 'static>> {
         match self {
             Command::Config { .. } => bail!("Cannot use config command here."),
             Command::Theme { .. } => bail!("Cannot use theme command here."),
@@ -123,7 +122,7 @@ impl Command {
                 };
 
                 result.into_iter().filter_map(|e| match e {
-                    crate::mpd::commands::LsInfoEntry::File(song, ..) => Some(song.file),
+                    crate::mpd::commands::LsInfoEntry::File(song, ..) => Some(song.uri),
                     _ => None,
                 }).for_each(|file| println!("{file}"));
                 Ok(())
@@ -389,7 +388,7 @@ impl Command {
                     std::process::exit(3);
                 };
 
-                let album_art = client.find_album_art(&song.file)?;
+                let album_art = client.find_album_art(&song.uri)?;
 
                 let Some(album_art) = album_art else {
                     std::process::exit(2);
@@ -528,7 +527,7 @@ pub fn create_env<'a>(
     let mut result = Vec::new();
 
     if let Some((_, current)) = ctx.find_current_song_in_queue() {
-        result.push(("CURRENT_SONG".to_owned(), current.file.clone()));
+        result.push(("CURRENT_SONG".to_owned(), current.uri.clone()));
         result.extend(
             current.metadata.iter().map(|(k, v)| (k.to_ascii_uppercase(), v.last().map(|s| s.to_string()).unwrap_or_default())),
         );
@@ -536,7 +535,7 @@ pub fn create_env<'a>(
             .config
             .lyrics_dir
             .as_ref()
-            .and_then(|dir| get_lrc_path(dir, &current.file).ok())
+            .and_then(|dir| get_lrc_path(dir, &current.uri).ok())
             .map(|path| path.to_string_lossy().into_owned())
             .unwrap_or_default();
         let lrc = ctx.find_lrc().ok().flatten();
@@ -544,7 +543,7 @@ pub fn create_env<'a>(
         result.push(("DURATION".to_owned(), duration));
         result.push(("HAS_LRC".to_owned(), lrc.is_some().to_string()));
         result.push(("LRC_FILE".to_owned(), lrc_path));
-        result.push(("FILE".to_owned(), current.file.clone()));
+        result.push(("FILE".to_owned(), current.uri.clone()));
     }
     result.push(("PID".to_owned(), std::process::id().to_string()));
 

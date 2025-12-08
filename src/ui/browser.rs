@@ -7,7 +7,7 @@ use itertools::Itertools;
 use ratatui::{prelude::Rect, widgets::ListState};
 
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::keys::{
         CommonAction,
         GlobalAction,
@@ -15,13 +15,11 @@ use crate::{
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    player::Client,
+    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions, MpdDelete, EXTERNAL_COMMAND},
     shared::{
         key_event::KeyEvent,
         macros::{modal, status_warn},
         mouse_event::{MouseEvent, MouseEventKind, calculate_scrollbar_position},
-        mpd_client_ext::{Enqueue, MpdClientExt, MpdDelete},
-        mpd_query::EXTERNAL_COMMAND,
     },
     ui::{
         dirstack::{DirStack, DirStackItem, WalkDirStackItem},
@@ -88,7 +86,7 @@ where
                     (Position::EndOfQueue, AutoplayKind::None)
                 };
 
-                Client::resolve_and_enqueue(ctx, items, position, autoplay, None, hovered_song_idx);
+                BackendDispatcher::resolve_and_enqueue(ctx, items, position, autoplay, None, hovered_song_idx);
             }
         } else {
             self.stack_mut().enter();
@@ -100,11 +98,11 @@ where
     fn list_songs_in_item(
         &self,
         item: T,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static;
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static;
     fn list_songs_in_items(
         &self,
         all: bool,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static {
         let list_songs_fns =
             self.items(all).map(|(_, item)| self.list_songs_in_item(item.to_owned())).collect_vec();
         |client| {
@@ -247,7 +245,7 @@ where
                         .map(|item| (item)(client))
                         .flatten_ok()
                         .try_collect()?;
-                    Ok(MpdQueryResult::ExternalCommand(command, songs))
+                    Ok(QueryResult::ExternalCommand(command, songs))
                 });
             }
             GlobalAction::ExternalCommand { command, .. } => {
@@ -257,7 +255,7 @@ where
                     let command = std::sync::Arc::clone(command);
                     ctx.query().id(EXTERNAL_COMMAND).query(move |client| {
                         let songs = (songs)(client)?;
-                        Ok(MpdQueryResult::ExternalCommand(command, songs))
+                        Ok(QueryResult::ExternalCommand(command, songs))
                     });
                 }
             }
@@ -545,7 +543,7 @@ where
                     let queue_len = ctx.queue.len();
                     let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
-                    Client::resolve_and_enqueue(
+                    BackendDispatcher::resolve_and_enqueue(
                         ctx,
                         enqueue,
                         options.position,
@@ -575,6 +573,10 @@ where
                 min_rating: _,
                 max_rating: _,
             } => {
+                if !ctx.supports(BackendCapability::Stickers) {
+                    status_warn!("Rating/stickers not supported by this backend");
+                    return Ok(());
+                }
                 let items = self.enqueue(self.items(false).map(|(_, i)| i)).0;
                 ctx.command(move |client| {
                     client.set_sticker_multiple(RATING_STICKER, value.to_string(), items)?;
@@ -587,6 +589,10 @@ where
                 min_rating,
                 max_rating,
             } => {
+                if !ctx.supports(BackendCapability::Stickers) {
+                    status_warn!("Rating/stickers not supported by this backend");
+                    return Ok(());
+                }
                 let items = self.enqueue(self.items(false).map(|(_, i)| i)).0;
                 modal!(
                     ctx,
@@ -602,6 +608,10 @@ where
                 );
             }
             CommonAction::Rate { kind: RateKind::Like(), current: false, .. } => {
+                if !ctx.supports(BackendCapability::Stickers) {
+                    status_warn!("Rating/stickers not supported by this backend");
+                    return Ok(());
+                }
                 let items = self.enqueue(self.items(false).map(|(_, i)| i)).0;
                 ctx.command(move |client| {
                     client.set_sticker_multiple(LIKE_STICKER, "2".to_string(), items)?;
@@ -609,6 +619,10 @@ where
                 });
             }
             CommonAction::Rate { kind: RateKind::Neutral(), current: false, .. } => {
+                if !ctx.supports(BackendCapability::Stickers) {
+                    status_warn!("Rating/stickers not supported by this backend");
+                    return Ok(());
+                }
                 let items = self.enqueue(self.items(false).map(|(_, i)| i)).0;
                 ctx.command(move |client| {
                     client.set_sticker_multiple(LIKE_STICKER, "1".to_string(), items)?;
@@ -616,6 +630,10 @@ where
                 });
             }
             CommonAction::Rate { kind: RateKind::Dislike(), current: false, .. } => {
+                if !ctx.supports(BackendCapability::Stickers) {
+                    status_warn!("Rating/stickers not supported by this backend");
+                    return Ok(());
+                }
                 let items = self.enqueue(self.items(false).map(|(_, i)| i)).0;
                 ctx.command(move |client| {
                     client.set_sticker_multiple(LIKE_STICKER, "0".to_string(), items)?;
@@ -628,7 +646,7 @@ where
             CommonAction::Save { kind: SaveKind::Playlist { name, all, duplicates_strategy } } => {
                 let list_songs = self.list_songs_in_items(all);
                 let all_songs: Vec<_> = ctx.query_sync(move |client| {
-                    Ok(list_songs(client)?.into_iter().map(|s| s.file).collect())
+                    Ok(list_songs(client)?.into_iter().map(|s| s.uri).collect())
                 })?;
 
                 if all_songs.is_empty() {
@@ -641,7 +659,7 @@ where
             CommonAction::Save { kind: SaveKind::Modal { all, duplicates_strategy } } => {
                 let list_songs = self.list_songs_in_items(all);
                 let song_paths: Vec<_> = ctx.query_sync(move |client| {
-                    Ok(list_songs(client)?.into_iter().map(|s| s.file).collect())
+                    Ok(list_songs(client)?.into_iter().map(|s| s.uri).collect())
                 })?;
 
                 if song_paths.is_empty() {
@@ -662,7 +680,7 @@ where
             } => {
                 let list_songs = self.list_songs_in_items(all);
                 let song_paths: HashSet<_> = ctx.query_sync(move |client| {
-                    Ok(list_songs(client)?.into_iter().map(|s| s.file).collect())
+                    Ok(list_songs(client)?.into_iter().map(|s| s.uri).collect())
                 })?;
 
                 if song_paths.is_empty() {
@@ -675,7 +693,7 @@ where
             CommonAction::DeleteFromPlaylist { kind: DeleteKind::Modal { all, confirmation } } => {
                 let list_songs = self.list_songs_in_items(all);
                 let song_paths: HashSet<_> = ctx.query_sync(move |client| {
-                    Ok(list_songs(client)?.into_iter().map(|s| s.file).collect())
+                    Ok(list_songs(client)?.into_iter().map(|s| s.uri).collect())
                 })?;
 
                 if song_paths.is_empty() {
@@ -772,7 +790,7 @@ where
                                         .collect();
                                     client.create_playlist(
                                         &value,
-                                        items.into_iter().map(|s| s.file).collect(),
+                                        items.into_iter().map(|s| s.uri).collect(),
                                     )?;
 
                                     Ok(())
@@ -807,7 +825,7 @@ where
                                 ctx.command(move |client| {
                                     client.add_to_playlist_multiple(
                                         &selected,
-                                        &items.into_iter().map(|s| s.file).collect_vec(),
+                                        &items.into_iter().map(|s| s.uri).collect_vec(),
                                         None,
                                     )?;
                                     Ok(())

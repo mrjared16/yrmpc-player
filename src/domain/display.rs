@@ -67,4 +67,30 @@ pub trait ListItemDisplay {
     fn is_header(&self) -> bool {
         false
     }
+
+    /// Whether this item can receive focus/selection during navigation.
+    /// Default: true for regular items, false for headers.
+    /// Returning false causes navigation to skip this item.
+    /// Future-proof: can be overridden to enable selectable headers for actions.
+    fn is_focusable(&self) -> bool {
+        !self.is_header()
+    }
+
+    /// Check if this item matches the filter string (case-insensitive).
+    /// Checks both primary_text (title) and secondary_text (artist/album).
+    /// Used for filter highlighting in rich mode.
+    fn filter_matches(&self, filter: &str) -> bool {
+        let filter_lower = filter.to_lowercase();
+        // Check primary text (title)
+        if self.primary_text().to_lowercase().contains(&filter_lower) {
+            return true;
+        }
+        // Check secondary text (artist/album)
+        if let Some(secondary) = self.secondary_text() {
+            if secondary.to_lowercase().contains(&filter_lower) {
+                return true;
+            }
+        }
+        false
+    }
 }

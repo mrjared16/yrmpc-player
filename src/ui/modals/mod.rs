@@ -9,7 +9,7 @@ use ratatui::{
 
 use super::UiEvent;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     ctx::Ctx,
     shared::{id::Id, key_event::KeyEvent, mouse_event::MouseEvent},
 };
@@ -23,6 +23,7 @@ pub mod input_modal;
 pub mod keybinds;
 pub mod menu;
 pub mod outputs;
+pub mod queue_modal;
 pub mod select_modal;
 
 #[allow(unused)]
@@ -38,7 +39,7 @@ pub(crate) trait Modal: std::fmt::Debug {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: &mut MpdQueryResult,
+        data: &mut QueryResult,
         ctx: &Ctx,
     ) -> Result<()> {
         Ok(())
@@ -69,6 +70,7 @@ const BUTTON_GROUP_SYMBOLS: symbols::border::Set = symbols::border::Set {
 pub trait RectExt {
     fn centered(&self, width_percent: u16, height_percent: u16) -> Rect;
     fn centered_exact(&self, width: u16, height: u16) -> Rect;
+    fn right_anchored(&self, width_percent: u16) -> Rect;
 }
 
 impl RectExt for Rect {
@@ -102,6 +104,14 @@ impl RectExt for Rect {
             Constraint::Length((self.width.saturating_sub(width)) / 2),
         ])
         .split(popup_layout[1])[1]
+    }
+
+    fn right_anchored(&self, width_percent: u16) -> Rect {
+        Layout::horizontal([
+            Constraint::Percentage(100 - width_percent),
+            Constraint::Percentage(width_percent),
+        ])
+        .split(*self)[1]
     }
 }
 

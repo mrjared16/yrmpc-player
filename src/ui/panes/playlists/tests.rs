@@ -26,7 +26,7 @@ mod on_idle_event {
     use super::*;
     use crate::{
         ctx::Ctx,
-        shared::mpd_query::MpdQueryResult,
+        backends::messaging::QueryResult,
         ui::panes::playlists::{INIT, REINIT},
     };
 
@@ -39,7 +39,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -54,7 +54,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong { data: vec![dir("pl2"), dir("pl4")], path: None },
+                    QueryResult::DirOrSong { data: vec![dir("pl2"), dir("pl4")], path: None },
                     true,
                     &ctx,
                 )
@@ -71,7 +71,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -84,7 +84,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl4")],
                         path: None,
                     },
@@ -104,7 +104,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -117,7 +117,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong { data: vec![dir("pl1"), dir("pl2")], path: None },
+                    QueryResult::DirOrSong { data: vec![dir("pl1"), dir("pl2")], path: None },
                     true,
                     &ctx,
                 )
@@ -134,7 +134,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -146,7 +146,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong { data: vec![dir("pl3"), dir("pl4")], path: None },
+                    QueryResult::DirOrSong { data: vec![dir("pl3"), dir("pl4")], path: None },
                     true,
                     &ctx,
                 )
@@ -173,13 +173,13 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = ctx(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             // init playlists
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -193,7 +193,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     FETCH_DATA,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: initial_songs.iter().cloned().map(DirOrSong::Song).collect(),
                         path: Some("pl3".into()),
                     },
@@ -218,14 +218,14 @@ mod on_idle_event {
             std::thread::spawn(move || {
                 let req = rx2.recv().unwrap();
                 if let ClientRequest::QuerySync(qry) = req {
-                    qry.tx.send(MpdQueryResult::Any(Box::new(new_songs2))).unwrap();
+                    qry.tx.send(QueryResult::Any(Box::new(new_songs2))).unwrap();
                 }
             });
             // trigger reinit of playlists without pl1
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -247,12 +247,12 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = ctx(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -265,7 +265,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     FETCH_DATA,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: initial_songs.iter().cloned().map(DirOrSong::Song).collect(),
                         path: Some("pl3".into()),
                     },
@@ -287,13 +287,13 @@ mod on_idle_event {
             std::thread::spawn(move || {
                 let req = rx2.recv().unwrap();
                 if let ClientRequest::QuerySync(qry) = req {
-                    qry.tx.send(MpdQueryResult::Any(Box::new(new_songs2))).unwrap();
+                    qry.tx.send(QueryResult::Any(Box::new(new_songs2))).unwrap();
                 }
             });
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -316,12 +316,12 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = ctx(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -334,7 +334,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     FETCH_DATA,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: initial_songs.iter().cloned().map(DirOrSong::Song).collect(),
                         path: Some("pl3".into()),
                     },
@@ -356,13 +356,13 @@ mod on_idle_event {
             std::thread::spawn(move || {
                 let req = rx2.recv().unwrap();
                 if let ClientRequest::QuerySync(qry) = req {
-                    qry.tx.send(MpdQueryResult::Any(Box::new(new_songs2))).unwrap();
+                    qry.tx.send(QueryResult::Any(Box::new(new_songs2))).unwrap();
                 }
             });
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -384,12 +384,12 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = ctx(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -402,7 +402,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     FETCH_DATA,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: initial_songs.iter().cloned().map(DirOrSong::Song).collect(),
                         path: Some("pl3".into()),
                     },
@@ -424,13 +424,13 @@ mod on_idle_event {
             std::thread::spawn(move || {
                 let req = rx2.recv().unwrap();
                 if let ClientRequest::QuerySync(qry) = req {
-                    qry.tx.send(MpdQueryResult::Any(Box::new(new_songs2))).unwrap();
+                    qry.tx.send(QueryResult::Any(Box::new(new_songs2))).unwrap();
                 }
             });
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")],
                         path: None,
                     },
@@ -452,13 +452,13 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = ctx(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             let initial_playlists = vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")];
             screen
                 .on_query_finished(
                     INIT,
-                    MpdQueryResult::DirOrSong { data: initial_playlists, path: None },
+                    QueryResult::DirOrSong { data: initial_playlists, path: None },
                     true,
                     &ctx,
                 )
@@ -468,7 +468,7 @@ mod on_idle_event {
             screen
                 .on_query_finished(
                     FETCH_DATA,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: initial_songs.iter().cloned().map(DirOrSong::Song).collect(),
                         path: Some("pl3".into()),
                     },
@@ -490,13 +490,13 @@ mod on_idle_event {
             std::thread::spawn(move || {
                 let req = rx2.recv().unwrap();
                 if let ClientRequest::QuerySync(qry) = req {
-                    qry.tx.send(MpdQueryResult::Any(Box::new(new_songs2))).unwrap();
+                    qry.tx.send(QueryResult::Any(Box::new(new_songs2))).unwrap();
                 }
             });
             screen
                 .on_query_finished(
                     REINIT,
-                    MpdQueryResult::DirOrSong {
+                    QueryResult::DirOrSong {
                         data: vec![dir("pl1"), dir("pl2"), dir("pl4")],
                         path: None,
                     },
@@ -522,7 +522,7 @@ pub fn new_id() -> u32 {
 fn song(name: &str) -> Song {
     Song {
         id: Some(new_id()),
-        file: name.to_string(),
+        uri: name.to_string(),
         duration: Some(Duration::from_secs(1)),
         metadata: HashMap::new(),
         last_modified: Some(*NOW),

@@ -7,7 +7,7 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::{
         artists::{AlbumDisplayMode, AlbumSortMode},
         tabs::PaneType,
@@ -18,7 +18,7 @@ use crate::{
         commands::lsinfo::LsInfoEntry,
         mpd_client::{Filter, FilterKind, Tag},
     },
-    player::Client,
+    backends::BackendDispatcher,
     shared::{
         cmp::StringCompare,
         key_event::KeyEvent,
@@ -184,7 +184,7 @@ impl Pane for ArtistPane {
             let target = self.target_pane.clone();
             ctx.query().id(INIT).replace_id(INIT).target(target).query(move |client| {
                 let result = client.list_tag(root_tag, None).context("Cannot list artists")?;
-                Ok(MpdQueryResult::LsInfo { data: result, path: None })
+                Ok(QueryResult::LsInfo { data: result, path: None })
             });
 
             self.initialized = true;
@@ -201,7 +201,7 @@ impl Pane for ArtistPane {
                 self.stack = DirStack::default();
                 ctx.query().id(INIT).replace_id(INIT).target(target).query(move |client| {
                     let result = client.list_tag(root_tag, None).context("Cannot list artists")?;
-                    Ok(MpdQueryResult::LsInfo { data: result, path: None })
+                    Ok(QueryResult::LsInfo { data: result, path: None })
                 });
             }
             UiEvent::Reconnected => {
@@ -227,12 +227,12 @@ impl Pane for ArtistPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            (FETCH_SONGS, MpdQueryResult::SongsList { data, path }) => {
+            (FETCH_SONGS, QueryResult::SongsList { data, path }) => {
                 let Some(root_path) = path.and_then(|v| v.as_slice().iter().next().cloned()) else {
                     return Ok(());
                 };
@@ -241,7 +241,7 @@ impl Pane for ArtistPane {
                 self.fetch_data_internal(ctx)?;
                 ctx.render()?;
             }
-            (INIT, MpdQueryResult::LsInfo { data, path: _ }) => {
+            (INIT, QueryResult::LsInfo { data, path: _ }) => {
                 let sort_opts = ctx.config.browser_song_sort.as_ref();
 
                 let data = if let Some(sep) = &self.unescaped_separator {
@@ -264,7 +264,7 @@ impl Pane for ArtistPane {
                 }
                 ctx.render()?;
             }
-            (FETCH_DATA, MpdQueryResult::DirOrSong { data, path }) => {
+            (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
                  // This handles the result from lsinfo("artist:ID")
                  if let Some(path) = path {
                      self.stack.insert(path, data);
@@ -302,7 +302,7 @@ impl BrowserPane<DirOrSong> for ArtistPane {
     fn list_songs_in_item(
         &self,
         item: DirOrSong,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         let root_tag = self.root_tag.clone();
         let separator = self.separator.clone();
         let path = self.stack().path().to_owned();
@@ -367,7 +367,7 @@ impl BrowserPane<DirOrSong> for ArtistPane {
                                  _ => None,
                              }
                          }).collect();
-                         Ok(MpdQueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                         Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
                      });
                      return Ok(());
                  }
@@ -395,7 +395,7 @@ impl BrowserPane<DirOrSong> for ArtistPane {
                         let separator = separator.as_deref();
                         let all_songs: Vec<Song> = client
                             .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?;
-                        Ok(MpdQueryResult::SongsList {
+                        Ok(QueryResult::SongsList {
                             data: all_songs,
                             path: Some(current.into()),
                         })

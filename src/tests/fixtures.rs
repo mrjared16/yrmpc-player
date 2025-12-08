@@ -69,6 +69,7 @@ fn create_ctx_inner(
         stickers: HashMap::new(),
         active_tab: "Queue".into(),
         supported_commands: HashSet::new(),
+        capabilities: &[],  // Empty for tests - no backend capabilities
         db_update_start: None,
         app_event_sender: tx.clone(),
         work_sender: work_tx,
@@ -82,6 +83,9 @@ fn create_ctx_inner(
         song_played: None,
         stickers_supported: crate::ctx::StickersSupport::Unsupported,
         scheduler: crate::core::scheduler::Scheduler::new((tx.clone(), client_tx.clone())),
+        debug_ui_log: None,
+        queue_panel_visible: false,
+        previous_tab: None,
     }
 }
 

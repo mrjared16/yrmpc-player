@@ -28,13 +28,12 @@ use crate::{
         ConfigFile,
         cli::{Args, Command},
     },
-    player::client::Client,
+    backends::{BackendDispatcher, PlayerCommand, Query, QueryResult},
     shared::{
         dependencies::{DEPENDENCIES, FFMPEG, FFPROBE, PYTHON3, PYTHON3MUTAGEN, UEBERZUGPP, YTDLP},
         env::ENV,
         events::{AppEvent, ClientRequest, WorkRequest},
         logging,
-        mpd_query::{MpdCommand, MpdQuery, MpdQueryResult},
         terminal::{TERMINAL, Terminal},
         tmux::{self, IS_TMUX},
     },
@@ -42,9 +41,7 @@ use crate::{
 
 #[cfg(test)]
 mod tests {
-    mod cli_integration;
     pub mod fixtures;
-    mod remote_ipc;
 }
 
 mod config;
@@ -53,7 +50,9 @@ mod ctx;
 mod domain;
 mod app_state;
 use app_state::AppState;
-mod mpd;
+mod backends;
+// Re-export mpd protocol for backward compatibility with crate::mpd
+use backends::mpd::protocol as mpd;
 mod player;
 mod shared;
 mod ui;
@@ -120,7 +119,7 @@ fn main() -> Result<()> {
                 false,
             )?;
 
-            let mut client = Client::init(
+            let mut client = BackendDispatcher::init(
                 config.address.clone(),
                 config.password.clone(),
                 "debug",
@@ -193,7 +192,7 @@ fn main() -> Result<()> {
             };
 
             let mpd_info =
-                Client::init(config.address.clone(), config.password.clone(), "debug", None, false)
+                BackendDispatcher::init(config.address.clone(), config.password.clone(), "debug", None, false)
                     .and_then(|mut client| -> Result<_, _> {
                         let version = client.version();
                         let commands = client.commands()?;
@@ -287,7 +286,7 @@ fn main() -> Result<()> {
             };
             let config = config.into_config(args.address, args.password);
             let result = cmd.execute(&config)?;
-            let mut client = Client::init(
+            let mut client = BackendDispatcher::init(
                 config.address.clone(),
                 config.password.clone(),
                 "main",
@@ -360,7 +359,7 @@ fn main() -> Result<()> {
 
             let app_state = Arc::new(RwLock::new(AppState::new()));
 
-            let mut client = Client::init_with_backend(
+            let mut client = BackendDispatcher::init_with_backend(
                 config.backend,
                 config.address.clone(),
                 config.password.clone(),

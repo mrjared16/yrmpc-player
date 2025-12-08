@@ -12,7 +12,7 @@ use vergen_gitcl::{Emitter, GitclBuilder};
 
 // Mock mpd::QueuePosition for cli.rs to be able to import it. Also see header
 // comment in cli.rs.
-#[path = "src/mpd/queue_position.rs"]
+#[path = "src/backends/mpd/protocol/queue_position.rs"]
 mod queue_position;
 
 mod mpd {

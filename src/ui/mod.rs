@@ -23,7 +23,7 @@ use tab_screen::TabScreen;
 
 use self::{modals::Modal, panes::Pane};
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::{
         Config,
         cli::{Args, Command},
@@ -43,13 +43,13 @@ use crate::{
         mpd_client::ValueChange,
         version::Version,
     },
+    backends::{BackendCapability, Enqueue, BackendActions},
     shared::{
         events::{Level, WorkRequest},
         id::Id,
         key_event::KeyEvent,
         macros::{modal, status_error, status_info, status_warn},
         mouse_event::MouseEvent,
-        mpd_client_ext::{Enqueue, MpdClientExt},
         ytdlp::YtDlpHostKind,
     },
     ui::modals::menu::create_rating_modal,
@@ -59,6 +59,7 @@ pub mod browser;
 pub mod dir_or_song;
 pub mod dirstack;
 pub mod image;
+pub mod list_ops;
 pub mod modals;
 pub mod panes;
 pub mod tab_screen;
@@ -145,11 +146,40 @@ impl<'ui> Ui<'ui> {
     }
 
     pub fn render(&mut self, frame: &mut Frame, ctx: &mut Ctx) -> Result<()> {
-        self.area = frame.area();
+        let full_area = frame.area();
         if let Some(bg_color) = ctx.config.theme.background_color {
-            frame
-                .render_widget(Block::default().style(Style::default().bg(bg_color)), frame.area());
+            frame.render_widget(Block::default().style(Style::default().bg(bg_color)), full_area);
         }
+
+        // Calculate layout: if queue panel visible, split area BEFORE rendering panes
+        let (main_area, panel_area) = if ctx.queue_panel_visible && self.modals.is_empty() {
+            use ratatui::layout::{Constraint, Layout};
+            
+            let total_width = full_area.width;
+            let panel_percent: u16 = match total_width {
+                0..=79 => 0,    // Too narrow, don't show
+                80..=99 => 40,  // Narrow: 40%
+                100..=119 => 35,
+                120..=159 => 30,
+                _ => 25,        // Wide: 25%
+            };
+            
+            if panel_percent > 0 {
+                let areas = Layout::horizontal([
+                    Constraint::Percentage(100 - panel_percent),
+                    Constraint::Percentage(panel_percent),
+                ])
+                .areas::<2>(full_area);
+                (areas[0], Some(areas[1]))
+            } else {
+                (full_area, None)
+            }
+        } else {
+            (full_area, None)
+        };
+
+        // Use main_area for panes (queue panel takes remaining space)
+        self.area = main_area;
 
         self.layout.for_each_pane_custom_data(
             self.area,
@@ -171,6 +201,13 @@ impl<'ui> Ui<'ui> {
                 Ok(())
             },
         )?;
+
+        // Render queue panel in remaining area (not overlay)
+        if let Some(panel_area) = panel_area {
+            use crate::ui::widgets::queue_panel::QueuePanel;
+            let panel = QueuePanel::new(ctx);
+            panel.render(frame, panel_area);
+        }
 
         if ctx.config.theme.modal_backdrop && !self.modals.is_empty() {
             let buffer = frame.buffer_mut();
@@ -389,6 +426,7 @@ impl<'ui> Ui<'ui> {
                         client.next_keep_state(keep_state, state.into())?;
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::PreviousTrack if ctx.status.state != State::Stop => {
                     let rewind_to_start = ctx.config.rewind_to_start_sec;
@@ -410,12 +448,14 @@ impl<'ui> Ui<'ui> {
                         }
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::Stop if matches!(ctx.status.state, State::Play | State::Pause) => {
                     ctx.command(move |client| {
                         client.stop()?;
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::ToggleRepeat => {
                     let repeat = !ctx.status.repeat;
@@ -423,6 +463,7 @@ impl<'ui> Ui<'ui> {
                         client.repeat(repeat)?;
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::ToggleRandom => {
                     let random = !ctx.status.random;
@@ -430,6 +471,7 @@ impl<'ui> Ui<'ui> {
                         client.random(random)?;
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::ToggleSingle => {
                     let single = ctx.status.single;
@@ -441,6 +483,7 @@ impl<'ui> Ui<'ui> {
                         }
                         Ok(())
                     });
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::ToggleConsume => {
                     let consume = ctx.status.consume;
@@ -479,6 +522,7 @@ impl<'ui> Ui<'ui> {
                             Ok(())
                         });
                     }
+                    // Status update handled by continuous polling for YouTube backend
                 }
                 GlobalAction::VolumeUp => {
                     let step = ctx.config.volume_step;
@@ -535,16 +579,24 @@ impl<'ui> Ui<'ui> {
                     });
                 }
                 GlobalAction::Update => {
-                    ctx.command(move |client| {
-                        client.update(None)?;
-                        Ok(())
-                    });
+                    if ctx.supports(BackendCapability::DatabaseManagement) {
+                        ctx.command(move |client| {
+                            client.update(None)?;
+                            Ok(())
+                        });
+                    } else {
+                        status_warn!("Database update not supported by this backend");
+                    }
                 }
                 GlobalAction::Rescan => {
-                    ctx.command(move |client| {
-                        client.rescan(None)?;
-                        Ok(())
-                    });
+                    if ctx.supports(BackendCapability::DatabaseManagement) {
+                        ctx.command(move |client| {
+                            client.rescan(None)?;
+                            Ok(())
+                        });
+                    } else {
+                        status_warn!("Database rescan not supported by this backend");
+                    }
                 }
                 GlobalAction::NextTab => {
                     self.change_tab(ctx.config.next_screen(&ctx.active_tab), ctx)?;
@@ -580,19 +632,27 @@ impl<'ui> Ui<'ui> {
                     modal!(ctx, modal);
                 }
                 GlobalAction::ShowOutputs => {
-                    let current_partition = ctx.status.partition.clone();
-                    ctx.query().id(OPEN_OUTPUTS_MODAL).replace_id(OPEN_OUTPUTS_MODAL).query(
-                        move |client| {
-                            let outputs = client.list_partitioned_outputs(&current_partition)?;
-                            Ok(MpdQueryResult::Outputs(outputs))
-                        },
-                    );
+                    if ctx.supports(BackendCapability::OutputControl) {
+                        let current_partition = ctx.status.partition.clone();
+                        ctx.query().id(OPEN_OUTPUTS_MODAL).replace_id(OPEN_OUTPUTS_MODAL).query(
+                            move |client| {
+                                let outputs = client.list_partitioned_outputs(&current_partition)?;
+                                Ok(QueryResult::Outputs(outputs))
+                            },
+                        );
+                    } else {
+                        status_warn!("Audio output control not supported by this backend");
+                    }
                 }
                 GlobalAction::ShowDecoders => {
-                    ctx.query()
-                        .id(OPEN_DECODERS_MODAL)
-                        .replace_id(OPEN_DECODERS_MODAL)
-                        .query(|client| Ok(MpdQueryResult::Decoders(client.decoders()?)));
+                    if ctx.is_mpd() {
+                        ctx.query()
+                            .id(OPEN_DECODERS_MODAL)
+                            .replace_id(OPEN_DECODERS_MODAL)
+                            .query(|client| Ok(QueryResult::Decoders(client.decoders()?)));
+                    } else {
+                        status_warn!("Decoder info not available for this backend");
+                    }
                 }
                 GlobalAction::ShowCurrentSongInfo => {
                     if let Some((_, current_song)) = ctx.find_current_song_in_queue() {
@@ -611,6 +671,27 @@ impl<'ui> Ui<'ui> {
                 GlobalAction::AddRandom => {
                     modal!(ctx, AddRandomModal::new(ctx));
                 }
+                GlobalAction::ToggleQueuePanel => {
+                    use crate::ui::modals::queue_modal::QueueModal;
+                    // Push queue modal (modal handles its own close on Q)
+                    modal!(ctx, QueueModal::new());
+                }
+                GlobalAction::ExpandQueueToTab => {
+                    // Save current tab for back navigation
+                    ctx.previous_tab = Some(ctx.active_tab.clone());
+                    // Hide panel since we're going to full view
+                    ctx.queue_panel_visible = false;
+                    // Switch to Queue tab
+                    self.change_tab("Queue".into(), ctx)?;
+                    ctx.render()?;
+                }
+                GlobalAction::GoBack => {
+                    // Restore previous tab if available
+                    if let Some(prev_tab) = ctx.previous_tab.take() {
+                        self.change_tab(prev_tab, ctx)?;
+                        ctx.render()?;
+                    }
+                }
             }
         } else if let Some(action) = key.as_common_action(ctx) {
             #[allow(
@@ -619,10 +700,12 @@ impl<'ui> Ui<'ui> {
             )]
             match action {
                 CommonAction::Rate { kind, current: true, min_rating, max_rating } => {
-                    if let Some((_, song)) = ctx.find_current_song_in_queue() {
+                    if !ctx.supports(BackendCapability::Stickers) {
+                        status_warn!("Rating/stickers not supported by this backend");
+                    } else if let Some((_, song)) = ctx.find_current_song_in_queue() {
                         match kind {
                             RateKind::Modal { values, custom, like } => {
-                                let items = vec![Enqueue::File { path: song.file.clone() }];
+                                let items = vec![Enqueue::File { path: song.uri.clone() }];
                                 modal!(
                                     ctx,
                                     create_rating_modal(
@@ -637,7 +720,7 @@ impl<'ui> Ui<'ui> {
                                 );
                             }
                             RateKind::Value(value) => {
-                                let uri = song.file.clone();
+                                let uri = song.uri.clone();
                                 let value = value.to_string();
                                 ctx.command(move |client| {
                                     client.set_sticker(&uri, RATING_STICKER, &value)?;
@@ -645,21 +728,21 @@ impl<'ui> Ui<'ui> {
                                 });
                             }
                             RateKind::Like() => {
-                                let uri = song.file.clone();
+                                let uri = song.uri.clone();
                                 ctx.command(move |client| {
                                     client.set_sticker(&uri, LIKE_STICKER, "2")?;
                                     Ok(())
                                 });
                             }
                             RateKind::Dislike() => {
-                                let uri = song.file.clone();
+                                let uri = song.uri.clone();
                                 ctx.command(move |client| {
                                     client.set_sticker(&uri, LIKE_STICKER, "0")?;
                                     Ok(())
                                 });
                             }
                             RateKind::Neutral() => {
-                                let uri = song.file.clone();
+                                let uri = song.uri.clone();
                                 ctx.command(move |client| {
                                     client.set_sticker(&uri, LIKE_STICKER, "1")?;
                                     Ok(())
@@ -1017,11 +1100,13 @@ impl<'ui> Ui<'ui> {
                 #[cfg(debug_assertions)]
                 Panes::Logs(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Queue(p) => p.on_event(&mut event, visible, ctx),
+                Panes::QueueV2(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Directories(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Albums(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Artists(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Playlists(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Search(p) => p.on_event(&mut event, visible, ctx),
+                Panes::SearchV2(p) => p.on_event(&mut event, visible, ctx),
                 Panes::AlbumArtists(p) => p.on_event(&mut event, visible, ctx),
                 Panes::AlbumArt(p) => p.on_event(&mut event, visible, ctx),
                 Panes::Lyrics(p) => p.on_event(&mut event, visible, ctx),
@@ -1050,7 +1135,7 @@ impl<'ui> Ui<'ui> {
         &mut self,
         id: &'static str,
         pane: Option<PaneType>,
-        data: MpdQueryResult,
+        data: QueryResult,
         ctx: &mut Ctx,
     ) -> Result<()> {
         match pane {
@@ -1064,11 +1149,13 @@ impl<'ui> Ui<'ui> {
                     #[cfg(debug_assertions)]
                     Panes::Logs(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Queue(p) => p.on_query_finished(id, data, visible, ctx),
+                    Panes::QueueV2(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Directories(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Albums(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Artists(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Playlists(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Search(p) => p.on_query_finished(id, data, visible, ctx),
+                    Panes::SearchV2(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::AlbumArtists(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::AlbumArt(p) => p.on_query_finished(id, data, visible, ctx),
                     Panes::Lyrics(p) => p.on_query_finished(id, data, visible, ctx),
@@ -1085,15 +1172,17 @@ impl<'ui> Ui<'ui> {
                     // notifications
                     Panes::Property(_) | Panes::TabContent => Ok(()),
                 }?;
+                // Auto-render after query results are processed
+                ctx.render()?;
             }
             None => match (id, data) {
-                (OPEN_OUTPUTS_MODAL, MpdQueryResult::Outputs(outputs)) => {
+                (OPEN_OUTPUTS_MODAL, QueryResult::Outputs(outputs)) => {
                     modal!(ctx, OutputsModal::new(outputs));
                 }
-                (OPEN_DECODERS_MODAL, MpdQueryResult::Decoders(decoders)) => {
+                (OPEN_DECODERS_MODAL, QueryResult::Decoders(decoders)) => {
                     modal!(ctx, DecodersModal::new(decoders));
                 }
-                (FETCH_SONG_STICKERS, MpdQueryResult::SongStickers(stickers)) => {
+                (FETCH_SONG_STICKERS, QueryResult::SongStickers(stickers)) => {
                     for (k, v) in stickers {
                         // Assume all stickers were fetched for each song so simple replace is
                         // enough

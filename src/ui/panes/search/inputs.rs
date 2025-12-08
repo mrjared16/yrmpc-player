@@ -24,7 +24,7 @@ pub const LIKE_KEY: &str = "like";
 
 #[derive(derive_more::Debug)]
 #[allow(clippy::struct_excessive_bools)]
-pub(super) struct InputGroups {
+pub struct InputGroups {
     pub inputs: Vec<InputType>,
 
     search_button: bool,
@@ -363,7 +363,7 @@ impl InputGroups {
 }
 
 #[derive(Debug)]
-pub(super) enum InputType {
+pub enum InputType {
     Textbox(TextboxInput),
     Numberbox(TextboxInput),
     Spinner(SpinnerInput),
@@ -372,7 +372,7 @@ pub(super) enum InputType {
 }
 
 #[derive(Debug)]
-pub(super) struct TextboxInput {
+pub struct TextboxInput {
     pub value: String,
     pub label: String,
     pub key: &'static str,
@@ -387,7 +387,7 @@ pub(super) struct SpinnerInput {
 }
 
 #[derive(Debug, Default, PartialEq, VariantNames, Clone, Copy, FromRepr, IntoStaticStr)]
-pub(super) enum SearchMode {
+pub enum SearchMode {
     #[strum(serialize = "Contains")]
     #[default]
     Contains,
@@ -474,7 +474,7 @@ impl LikedMode {
     }
 }
 
-pub(super) enum ActionResult {
+pub enum ActionResult {
     None,
     Search,
     Reset,

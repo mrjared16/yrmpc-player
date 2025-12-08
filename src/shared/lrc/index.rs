@@ -248,7 +248,7 @@ mod tests {
         }
         Song {
             id: Some(0),
-            file: String::new(),
+            uri: String::new(),
             duration,
             metadata,
             last_modified: None,

@@ -275,7 +275,7 @@ impl From<Vec<Song>> for KeyValues {
 impl From<&Song> for KeyValues {
     fn from(song: &Song) -> Self {
         let mut result = Vec::new();
-        result.push(KeyValue { key: "File".to_owned(), value: song.file.clone() });
+        result.push(KeyValue { key: "File".to_owned(), value: song.uri.clone() });
         let file_name = song.file_name().unwrap_or_default();
         if !file_name.is_empty() {
             result.push(KeyValue { key: "Filename".to_owned(), value: file_name.into_owned() });

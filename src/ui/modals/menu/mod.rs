@@ -19,11 +19,11 @@ use crate::{
         errors::{ErrorCode, MpdError, MpdFailureResponse},
         mpd_client::SingleOrRange,
     },
+    backends::{Enqueue, BackendActions as _},
     shared::{
         cmp::StringCompare,
         key_event::KeyEvent,
         macros::{modal, status_error, status_info, status_warn},
-        mpd_client_ext::{Enqueue, MpdClientExt as _},
     },
     ui::modals::{
         confirm_modal::{Action, ConfirmModal},
@@ -425,7 +425,7 @@ pub fn add_to_playlist_or_show_modal(
     let pl_name = playlist_name.clone();
     let songs_in_playlist = match ctx.query_sync(move |client| {
         let pl: HashSet<_> =
-            client.list_playlist_info(&pl_name, None)?.into_iter().map(|s| s.file).collect();
+            client.list_playlist_info(&pl_name, None)?.into_iter().map(|s| s.uri).collect();
         Ok(pl)
     }) {
         Ok(v) => v,
@@ -573,7 +573,7 @@ pub fn delete_from_playlist_or_show_confirmation(
     let pl_name = playlist_name.clone();
     let Some(songs_in_playlist) =
         ctx.query_sync(move |client| match client.list_playlist_info(&pl_name, None) {
-            Ok(val) => Ok(Some(val.into_iter().map(|s| s.file).collect_vec())),
+            Ok(val) => Ok(Some(val.into_iter().map(|s| s.uri).collect_vec())),
             Err(e) => {
                 if let Some(MpdError::Mpd(MpdFailureResponse { code: ErrorCode::NoExist, .. })) = e.downcast_ref::<MpdError>() {
                     status_warn!("Cannot remove song(s) from playlist, playlist does not exist");

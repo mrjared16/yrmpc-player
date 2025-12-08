@@ -51,8 +51,8 @@ impl Default for ItemListConfig {
     fn default() -> Self {
         Self {
             mode: ListRenderMode::Compact,
-            thumbnail_width: 4,
-            row_height: 2,
+            thumbnail_width: 6,
+            row_height: 3,
         }
     }
 }
@@ -67,17 +67,22 @@ pub struct ItemListWidget<'a, T> {
     highlight_style: Style,
     normal_style: Style,
     playing_style: Style,
+    filter_match_style: Style,
+    filter: Option<&'a str>,
     ctx: &'a Ctx,
 }
 
 impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
     pub fn new(items: &'a [T], ctx: &'a Ctx) -> Self {
+        use ratatui::style::Color;
         Self {
             items,
             config: ItemListConfig::default(),
             highlight_style: Style::default().add_modifier(Modifier::REVERSED),
             normal_style: Style::default(),
             playing_style: Style::default().add_modifier(Modifier::BOLD),
+            filter_match_style: Style::default().fg(Color::Blue),
+            filter: None,
             ctx,
         }
     }
@@ -99,6 +104,18 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
 
     pub fn playing_style(mut self, style: Style) -> Self {
         self.playing_style = style;
+        self
+    }
+
+    /// Set the filter string for highlight matching
+    pub fn filter(mut self, filter: Option<&'a str>) -> Self {
+        self.filter = filter;
+        self
+    }
+
+    /// Set the style for filter-matched items
+    pub fn filter_match_style(mut self, style: Style) -> Self {
+        self.filter_match_style = style;
         self
     }
 
@@ -144,7 +161,38 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
         use ratatui::style::Color;
         
         let row_height = self.config.row_height;
-        let offset = state.offset();
+        
+        // Calculate viewport capacity and ensure selected item is visible
+        let selected = state.selected().unwrap_or(0);
+        let mut offset = state.offset();
+        
+        // Calculate how many items fit in the viewport (approximate)
+        // This is tricky because headers take 1 line, items take row_height lines
+        let viewport_height = area.height as usize;
+        
+        // First, ensure offset doesn't make selected invisible
+        // Calculate cumulative height from offset to selected
+        let mut height_to_selected = 0usize;
+        for i in offset..=selected.min(self.items.len().saturating_sub(1)) {
+            if i >= self.items.len() { break; }
+            let h = if self.items[i].is_header() { 1 } else { row_height as usize };
+            height_to_selected += h;
+        }
+        
+        // If selected is below viewport, scroll down
+        while height_to_selected > viewport_height && offset < selected {
+            let h = if self.items[offset].is_header() { 1 } else { row_height as usize };
+            height_to_selected -= h;
+            offset += 1;
+        }
+        
+        // If selected is above offset, scroll up
+        if selected < offset {
+            offset = selected;
+        }
+        
+        // Update state with new offset
+        *state.offset_mut() = offset;
         
         let mut y = area.y;
         let mut item_idx = offset;
@@ -191,13 +239,22 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
                 let display_str: String = full_line.chars().take(area.width as usize).collect();
                 buf.set_string(row_rect.x, row_rect.y, &display_str, header_style);
             } else {
-                // NORMAL ITEM: Apply selection highlight to entire row
+                // NORMAL ITEM: Check filter match
+                let matches_filter = if let Some(filter) = self.filter {
+                    !filter.is_empty() && item.filter_matches(filter)
+                } else {
+                    false
+                };
+
+                // Apply selection highlight to entire row
                 if is_selected {
                     buf.set_style(row_rect, self.highlight_style);
                 }
 
                 // Build element tree for this row
-                let elem = self.build_rich_row(item, is_playing);
+                // Skip filter highlight if selected (selection highlight is enough, and combining them makes text unreadable)
+                let show_filter_highlight = matches_filter && !is_selected;
+                let elem = self.build_rich_row(item, is_playing, show_filter_highlight);
                 elem.render(row_rect, buf, self.ctx);
             }
 
@@ -207,7 +264,7 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
     }
 
     /// Build the element tree for a rich list row.
-    fn build_rich_row(&self, item: &'a T, is_playing: bool) -> Element<'a> {
+    fn build_rich_row(&self, item: &'a T, is_playing: bool, matches_filter: bool) -> Element<'a> {
         let icon = item.type_icon();
         let prefix = if is_playing { "▶ " } else { "" };
 
@@ -222,13 +279,20 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
         // Duration (right-aligned)
         let duration = item.duration_text().unwrap_or_else(|| Cow::Borrowed(""));
 
-        let primary_style = if is_playing {
+        // Primary text style: filter match takes priority, then playing, then normal
+        let primary_style = if matches_filter {
+            self.filter_match_style
+        } else if is_playing {
             self.playing_style
         } else {
             self.normal_style
         };
 
-        let secondary_style = Style::default().add_modifier(Modifier::DIM);
+        let secondary_style = if matches_filter {
+            self.filter_match_style.add_modifier(Modifier::DIM)
+        } else {
+            Style::default().add_modifier(Modifier::DIM)
+        };
 
         // Build the element tree following the layout:
         // [Thumbnail 4x2] [Gap] [Text Column] [Spacer] [Duration]

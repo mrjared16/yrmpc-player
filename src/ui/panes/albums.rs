@@ -5,14 +5,14 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::{
         mpd_client::{Filter, Tag},
     },
-    player::Client,
+    backends::BackendDispatcher,
     shared::{cmp::StringCompare, key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
@@ -61,7 +61,7 @@ impl Pane for AlbumsPane {
         if !self.initialized {
             ctx.query().id(INIT).replace_id(INIT).target(PaneType::Albums).query(move |client| {
                 let result = client.list_tag(Tag::Album, None).context("Cannot list tags")?;
-                Ok(MpdQueryResult::LsInfo { data: result, path: None })
+                Ok(QueryResult::LsInfo { data: result, path: None })
             });
             self.initialized = true;
         }
@@ -76,7 +76,7 @@ impl Pane for AlbumsPane {
                     move |client| {
                         let result =
                             client.list_tag(Tag::Album, None).context("Cannot list tags")?;
-                        Ok(MpdQueryResult::LsInfo { data: result, path: None })
+                        Ok(QueryResult::LsInfo { data: result, path: None })
                     },
                 );
             }
@@ -103,12 +103,12 @@ impl Pane for AlbumsPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        data: MpdQueryResult,
+        data: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
-            (FETCH_DATA, MpdQueryResult::DirOrSong { data, path }) => {
+            (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
                 let Some(path) = path else {
                     log::error!(path:?, current_path:? = self.stack().path(); "Cannot insert data because path is not provided");
                     return Ok(());
@@ -118,7 +118,7 @@ impl Pane for AlbumsPane {
                 self.fetch_data_internal(ctx)?;
                 ctx.render()?;
             }
-            (INIT, MpdQueryResult::LsInfo { data, path: _ }) => {
+            (INIT, QueryResult::LsInfo { data, path: _ }) => {
                 let root = data
                     .into_iter()
                     .sorted_by(|a, b| {
@@ -160,7 +160,7 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
     fn list_songs_in_item(
         &self,
         item: DirOrSong,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| match item {
             DirOrSong::Dir { name, .. } => {
                 Ok(client.find(&[Filter::new(Tag::Album, &name)], None)?)
@@ -194,7 +194,7 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
                             })
                             .map(DirOrSong::Song)
                             .collect();
-                        Ok(MpdQueryResult::DirOrSong { data, path: Some(path) })
+                        Ok(QueryResult::DirOrSong { data, path: Some(path) })
                     });
             }
 

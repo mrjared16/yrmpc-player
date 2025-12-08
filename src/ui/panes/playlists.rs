@@ -7,19 +7,18 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 
 use super::Pane;
 use crate::{
-    MpdQueryResult,
+    QueryResult,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::mpd_client::SingleOrRange,
-    player::Client,
+    backends::{BackendDispatcher, MpdDelete},
     shared::{
         cmp::StringCompare,
         ext::btreeset_ranges::BTreeSetRanges,
         key_event::KeyEvent,
         macros::{modal, status_info},
         mouse_event::MouseEvent,
-        mpd_client_ext::MpdDelete,
     },
     status_warn,
     ui::{
@@ -83,7 +82,7 @@ impl Pane for PlaylistsPane {
                         .sorted_by(|a, b| compare.compare(&a.name, &b.name))
                         .map(|playlist| DirOrSong::playlist_name_only(playlist.name))
                         .collect();
-                    Ok(MpdQueryResult::DirOrSong { data: result, path: None })
+                    Ok(QueryResult::DirOrSong { data: result, path: None })
                 },
             );
 
@@ -113,7 +112,7 @@ impl Pane for PlaylistsPane {
                             })
                             .map(|playlist| DirOrSong::playlist_name_only(playlist.name))
                             .collect();
-                        Ok(MpdQueryResult::DirOrSong { data: result, path: None })
+                        Ok(QueryResult::DirOrSong { data: result, path: None })
                     },
                 );
             }
@@ -141,12 +140,12 @@ impl Pane for PlaylistsPane {
     fn on_query_finished(
         &mut self,
         id: &'static str,
-        mpd_command: MpdQueryResult,
+        mpd_command: QueryResult,
         _is_visible: bool,
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, mpd_command) {
-            (PLAYLIST_INFO, MpdQueryResult::SongsList { data, .. }) => {
+            (PLAYLIST_INFO, QueryResult::SongsList { data, .. }) => {
                 modal!(
                     ctx,
                     InfoListModal::builder()
@@ -158,7 +157,7 @@ impl Pane for PlaylistsPane {
                 );
                 ctx.render()?;
             }
-            (FETCH_DATA, MpdQueryResult::DirOrSong { data, path }) => {
+            (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
                 let Some(path) = path else {
                     log::error!(path:?, current_path:? = self.stack().path(); "Cannot insert data because path is not provided");
                     return Ok(());
@@ -168,14 +167,14 @@ impl Pane for PlaylistsPane {
                 self.fetch_data_internal(ctx)?;
                 ctx.render()?;
             }
-            (INIT, MpdQueryResult::DirOrSong { data, path: _ }) => {
+            (INIT, QueryResult::DirOrSong { data, path: _ }) => {
                 self.stack = DirStack::new(data);
                 if let Some(sel) = self.stack.current().selected() {
                     self.fetch_data(sel, ctx)?;
                 }
                 ctx.render()?;
             }
-            (REINIT, MpdQueryResult::DirOrSong { data, .. }) => {
+            (REINIT, QueryResult::DirOrSong { data, .. }) => {
                 let mut new_stack = DirStack::new(data);
                 let old_viewport_len = self.stack.current().state.viewport_len();
                 let old_content_len = self.stack.current().state.content_len();
@@ -317,7 +316,7 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
     fn list_songs_in_item(
         &self,
         item: DirOrSong,
-    ) -> impl FnOnce(&mut Client<'_>) -> Result<Vec<Song>> + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => client.list_playlist_info(&name, None)?,
@@ -345,7 +344,7 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
                             .into_iter()
                             .map(DirOrSong::Song)
                             .collect_vec();
-                        Ok(MpdQueryResult::DirOrSong { data, path })
+                        Ok(QueryResult::DirOrSong { data, path })
                     });
             }
             _ => {}
@@ -364,7 +363,7 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
                     .id(PLAYLIST_INFO)
                     .query(move |client| {
                         let playlist = client.list_playlist_info(&playlist, None)?;
-                        Ok(MpdQueryResult::SongsList { data: playlist, path: None })
+                        Ok(QueryResult::SongsList { data: playlist, path: None })
                     });
             }
             DirOrSong::Song(_) => {}

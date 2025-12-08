@@ -1,7 +1,8 @@
 use anyhow::Result;
 use clap::Parser;
 use std::path::PathBuf;
-use rmpc::player::youtube::YouTubeServer;
+use rmpc::backends::youtube::YouTubeServer;
+use rmpc::backends::youtube::config::ExtractorType;
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "YouTube Music daemon server", long_about = None)]
@@ -13,6 +14,10 @@ struct Args {
     /// Cookie file for YouTube authentication (defaults to ~/.config/rmpc/cookie.txt)
     #[arg(short, long)]
     cookies: Option<PathBuf>,
+
+    /// Stream URL extractor: ytdlp (default, reliable) or ytx (faster)
+    #[arg(short, long, default_value = "ytdlp")]
+    extractor: String,
 }
 
 fn find_default_cookie_file() -> Option<PathBuf> {
@@ -51,11 +56,19 @@ fn main() -> Result<()> {
     if let Some(ref path) = cookie_path {
         log::info!("Using cookies from {:?}", path);
     }
-    
+
+    // Parse extractor type
+    let extractor_type = match args.extractor.to_lowercase().as_str() {
+        "ytx" => ExtractorType::Ytx,
+        _ => ExtractorType::YtDlp,  // Default to yt-dlp
+    };
+    log::info!("Using stream extractor: {:?}", extractor_type);
+
     // Create YouTube server
     let server = YouTubeServer::new(
         &args.socket,
         cookie_path.as_deref().and_then(|p| p.to_str()),
+        extractor_type,
     )?;
     
     log::info!("YouTube daemon ready, entering event loop...");

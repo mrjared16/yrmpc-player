@@ -1,14 +1,17 @@
-pub mod backend;
-pub mod client;
-pub mod library_cache;
-pub mod library_category;
-pub mod mpd_backend;
-pub mod mpv_backend;
-pub mod mpv_ipc;
-pub mod youtube_backend;
-pub mod youtube;
+//! Player module - DEPRECATED, use `crate::backends` instead.
+//!
+//! This module exists only for backward compatibility.
+//! All implementations are now in `crate::backends`.
 
+// Re-export everything from backends for backward compatibility
+pub use crate::backends::{
+    BackendDispatcher,
+    LibraryCategory,
+    MpdBackend,
+    MpvIpc, MpvEvent,  // MPV is now internal to YouTube backend
+    MusicBackend, QueueOperations,
+    YouTubeBackend,
+};
 
-// Re-export for convenience
-pub use client::Client;
-pub use library_category::LibraryCategory;
+#[allow(deprecated)]
+pub use crate::backends::BackendDispatcher;
