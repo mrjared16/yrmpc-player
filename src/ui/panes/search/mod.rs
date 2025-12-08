@@ -279,6 +279,8 @@ impl SearchPane {
         area: ratatui::prelude::Rect,
         ctx: &Ctx,
     ) {
+        use crate::ui::widgets::item_list::{ItemListWidget, ItemListConfig, ListRenderMode};
+        
         let config = &ctx.config;
         let column_right_padding: u16 = config.theme.scrollbar.is_some().into();
         
@@ -309,10 +311,7 @@ impl SearchPane {
             }
             b.padding(Padding::new(0, column_right_padding, 0, 0))
         };
-        let current = List::new(
-            self.songs_dir.to_list_items(ctx.config.theme.browser_song_format.0.as_slice(), ctx),
-        )
-        .highlight_style(config.theme.current_item_style);
+
         let directory = &mut self.songs_dir;
 
         directory.state.set_content_and_viewport_len(directory.items.len(), area.height.into());
@@ -325,7 +324,28 @@ impl SearchPane {
         self.column_areas[BrowserArea::Scrollbar] =
             if matches!(self.phase, Phase::BrowseResults { .. }) { area } else { Rect::default() };
         frame.render_widget(block, area);
-        frame.render_stateful_widget(current, inner_block, directory.state.as_render_state_ref());
+
+        // CONDITIONAL RENDERING: Rich mode vs Compact mode
+        if config.theme.list_display.rich_mode {
+            // Rich mode: use ItemListWidget with thumbnails + 2-line layout
+            let list_config = ItemListConfig {
+                mode: ListRenderMode::Rich,
+                thumbnail_width: config.theme.list_display.thumbnail_width,
+                row_height: config.theme.list_display.row_height,
+            };
+            let widget = ItemListWidget::new(&directory.items, ctx)
+                .config(list_config)
+                .highlight_style(config.theme.current_item_style);
+            frame.render_stateful_widget(widget, inner_block, directory.state.as_render_state_ref());
+        } else {
+            // Compact mode: use existing ratatui List (text-only, backward compatible)
+            let current = List::new(
+                directory.to_list_items(ctx.config.theme.browser_song_format.0.as_slice(), ctx),
+            )
+            .highlight_style(config.theme.current_item_style);
+            frame.render_stateful_widget(current, inner_block, directory.state.as_render_state_ref());
+        }
+
         if let Some(scrollbar) = config.as_styled_scrollbar() {
             frame.render_stateful_widget(
                 scrollbar,

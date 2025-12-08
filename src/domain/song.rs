@@ -93,3 +93,73 @@ impl From<crate::mpd::commands::current_song::Song> for Song {
         }
     }
 }
+
+// Implement ListItemDisplay for rich list rendering
+use crate::domain::display::ListItemDisplay;
+use ratatui::style::{Color, Style};
+use std::borrow::Cow;
+
+impl Song {
+    /// Get the item type from metadata (used for icon/style selection).
+    fn item_type(&self) -> Option<&str> {
+        self.metadata.get("type")
+            .and_then(|v| v.first())
+            .map(|s| s.as_str())
+    }
+}
+
+impl ListItemDisplay for Song {
+    fn primary_text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(self.title())
+    }
+
+    fn secondary_text(&self) -> Option<Cow<'_, str>> {
+        match (self.artist(), self.album()) {
+            (Some(a), Some(b)) => Some(Cow::Owned(format!("{} · {}", a, b))),
+            (Some(a), None) => Some(Cow::Borrowed(a)),
+            (None, Some(b)) => Some(Cow::Borrowed(b)),
+            (None, None) => None,
+        }
+    }
+
+    fn thumbnail_url(&self) -> Option<&str> {
+        self.metadata.get("thumbnail").and_then(|v| v.first()).map(|s| s.as_str())
+    }
+
+    fn type_icon(&self) -> &str {
+        match self.item_type() {
+            Some("artist") => "🎤",
+            Some("album") => "💿",
+            Some("playlist") => "📁",
+            Some("video") => "🎬",
+            Some("header") => "─",
+            _ => "🎵",
+        }
+    }
+
+    fn icon_style(&self) -> Style {
+        // Type-specific colors per ui-ux-provised.md 4.1
+        match self.item_type() {
+            Some("artist") => Style::default().fg(Color::Cyan),
+            Some("album") => Style::default().fg(Color::Yellow),
+            Some("playlist") => Style::default().fg(Color::Magenta),
+            Some("video") => Style::default().fg(Color::Red),
+            Some("header") => Style::default().fg(Color::DarkGray),
+            _ => Style::default().fg(Color::White),
+        }
+    }
+
+    fn duration_text(&self) -> Option<Cow<'_, str>> {
+        self.duration.map(|d| {
+            let secs = d.as_secs();
+            let mins = secs / 60;
+            let secs = secs % 60;
+            Cow::Owned(format!("{}:{:02}", mins, secs))
+        })
+    }
+
+    fn is_header(&self) -> bool {
+        self.item_type() == Some("header")
+    }
+}
+

@@ -168,6 +168,56 @@ fn format_duration(dur: std::time::Duration) -> String {
     }
 }
 
+// ============ ListItemDisplay Implementation ============
+
+use crate::domain::display::ListItemDisplay;
+use ratatui::style::{Color, Style};
+use std::borrow::Cow;
+
+impl ListItemDisplay for SearchItem {
+    fn primary_text(&self) -> Cow<'_, str> {
+        Cow::Borrowed(Displayable::primary_line(self))
+    }
+
+    fn secondary_text(&self) -> Option<Cow<'_, str>> {
+        Displayable::secondary_line(self).map(Cow::Owned)
+    }
+
+    fn thumbnail_url(&self) -> Option<&str> {
+        Displayable::thumbnail(self)
+    }
+
+    fn type_icon(&self) -> &str {
+        Displayable::type_icon(self)
+    }
+
+    fn icon_style(&self) -> Style {
+        // Type-specific colors per ui-ux-provised.md 4.1
+        match self {
+            Self::Playable(p) => match p {
+                PlayableItem::Song(_) => Style::default().fg(Color::White),
+                PlayableItem::Video(_) => Style::default().fg(Color::Red),
+            },
+            Self::Browsable(b) => match b {
+                BrowsableItem::Artist(_) => Style::default().fg(Color::Cyan),
+                BrowsableItem::Album(_) => Style::default().fg(Color::Yellow),
+                BrowsableItem::Playlist(_) => Style::default().fg(Color::Magenta),
+            },
+            Self::Header(_) => Style::default().fg(Color::DarkGray),
+        }
+    }
+
+    fn duration_text(&self) -> Option<Cow<'_, str>> {
+        match self {
+            Self::Playable(p) => match p {
+                PlayableItem::Song(s) => s.duration.map(|d| Cow::Owned(format_duration(d))),
+                PlayableItem::Video(v) => v.duration.map(|d| Cow::Owned(format_duration(d))),
+            },
+            _ => None,
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

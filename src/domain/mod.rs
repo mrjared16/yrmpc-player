@@ -5,6 +5,7 @@ pub mod song;
 pub mod status;
 pub mod queue;
 pub mod search;
+pub mod display;
 
 // Re-export main types for convenience
 pub use song::Song;

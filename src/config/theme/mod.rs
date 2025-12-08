@@ -76,6 +76,7 @@ pub struct UiConfig {
     pub level_styles: LevelStyles,
     pub lyrics: LyricsConfig,
     pub cava: CavaTheme,
+    pub list_display: ListDisplayConfig,
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -125,6 +126,8 @@ pub struct UiConfigFile {
     pub(super) lyrics: LyricsConfigFile,
     #[serde(default)]
     pub(super) cava: CavaThemeFile,
+    #[serde(default)]
+    pub(super) list_display: ListDisplayConfig,
 }
 
 impl Default for UiConfigFile {
@@ -201,6 +204,7 @@ impl Default for UiConfigFile {
             components: HashMap::default(),
             lyrics: LyricsConfigFile::default(),
             cava: CavaThemeFile::default(),
+            list_display: ListDisplayConfig::default(),
         }
     }
 }
@@ -210,6 +214,25 @@ pub enum AlbumSeparator {
     #[default]
     None,
     Underline,
+}
+
+/// Configuration for list display mode (compact vs rich)
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct ListDisplayConfig {
+    /// Enable rich mode with thumbnails (default: false = compact text-only)
+    #[serde(default)]
+    pub rich_mode: bool,
+    /// Thumbnail width in columns (default: 4)
+    #[serde(default = "ListDisplayConfig::default_thumbnail_width")]
+    pub thumbnail_width: u16,
+    /// Row height in lines for rich mode (default: 2)
+    #[serde(default = "ListDisplayConfig::default_row_height")]
+    pub row_height: u16,
+}
+
+impl ListDisplayConfig {
+    fn default_thumbnail_width() -> u16 { 4 }
+    fn default_row_height() -> u16 { 2 }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -429,6 +452,7 @@ impl TryFrom<UiConfigFile> for UiConfig {
                 .to_config_or(None, None)?,
             level_styles: value.level_styles.try_into()?,
             lyrics: value.lyrics.into(),
+            list_display: value.list_display,
         })
     }
 }
