@@ -165,7 +165,7 @@ impl AppState {
         
         // Adjust to_pos if removing affected it
         let adjusted_to_pos = if from_pos < to_pos {
-            to_pos - 1
+            to_pos
         } else {
             to_pos
         };

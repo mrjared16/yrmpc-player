@@ -51,6 +51,14 @@ pub enum ServerCommand {
     Browse { path: String },
     /// Get search suggestions for autocomplete
     GetSearchSuggestions { query: String },
+    
+    // Rich browse details (YouTube-specific)
+    /// Get detailed playlist info with tracks and metadata
+    BrowsePlaylistDetails { playlist_id: String },
+    /// Get detailed album info with tracks and metadata
+    BrowseAlbumDetails { album_id: String },
+    /// Get detailed artist info with discography
+    BrowseArtistDetails { artist_id: String },
 
     // Library
     GetLibrary { category: String },
@@ -84,6 +92,14 @@ pub enum ServerResponse {
     /// Idle events - sent when subscribed subsystems change
     /// Subsystems: "playlist", "player", "mixer", "options"
     IdleEvents(Vec<String>),
+    
+    // Rich browse details responses
+    /// Detailed playlist info
+    PlaylistDetails(PlaylistDetailsData),
+    /// Detailed album info
+    AlbumDetails(AlbumDetailsData),
+    /// Detailed artist info
+    ArtistDetails(ArtistDetailsData),
 }
 
 /// Serializable status data
@@ -316,6 +332,240 @@ impl SearchItemData {
 pub enum BrowseEntry {
     Dir { name: String, path: String },
     File(SongData),
+}
+
+// ============================================================================
+// Rich Browse Details Data Structures
+// ============================================================================
+
+/// Reference to an artist for navigation (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistRefData {
+    pub id: String,
+    pub name: String,
+    pub thumbnail: Option<String>,
+}
+
+/// Reference to an album for navigation (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumRefData {
+    pub id: String,
+    pub title: String,
+    pub year: Option<String>,
+    pub thumbnail: Option<String>,
+}
+
+/// Reference to a playlist for navigation (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistRefData {
+    pub id: String,
+    pub title: String,
+    pub thumbnail: Option<String>,
+    pub subtitle: Option<String>,
+}
+
+/// Detailed playlist info (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PlaylistDetailsData {
+    pub id: String,
+    pub title: String,
+    pub artist: Option<String>,
+    pub year: Option<String>,
+    pub thumbnail: Option<String>,
+    pub track_count: usize,
+    pub duration_text: Option<String>,
+    pub tracks: Vec<SongData>,
+    pub featured_artists: Vec<ArtistRefData>,
+    pub related_playlists: Vec<PlaylistRefData>,
+}
+
+/// Detailed album info (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AlbumDetailsData {
+    pub id: String,
+    pub title: String,
+    pub artist: ArtistRefData,
+    pub year: Option<String>,
+    pub thumbnail: Option<String>,
+    pub tracks: Vec<SongData>,
+    pub more_by_artist: Vec<AlbumRefData>,
+}
+
+/// Detailed artist info (serializable)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ArtistDetailsData {
+    pub id: String,
+    pub name: String,
+    pub subscribers: Option<String>,
+    pub description: Option<String>,
+    pub thumbnail: Option<String>,
+    pub top_songs: Vec<SongData>,
+    pub albums: Vec<AlbumRefData>,
+    pub singles: Vec<AlbumRefData>,
+    pub related_artists: Vec<ArtistRefData>,
+}
+
+// Conversions from domain types to protocol types
+impl From<crate::backends::youtube::details::ArtistRef> for ArtistRefData {
+    fn from(a: crate::backends::youtube::details::ArtistRef) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            thumbnail: a.thumbnail,
+        }
+    }
+}
+
+impl From<crate::backends::youtube::details::AlbumRef> for AlbumRefData {
+    fn from(a: crate::backends::youtube::details::AlbumRef) -> Self {
+        Self {
+            id: a.id,
+            title: a.title,
+            year: a.year,
+            thumbnail: a.thumbnail,
+        }
+    }
+}
+
+impl From<crate::backends::youtube::details::PlaylistRef> for PlaylistRefData {
+    fn from(p: crate::backends::youtube::details::PlaylistRef) -> Self {
+        Self {
+            id: p.id,
+            title: p.title,
+            thumbnail: p.thumbnail,
+            subtitle: p.subtitle,
+        }
+    }
+}
+
+impl From<crate::backends::youtube::details::PlaylistDetails> for PlaylistDetailsData {
+    fn from(p: crate::backends::youtube::details::PlaylistDetails) -> Self {
+        Self {
+            id: p.id,
+            title: p.title,
+            artist: p.artist,
+            year: p.year,
+            thumbnail: p.thumbnail,
+            track_count: p.track_count,
+            duration_text: p.duration_text,
+            tracks: p.tracks.into_iter().map(SongData::from).collect(),
+            featured_artists: p.featured_artists.into_iter().map(ArtistRefData::from).collect(),
+            related_playlists: p.related_playlists.into_iter().map(PlaylistRefData::from).collect(),
+        }
+    }
+}
+
+impl From<crate::backends::youtube::details::AlbumDetails> for AlbumDetailsData {
+    fn from(a: crate::backends::youtube::details::AlbumDetails) -> Self {
+        Self {
+            id: a.id,
+            title: a.title,
+            artist: ArtistRefData::from(a.artist),
+            year: a.year,
+            thumbnail: a.thumbnail,
+            tracks: a.tracks.into_iter().map(SongData::from).collect(),
+            more_by_artist: a.more_by_artist.into_iter().map(AlbumRefData::from).collect(),
+        }
+    }
+}
+
+impl From<crate::backends::youtube::details::ArtistDetails> for ArtistDetailsData {
+    fn from(a: crate::backends::youtube::details::ArtistDetails) -> Self {
+        Self {
+            id: a.id,
+            name: a.name,
+            subscribers: a.subscribers,
+            description: a.description,
+            thumbnail: a.thumbnail,
+            top_songs: a.top_songs.into_iter().map(SongData::from).collect(),
+            albums: a.albums.into_iter().map(AlbumRefData::from).collect(),
+            singles: a.singles.into_iter().map(AlbumRefData::from).collect(),
+            related_artists: a.related_artists.into_iter().map(ArtistRefData::from).collect(),
+        }
+    }
+}
+
+// Conversions from protocol types back to domain types
+impl PlaylistDetailsData {
+    pub fn to_details(&self) -> crate::backends::youtube::details::PlaylistDetails {
+        use crate::backends::youtube::details::*;
+        PlaylistDetails {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            artist: self.artist.clone(),
+            year: self.year.clone(),
+            thumbnail: self.thumbnail.clone(),
+            track_count: self.track_count,
+            duration_text: self.duration_text.clone(),
+            tracks: self.tracks.iter().map(|s| s.to_song()).collect(),
+            featured_artists: self.featured_artists.iter().map(|a| ArtistRef {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                thumbnail: a.thumbnail.clone(),
+            }).collect(),
+            related_playlists: self.related_playlists.iter().map(|p| PlaylistRef {
+                id: p.id.clone(),
+                title: p.title.clone(),
+                thumbnail: p.thumbnail.clone(),
+                subtitle: p.subtitle.clone(),
+            }).collect(),
+        }
+    }
+}
+
+impl AlbumDetailsData {
+    pub fn to_details(&self) -> crate::backends::youtube::details::AlbumDetails {
+        use crate::backends::youtube::details::*;
+        AlbumDetails {
+            id: self.id.clone(),
+            title: self.title.clone(),
+            artist: ArtistRef {
+                id: self.artist.id.clone(),
+                name: self.artist.name.clone(),
+                thumbnail: self.artist.thumbnail.clone(),
+            },
+            year: self.year.clone(),
+            thumbnail: self.thumbnail.clone(),
+            tracks: self.tracks.iter().map(|s| s.to_song()).collect(),
+            more_by_artist: self.more_by_artist.iter().map(|a| AlbumRef {
+                id: a.id.clone(),
+                title: a.title.clone(),
+                year: a.year.clone(),
+                thumbnail: a.thumbnail.clone(),
+            }).collect(),
+        }
+    }
+}
+
+impl ArtistDetailsData {
+    pub fn to_details(&self) -> crate::backends::youtube::details::ArtistDetails {
+        use crate::backends::youtube::details::*;
+        ArtistDetails {
+            id: self.id.clone(),
+            name: self.name.clone(),
+            subscribers: self.subscribers.clone(),
+            description: self.description.clone(),
+            thumbnail: self.thumbnail.clone(),
+            top_songs: self.top_songs.iter().map(|s| s.to_song()).collect(),
+            albums: self.albums.iter().map(|a| AlbumRef {
+                id: a.id.clone(),
+                title: a.title.clone(),
+                year: a.year.clone(),
+                thumbnail: a.thumbnail.clone(),
+            }).collect(),
+            singles: self.singles.iter().map(|a| AlbumRef {
+                id: a.id.clone(),
+                title: a.title.clone(),
+                year: a.year.clone(),
+                thumbnail: a.thumbnail.clone(),
+            }).collect(),
+            related_artists: self.related_artists.iter().map(|a| ArtistRef {
+                id: a.id.clone(),
+                name: a.name.clone(),
+                thumbnail: a.thumbnail.clone(),
+            }).collect(),
+        }
+    }
 }
 
 /// Frame-based protocol for reading/writing messages over socket

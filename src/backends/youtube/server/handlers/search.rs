@@ -4,7 +4,10 @@ use std::sync::Arc;
 
 use crate::backends::youtube::{
     services::ApiService,
-    protocol::{BrowseEntry, ServerResponse, SongData, SearchItemData},
+    protocol::{
+        BrowseEntry, ServerResponse, SongData, SearchItemData,
+        PlaylistDetailsData, AlbumDetailsData, ArtistDetailsData,
+    },
 };
 
 /// Handle Search command
@@ -41,4 +44,28 @@ pub fn handle_get_suggestions(api: &Arc<ApiService>, query: &str) -> ServerRespo
 pub fn handle_get_library(_category: &str) -> ServerResponse {
     // TODO: Implement library browsing
     ServerResponse::Library(vec![])
+}
+
+/// Handle BrowsePlaylistDetails command - returns rich playlist info
+pub fn handle_browse_playlist_details(api: &Arc<ApiService>, playlist_id: &str) -> ServerResponse {
+    match api.get_playlist_details(playlist_id) {
+        Ok(details) => ServerResponse::PlaylistDetails(PlaylistDetailsData::from(details)),
+        Err(e) => ServerResponse::Error(e.to_string()),
+    }
+}
+
+/// Handle BrowseAlbumDetails command - returns rich album info
+pub fn handle_browse_album_details(api: &Arc<ApiService>, album_id: &str) -> ServerResponse {
+    match api.get_album_details(album_id) {
+        Ok(details) => ServerResponse::AlbumDetails(AlbumDetailsData::from(details)),
+        Err(e) => ServerResponse::Error(e.to_string()),
+    }
+}
+
+/// Handle BrowseArtistDetails command - returns rich artist info
+pub fn handle_browse_artist_details(api: &Arc<ApiService>, artist_id: &str) -> ServerResponse {
+    match api.get_artist_details(artist_id) {
+        Ok(details) => ServerResponse::ArtistDetails(ArtistDetailsData::from(details)),
+        Err(e) => ServerResponse::Error(e.to_string()),
+    }
 }

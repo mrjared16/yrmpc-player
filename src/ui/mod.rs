@@ -63,6 +63,7 @@ pub mod list_ops;
 pub mod modals;
 pub mod panes;
 pub mod tab_screen;
+pub mod views;
 pub mod widgets;
 
 #[derive(Debug)]

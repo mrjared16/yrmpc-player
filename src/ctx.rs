@@ -44,7 +44,7 @@ pub const RATING_STICKER: &str = "rating";
 
 #[derive(derive_more::Debug)]
 pub struct Ctx {
-    pub(crate) mpd_version: Version,
+    pub(crate) backend_version: Version,
     pub(crate) config: std::sync::Arc<Config>,
     pub(crate) status: Status,
     pub(crate) queue: Vec<Song>,
@@ -96,15 +96,15 @@ impl Ctx {
         app_state: Arc<RwLock<crate::app_state::AppState>>,
     ) -> Result<Self> {
         let supported_commands: HashSet<String> = client.supported_commands();
-        let stickers_supported = if supported_commands.contains("sticker") {
-            // YouTube backend doesn't support MPD stickers - disable to prevent HTTP 400 errors
-            use crate::config::PlayerBackend;
-            match config.backend {
-                PlayerBackend::YouTube => StickersSupport::UnsupportedAndChecked,
-                PlayerBackend::Mpd => StickersSupport::Supported,
+        let stickers_supported = {
+            // Use capability system for cleaner backend-agnostic check
+            use crate::backends::BackendCapability;
+            if client.supports(BackendCapability::Stickers) {
+                StickersSupport::Supported
+            } else {
+                // YouTube and other streaming backends don't support MPD stickers
+                StickersSupport::UnsupportedAndChecked
             }
-        } else {
-            StickersSupport::Unsupported
         };
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
 
@@ -120,9 +120,12 @@ impl Ctx {
         // Sync AppState with current backend queue
         app_state.write().unwrap().replace_queue(queue.clone());
 
-        if !supported_commands.contains("albumart") || !supported_commands.contains("readpicture") {
-            config.album_art.method = ImageMethod::None;
-            status_warn!("Album art is disabled because it is not supported by MPD");
+        // Album art check - only warn for MPD backend (YouTube uses thumbnails from API)
+        if config.backend == crate::config::PlayerBackend::Mpd {
+            if !supported_commands.contains("albumart") && !supported_commands.contains("readpicture") {
+                config.album_art.method = ImageMethod::None;
+                status_warn!("Album art is disabled because it is not supported by MPD server");
+            }
         }
 
         log::info!(config:? = config; "Resolved config");
@@ -130,7 +133,7 @@ impl Ctx {
         let active_tab = config.tabs.names.first().context("Expected at least one tab")?.clone();
         scheduler.start();
         Ok(Self {
-            mpd_version: client.version(),
+            backend_version: client.version(),
             lrc_index: LrcIndex::default(),
             config: std::sync::Arc::new(config),
             status,

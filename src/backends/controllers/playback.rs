@@ -5,8 +5,7 @@
 use anyhow::Result;
 use std::time::Duration;
 
-use crate::backends::MusicBackend;
-use crate::mpd::commands::SeekPosition;
+use crate::backends::api::{self, Playback as PlaybackTrait};
 
 /// Controls playback state
 ///
@@ -17,7 +16,7 @@ use crate::mpd::commands::SeekPosition;
 /// dispatcher.playback().seek(SeekMode::Absolute(Duration::from_secs(30)))?;
 /// ```
 pub struct PlaybackController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn PlaybackTrait,
 }
 
 /// Seek mode for playback position
@@ -37,21 +36,21 @@ impl PlaybackController<'_> {
 
     /// Pause playback
     pub fn pause(&mut self) -> Result<()> {
-        self.backend.pause(true)
+        self.backend.pause()
     }
 
     /// Resume playback (unpause)
     pub fn resume(&mut self) -> Result<()> {
-        self.backend.pause(false)
+        self.backend.play()
     }
 
     /// Toggle between play and pause
     pub fn toggle(&mut self) -> Result<()> {
-        let status = self.backend.get_status()?;
+        let status = self.backend.status()?;
         match status.state {
-            crate::domain::PlaybackState::Play => self.pause(),
-            crate::domain::PlaybackState::Pause => self.resume(),
-            crate::domain::PlaybackState::Stop => self.play(),
+            api::State::Playing => self.pause(),
+            api::State::Paused => self.resume(),
+            api::State::Stopped => self.play(),
         }
     }
 
@@ -72,20 +71,24 @@ impl PlaybackController<'_> {
 
     /// Seek to a position
     pub fn seek(&mut self, mode: SeekMode) -> Result<()> {
-        let position = match mode {
-            SeekMode::Absolute(duration) => SeekPosition::Absolute(duration.as_secs_f64()),
-            SeekMode::Relative(delta) => SeekPosition::Relative(delta),
-        };
-        self.backend.seek_current(position)
+        match mode {
+            SeekMode::Absolute(duration) => self.backend.seek(duration),
+            SeekMode::Relative(delta) => self.backend.seek_relative(delta as i64),
+        }
     }
 
     /// Seek to absolute position in seconds
     pub fn seek_to(&mut self, seconds: f64) -> Result<()> {
-        self.backend.seek_current(SeekPosition::Absolute(seconds))
+        self.backend.seek(Duration::from_secs_f64(seconds))
     }
 
     /// Seek relative to current position
     pub fn seek_by(&mut self, delta: f64) -> Result<()> {
-        self.backend.seek_current(SeekPosition::Relative(delta))
+        self.backend.seek_relative(delta as i64)
+    }
+    
+    /// Get current playback status
+    pub fn status(&mut self) -> Result<api::Status> {
+        self.backend.status()
     }
 }

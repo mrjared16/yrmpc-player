@@ -7,6 +7,7 @@ pub mod queue;
 pub mod search;
 pub mod display;
 pub mod actions;
+pub mod details;
 
 // Re-export main types for convenience
 pub use song::Song;
@@ -14,3 +15,10 @@ pub use status::{Status, State as PlaybackState, OnOffOneshot};
 pub use queue::QueuePosition;
 pub use search::{SearchItem, PlayableItem, BrowsableItem, Displayable, ItemAction, QueueCapability, QueueAction};
 pub use actions::{QueueItemAction, QueueItemOps, ItemContext};
+
+// Detail types for content views
+pub use details::{
+    ArtistRef, AlbumRef, PlaylistRef,
+    AlbumDetails, ArtistDetails, PlaylistDetails,
+    ContentDetails,
+};

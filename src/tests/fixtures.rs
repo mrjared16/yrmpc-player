@@ -60,7 +60,7 @@ fn create_ctx_inner(
     client_tx: Sender<ClientRequest>,
 ) -> Ctx {
     Ctx {
-        mpd_version: Version::new(0, 0, 0),
+        backend_version: Version::new(0, 0, 0),
         config: Arc::new(Config::default()),
         status: Status::default(),
         queue: Vec::new(),

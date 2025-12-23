@@ -59,6 +59,9 @@
             "I":       ShowCurrentSongInfo,
             "O":       ShowOutputs,
             "P":       ShowDecoders,
+            "Q":       ToggleQueuePanel,
+            "L":       ExpandQueueToTab,
+            "H":       GoBack,
             "R":       AddRandom,
         },
         navigation: {

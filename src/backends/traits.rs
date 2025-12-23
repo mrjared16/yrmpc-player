@@ -291,11 +291,4 @@ pub trait MusicBackend: QueueOperations + Send + Sync {
 
     #[deprecated(note = "Use play_by_id(id) from QueueOperations trait instead")]
     fn play_id(&mut self, id: u32) -> Result<()>;
-
-    /// Downcast to YouTubeBackend if applicable (DEPRECATED stub)
-    #[deprecated(since = "0.12.0", note = "YouTubeBackend is deprecated. Implement browse via IPC instead.")]
-    #[allow(deprecated)]
-    fn as_youtube_backend(&mut self) -> Option<&mut crate::backends::youtube::YouTubeBackend> {
-        None
-    }
 }

@@ -140,8 +140,23 @@ impl<'name> BackendDispatcher<'name> {
         }
     }
 
-    // Helper to get mutable reference to backend as trait object
-    pub fn backend_mut(&mut self) -> &mut dyn MusicBackend {
+    /// Get mutable reference to backend as trait object.
+    /// 
+    /// # Internal Use Only
+    /// 
+    /// This is an escape hatch for code that needs direct backend access.
+    /// Prefer using the typed controller methods instead:
+    /// - `playback()` for play/pause/stop
+    /// - `queue()` for queue operations  
+    /// - `status()` for status queries (returns rich `domain::Status`)
+    /// - `volume_control()` for volume
+    /// - `library()` for search/browse
+    /// - `youtube()` for YouTube-specific features (browse details)
+    /// 
+    /// This method is `pub(crate)` because:
+    /// 1. MPD-specific controllers (stickers, outputs, database) need it
+    /// 2. StatusProvider needs it for rich `domain::Status`
+    pub(crate) fn backend_mut(&mut self) -> &mut dyn MusicBackend {
         match self {
             BackendDispatcher::Mpd(b) => b as &mut dyn MusicBackend,
             BackendDispatcher::YouTube(b) => b as &mut dyn MusicBackend,
@@ -173,12 +188,18 @@ impl<'name> BackendDispatcher<'name> {
 
     /// Get playback controller for play/pause/stop/seek operations
     pub fn playback(&mut self) -> PlaybackController<'_> {
-        PlaybackController { backend: self.backend_mut() }
+        match self {
+            BackendDispatcher::Mpd(b) => PlaybackController { backend: b as &mut dyn api::Playback },
+            BackendDispatcher::YouTube(b) => PlaybackController { backend: b as &mut dyn api::Playback },
+        }
     }
 
     /// Get queue controller for queue management
     pub fn queue(&mut self) -> QueueController<'_> {
-        QueueController { backend: self.backend_mut() }
+        match self {
+            BackendDispatcher::Mpd(b) => QueueController { backend: b as &mut dyn api::Queue },
+            BackendDispatcher::YouTube(b) => QueueController { backend: b as &mut dyn api::Queue },
+        }
     }
 
     /// Get status provider for current state queries
@@ -188,12 +209,18 @@ impl<'name> BackendDispatcher<'name> {
 
     /// Get volume controller
     pub fn volume_control(&mut self) -> VolumeController<'_> {
-        VolumeController { backend: self.backend_mut() }
+        match self {
+            BackendDispatcher::Mpd(b) => VolumeController { backend: b as &mut dyn api::Volume },
+            BackendDispatcher::YouTube(b) => VolumeController { backend: b as &mut dyn api::Volume },
+        }
     }
 
     /// Get library browser for search and browse operations
     pub fn library(&mut self) -> LibraryBrowser<'_> {
-        LibraryBrowser { backend: self.backend_mut() }
+        match self {
+            BackendDispatcher::Mpd(b) => LibraryBrowser { backend: b as &mut dyn api::Discovery },
+            BackendDispatcher::YouTube(b) => LibraryBrowser { backend: b as &mut dyn api::Discovery },
+        }
     }
 
     /// Get saved playlists controller (MPD only)
@@ -1079,6 +1106,204 @@ impl<'name> BackendDispatcher<'name> {
         match self {
             BackendDispatcher::Mpd(b) => b.client.send_find_add(filter, position.map(Into::into)).map_err(Into::into),
             BackendDispatcher::YouTube(_) => Ok(()),
+        }
+    }
+}
+
+//=============================================================================
+// API TRAIT IMPLEMENTATIONS
+//=============================================================================
+//
+// These provide the new backend-agnostic interface defined in api/.
+// They delegate to the underlying backend's API implementation.
+//
+// Note: The match pattern is intentionally explicit rather than using a macro.
+// With only 2 backends, explicit code is clearer than macro magic.
+// If we add more backends, consider extracting to a dispatch macro.
+
+use crate::backends::api::{self, Item, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
+
+impl api::Playback for BackendDispatcher<'_> {
+    fn play(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::play(b),
+            BackendDispatcher::YouTube(b) => api::Playback::play(b),
+        }
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::pause(b),
+            BackendDispatcher::YouTube(b) => api::Playback::pause(b),
+        }
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::stop(b),
+            BackendDispatcher::YouTube(b) => api::Playback::stop(b),
+        }
+    }
+
+    fn next(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::next(b),
+            BackendDispatcher::YouTube(b) => api::Playback::next(b),
+        }
+    }
+
+    fn previous(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::previous(b),
+            BackendDispatcher::YouTube(b) => api::Playback::previous(b),
+        }
+    }
+
+    fn seek(&mut self, position: std::time::Duration) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::seek(b, position),
+            BackendDispatcher::YouTube(b) => api::Playback::seek(b, position),
+        }
+    }
+
+    fn seek_relative(&mut self, delta_secs: i64) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::seek_relative(b, delta_secs),
+            BackendDispatcher::YouTube(b) => api::Playback::seek_relative(b, delta_secs),
+        }
+    }
+
+    fn status(&mut self) -> Result<api::Status> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Playback::status(b),
+            BackendDispatcher::YouTube(b) => api::Playback::status(b),
+        }
+    }
+}
+
+impl api::Queue for BackendDispatcher<'_> {
+    fn add(&mut self, items: &[Item], at: InsertAt, after: AfterAdd) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::add(b, items, at, after),
+            BackendDispatcher::YouTube(b) => api::Queue::add(b, items, at, after),
+        }
+    }
+
+    fn remove(&mut self, queue_ids: &[u32]) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::remove(b, queue_ids),
+            BackendDispatcher::YouTube(b) => api::Queue::remove(b, queue_ids),
+        }
+    }
+
+    fn list(&mut self) -> Result<Vec<Item>> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::list(b),
+            BackendDispatcher::YouTube(b) => api::Queue::list(b),
+        }
+    }
+
+    fn move_items(&mut self, queue_ids: &[u32], to_position: u32) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::move_items(b, queue_ids, to_position),
+            BackendDispatcher::YouTube(b) => api::Queue::move_items(b, queue_ids, to_position),
+        }
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::clear(b),
+            BackendDispatcher::YouTube(b) => api::Queue::clear(b),
+        }
+    }
+
+    fn play_id(&mut self, queue_id: u32) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::play_id(b, queue_id),
+            BackendDispatcher::YouTube(b) => api::Queue::play_id(b, queue_id),
+        }
+    }
+
+    fn set_repeat(&mut self, mode: api::Repeat) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::set_repeat(b, mode),
+            BackendDispatcher::YouTube(b) => api::Queue::set_repeat(b, mode),
+        }
+    }
+
+    fn set_shuffle(&mut self, enabled: bool) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Queue::set_shuffle(b, enabled),
+            BackendDispatcher::YouTube(b) => api::Queue::set_shuffle(b, enabled),
+        }
+    }
+}
+
+impl api::Discovery for BackendDispatcher<'_> {
+    fn search(&mut self, query: SearchQuery) -> Result<SearchResults> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Discovery::search(b, query),
+            BackendDispatcher::YouTube(b) => api::Discovery::search(b, query),
+        }
+    }
+
+    fn browse(&mut self, path: &str) -> Result<BrowseResult> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Discovery::browse(b, path),
+            BackendDispatcher::YouTube(b) => api::Discovery::browse(b, path),
+        }
+    }
+
+    fn suggestions(&mut self, partial: &str) -> Result<Vec<String>> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Discovery::suggestions(b, partial),
+            BackendDispatcher::YouTube(b) => api::Discovery::suggestions(b, partial),
+        }
+    }
+
+    fn resolve(&mut self, item: &Item) -> Result<Vec<Item>> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Discovery::resolve(b, item),
+            BackendDispatcher::YouTube(b) => api::Discovery::resolve(b, item),
+        }
+    }
+
+    fn details(&mut self, item: &Item) -> Result<crate::domain::ContentDetails> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Discovery::details(b, item),
+            BackendDispatcher::YouTube(b) => api::Discovery::details(b, item),
+        }
+    }
+}
+
+impl api::Volume for BackendDispatcher<'_> {
+    fn get(&mut self) -> Result<u8> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Volume::get(b),
+            BackendDispatcher::YouTube(b) => api::Volume::get(b),
+        }
+    }
+
+    fn set(&mut self, volume: u8) -> Result<()> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Volume::set(b, volume),
+            BackendDispatcher::YouTube(b) => api::Volume::set(b, volume),
+        }
+    }
+}
+
+impl api::Backend for BackendDispatcher<'_> {
+    fn name(&self) -> &'static str {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Backend::name(b),
+            BackendDispatcher::YouTube(b) => api::Backend::name(b),
+        }
+    }
+
+    fn capabilities(&self) -> &[Capability] {
+        match self {
+            BackendDispatcher::Mpd(b) => api::Backend::capabilities(b),
+            BackendDispatcher::YouTube(b) => api::Backend::capabilities(b),
         }
     }
 }

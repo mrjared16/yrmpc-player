@@ -13,6 +13,7 @@
 //!
 //! The `protocol` submodule contains the MPD protocol implementation.
 
+mod api_impl;
 mod backend;
 pub mod protocol;
 

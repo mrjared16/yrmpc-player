@@ -1,78 +1,91 @@
 //! Queue management operations
 //!
-//! Add, remove, reorder, and manage songs in the playback queue.
+//! Add, remove, reorder, and manage items in the playback queue.
 
 use anyhow::Result;
 
-use crate::backends::{MusicBackend, QueueOperations};
-use crate::domain::{Song, QueuePosition};
+use crate::backends::api::{Queue as QueueTrait, Item, InsertAt, AfterAdd, Repeat};
 
 /// Manages the playback queue
 ///
 /// # Example
 ///
 /// ```ignore
-/// dispatcher.queue().add(&song, None)?;
+/// dispatcher.queue().add(&[item], InsertAt::End, AfterAdd::Nothing)?;
 /// dispatcher.queue().clear()?;
-/// dispatcher.queue().shuffle()?;
 /// ```
 pub struct QueueController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn QueueTrait,
 }
 
 impl QueueController<'_> {
-    /// Get all songs in the queue
-    pub fn list(&mut self) -> Result<Vec<Song>> {
-        self.backend.playlist_info()
+    /// Get all items in the queue
+    pub fn list(&mut self) -> Result<Vec<Item>> {
+        self.backend.list()
     }
 
-    /// Add a song to the queue
+    /// Add items to the queue
     ///
     /// # Arguments
-    /// * `song` - The song to add (with full metadata)
-    /// * `position` - Where to insert (None = end of queue)
-    pub fn add(&mut self, song: &Song, position: Option<QueuePosition>) -> Result<()> {
-        self.backend.enqueue(song, position)
+    /// * `items` - Items to add
+    /// * `at` - Where to insert (End, Next, Position, Replace)
+    /// * `after` - What to do after adding (Nothing, PlayFirst, PlayIndex)
+    pub fn add(&mut self, items: &[Item], at: InsertAt, after: AfterAdd) -> Result<()> {
+        self.backend.add(items, at, after)
     }
 
-    /// Add a song by URI (less metadata, use `add` when possible)
-    #[allow(deprecated)]
-    pub fn add_uri(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
-        self.backend.add(uri, position)
+    /// Add a single item at the end of the queue
+    pub fn add_one(&mut self, item: &Item) -> Result<()> {
+        self.backend.add(&[item.clone()], InsertAt::End, AfterAdd::Nothing)
     }
 
-    /// Remove a song from the queue by ID
-    pub fn remove(&mut self, id: u32) -> Result<()> {
-        self.backend.dequeue(id)
+    /// Add a single item and start playing it
+    pub fn add_and_play(&mut self, item: &Item) -> Result<()> {
+        self.backend.add(&[item.clone()], InsertAt::End, AfterAdd::PlayFirst)
+    }
+
+    /// Remove items from the queue by ID
+    pub fn remove(&mut self, queue_ids: &[u32]) -> Result<()> {
+        self.backend.remove(queue_ids)
+    }
+
+    /// Remove a single item from the queue by ID
+    pub fn remove_one(&mut self, queue_id: u32) -> Result<()> {
+        self.backend.remove(&[queue_id])
     }
 
     /// Clear the entire queue
     pub fn clear(&mut self) -> Result<()> {
-        self.backend.clear_queue()
+        self.backend.clear()
     }
 
-    /// Move a song to a new position in the queue
-    pub fn move_song(&mut self, from_id: u32, to_id: u32) -> Result<()> {
-        self.backend.reorder(from_id, to_id)
+    /// Move items to a new position in the queue
+    pub fn move_items(&mut self, queue_ids: &[u32], to_position: u32) -> Result<()> {
+        self.backend.move_items(queue_ids, to_position)
     }
 
-    /// Play a specific song in the queue by ID
-    pub fn play(&mut self, id: u32) -> Result<()> {
-        self.backend.play_by_id(id)
+    /// Play a specific item in the queue by ID
+    pub fn play(&mut self, queue_id: u32) -> Result<()> {
+        self.backend.play_id(queue_id)
     }
 
-    /// Shuffle the queue
-    pub fn shuffle(&mut self) -> Result<()> {
-        self.backend.shuffle(None)
+    /// Set repeat mode
+    pub fn set_repeat(&mut self, mode: Repeat) -> Result<()> {
+        self.backend.set_repeat(mode)
     }
 
-    /// Get the number of songs in the queue
+    /// Set shuffle on/off
+    pub fn set_shuffle(&mut self, enabled: bool) -> Result<()> {
+        self.backend.set_shuffle(enabled)
+    }
+
+    /// Get the number of items in the queue
     pub fn len(&mut self) -> Result<usize> {
-        Ok(self.backend.playlist_info()?.len())
+        Ok(self.backend.list()?.len())
     }
 
     /// Check if the queue is empty
     pub fn is_empty(&mut self) -> Result<bool> {
-        Ok(self.backend.playlist_info()?.is_empty())
+        Ok(self.backend.list()?.is_empty())
     }
 }

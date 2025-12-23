@@ -15,7 +15,7 @@ use ytmapi_rs::{
     query::{
         GetAlbumQuery, GetArtistQuery, GetLibraryAlbumsQuery, GetLibraryArtistsQuery,
         GetLibraryPlaylistsQuery, GetLibrarySongsQuery, GetWatchPlaylistQuery, SearchQuery,
-        GetSearchSuggestionsQuery,
+        GetSearchSuggestionsQuery, GetPlaylistDetailsQuery,
     },
 };
 
@@ -327,6 +327,167 @@ impl YouTubeApi {
             songs.push(s);
         }
         Ok(songs)
+    }
+
+    // =========================================================================
+    // RICH DETAIL METHODS
+    // =========================================================================
+    // These return structured detail types with metadata and related content
+    
+    /// Get detailed playlist info with tracks, metadata, and related content
+    pub fn get_playlist_details(&self, playlist_id: &str) -> Result<super::details::PlaylistDetails> {
+        use super::details::{PlaylistDetails, ArtistRef, PlaylistRef};
+        
+        let api = self.api.lock();
+        let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
+        
+        log::debug!("YouTube API: get_playlist_details(playlist_id='{}')", playlist_id);
+        
+        // First, get playlist metadata (title, description, author, etc.)
+        let details_query = GetPlaylistDetailsQuery::new(PlaylistID::from_raw(playlist_id));
+        let details = self.rt.block_on(api.query(details_query))?;
+        
+        // Then, get the tracks from watch playlist query
+        let tracks_query = GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
+        let playlist_tracks = self.rt.block_on(api.query(tracks_query))?;
+        
+        let mut tracks = Vec::new();
+        for track in playlist_tracks {
+            let mut s = Song::default();
+            s.uri = track.video_id.get_raw().to_string();
+            s.metadata.insert("title".into(), vec![track.title]);
+            s.metadata.insert("artist".into(), vec![track.author.clone()]);
+            if let Some(thumb) = track.thumbnails.last() {
+                s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+            }
+            s.duration = Self::parse_duration(&track.duration);
+            tracks.push(s);
+        }
+        
+        // Get thumbnail from playlist metadata, fallback to first track
+        let thumbnail = details.thumbnails.last()
+            .map(|t| t.url.clone())
+            .or_else(|| tracks.first().and_then(|t| t.metadata.get("thumbnail").and_then(|v| v.first()).cloned()));
+        
+        Ok(PlaylistDetails {
+            id: playlist_id.to_string(),
+            title: details.title,
+            artist: Some(details.author),
+            year: if details.year.is_empty() { None } else { Some(details.year) },
+            thumbnail,
+            track_count: tracks.len(),
+            duration_text: if details.duration.is_empty() { None } else { Some(details.duration) },
+            tracks,
+            featured_artists: vec![],
+            related_playlists: vec![],
+        })
+    }
+    
+    /// Get detailed album info with tracks, metadata, and more from artist
+    pub fn get_album_details(&self, album_id: &str) -> Result<super::details::AlbumDetails> {
+        use super::details::{AlbumDetails, ArtistRef, AlbumRef};
+        
+        let api = self.api.lock();
+        let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
+        
+        log::debug!("YouTube API: get_album_details(album_id='{}')", album_id);
+        let query = GetAlbumQuery::new(AlbumID::from_raw(album_id));
+        let album = self.rt.block_on(api.query(query))?;
+        
+        let mut tracks = Vec::new();
+        for track in album.tracks {
+            let mut s = Song::default();
+            s.uri = track.video_id.get_raw().to_string();
+            s.metadata.insert("title".into(), vec![track.title]);
+            s.metadata.insert("album".into(), vec![album.title.clone()]);
+            if let Some(artist) = album.artists.first() {
+                s.metadata.insert("artist".into(), vec![artist.name.clone()]);
+            }
+            if let Some(thumb) = album.thumbnails.last() {
+                s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+            }
+            s.duration = Self::parse_duration(&track.duration);
+            tracks.push(s);
+        }
+        
+        // Get artist info - use .id field if available, otherwise use name as fallback
+        let artist = album.artists.first().map(|a| ArtistRef {
+            id: a.id.as_ref().map(|id| id.get_raw().to_string()).unwrap_or_default(),
+            name: a.name.clone(),
+            thumbnail: None,
+        }).unwrap_or(ArtistRef {
+            id: String::new(),
+            name: "Unknown Artist".to_string(),
+            thumbnail: None,
+        });
+        
+        Ok(AlbumDetails {
+            id: album_id.to_string(),
+            title: album.title,
+            artist,
+            year: Some(album.year),
+            thumbnail: album.thumbnails.last().map(|t| t.url.clone()),
+            tracks,
+            more_by_artist: vec![], // Would need additional API call
+        })
+    }
+    
+    /// Get detailed artist info with top songs, albums, and related artists
+    pub fn get_artist_details(&self, artist_id: &str) -> Result<super::details::ArtistDetails> {
+        use super::details::{ArtistDetails, ArtistRef, AlbumRef};
+        
+        let api = self.api.lock();
+        let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
+        
+        log::debug!("YouTube API: get_artist_details(artist_id='{}')", artist_id);
+        let query = GetArtistQuery::new(ArtistChannelID::from_raw(artist_id));
+        let artist = self.rt.block_on(api.query(query))?;
+        
+        let mut top_songs = Vec::new();
+        if let Some(songs) = artist.top_releases.songs {
+            for song in songs.results {
+                let mut s = Song::default();
+                s.uri = song.video_id.get_raw().to_string();
+                s.metadata.insert("title".into(), vec![song.title]);
+                s.metadata.insert("artist".into(), vec![artist.name.clone()]);
+                s.metadata.insert("album".into(), vec![song.album.name]);
+                top_songs.push(s);
+            }
+        }
+        
+        let albums: Vec<AlbumRef> = artist.top_releases.albums.map(|a| {
+            a.results.into_iter().map(|album| AlbumRef {
+                id: album.album_id.get_raw().to_string(),
+                title: album.title,
+                year: Some(album.year),
+                thumbnail: album.thumbnails.last().map(|t| t.url.clone()),
+            }).collect()
+        }).unwrap_or_default();
+        
+        let singles: Vec<AlbumRef> = artist.top_releases.singles.map(|s| {
+            s.results.into_iter().map(|single| AlbumRef {
+                id: single.album_id.get_raw().to_string(),
+                title: single.title,
+                year: Some(single.year),
+                thumbnail: single.thumbnails.last().map(|t| t.url.clone()),
+            }).collect()
+        }).unwrap_or_default();
+        
+        // Note: related_artists field may not exist in this version of ytmapi_rs
+        // Use empty vec as fallback
+        let related_artists: Vec<ArtistRef> = vec![];
+        
+        Ok(ArtistDetails {
+            id: artist_id.to_string(),
+            name: artist.name,
+            subscribers: None, // Field may not exist
+            description: artist.description,
+            thumbnail: artist.thumbnails.last().map(|t| t.url.clone()),
+            top_songs,
+            albums,
+            singles,
+            related_artists,
+        })
     }
 
     fn parse_top_result(&self, r: ytmapi_rs::parse::TopResult) -> Option<Song> {

@@ -435,11 +435,9 @@ impl SearchPaneV2 {
             .id("fetch_playlist_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_playlist(&playlist_id)?;
-                    Ok(QueryResult::PlaylistDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_playlist_details(&playlist_id)?;
+                    Ok(QueryResult::PlaylistDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }
@@ -451,11 +449,9 @@ impl SearchPaneV2 {
             .id("fetch_album_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_album(&album_id)?;
-                    Ok(QueryResult::AlbumDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_album_details(&album_id)?;
+                    Ok(QueryResult::AlbumDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }
@@ -467,11 +463,9 @@ impl SearchPaneV2 {
             .id("fetch_artist_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_artist(&artist_id)?;
-                    Ok(QueryResult::ArtistDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_artist_details(&artist_id)?;
+                    Ok(QueryResult::ArtistDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }

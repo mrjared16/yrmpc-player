@@ -195,6 +195,38 @@ impl YouTubeProxy {
     pub fn shutdown(&mut self) -> Result<()> {
         self.request_ok(ServerCommand::Shutdown)
     }
+    
+    // =========================================================================
+    // RICH BROWSE DETAIL METHODS
+    // =========================================================================
+    // These return structured detail types via IPC to the daemon
+    
+    /// Get detailed playlist info with tracks and metadata
+    pub fn browse_playlist_details(&mut self, playlist_id: &str) -> Result<super::PlaylistDetails> {
+        match self.request(ServerCommand::BrowsePlaylistDetails { playlist_id: playlist_id.to_string() })? {
+            ServerResponse::PlaylistDetails(data) => Ok(data.to_details()),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+    
+    /// Get detailed album info with tracks and metadata
+    pub fn browse_album_details(&mut self, album_id: &str) -> Result<super::AlbumDetails> {
+        match self.request(ServerCommand::BrowseAlbumDetails { album_id: album_id.to_string() })? {
+            ServerResponse::AlbumDetails(data) => Ok(data.to_details()),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+    
+    /// Get detailed artist info with discography
+    pub fn browse_artist_details(&mut self, artist_id: &str) -> Result<super::ArtistDetails> {
+        match self.request(ServerCommand::BrowseArtistDetails { artist_id: artist_id.to_string() })? {
+            ServerResponse::ArtistDetails(data) => Ok(data.to_details()),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
 
     /// Try to clone the underlying stream (for idle connections)
     pub fn try_clone_stream(&self) -> Result<UnixStream> {
@@ -535,6 +567,381 @@ impl MusicBackend for YouTubeProxy {
 
     fn version(&self) -> Version {
         Version { major: 0, minor: 1, patch: 0 }
+    }
+}
+
+//=============================================================================
+// API TRAIT IMPLEMENTATION
+//=============================================================================
+//
+// These traits provide a clean, MPD-free interface for the TUI.
+// They wrap the existing MusicBackend methods with simpler types.
+
+use crate::backends::api::{self, Item, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
+
+impl api::Playback for YouTubeProxy {
+    fn play(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Play)
+    }
+
+    fn pause(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Pause)
+    }
+
+    fn stop(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Stop)
+    }
+
+    fn next(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Next)
+    }
+
+    fn previous(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Previous)
+    }
+
+    fn seek(&mut self, position: std::time::Duration) -> Result<()> {
+        self.request_ok(ServerCommand::SeekAbsolute(position.as_secs_f64()))
+    }
+
+    fn seek_relative(&mut self, delta_secs: i64) -> Result<()> {
+        self.request_ok(ServerCommand::SeekRelative(delta_secs as f64))
+    }
+
+    fn status(&mut self) -> Result<api::Status> {
+        match self.request(ServerCommand::GetStatus)? {
+            ServerResponse::Status(s) => {
+                let domain_status = s.to_status();
+                Ok(api::Status {
+                    state: domain_status.state.into(),
+                    position: domain_status.elapsed,
+                    duration: domain_status.duration,
+                    volume: domain_status.volume,
+                    repeat: match (domain_status.repeat, domain_status.single) {
+                        (true, crate::domain::status::OnOffOneshot::On) => api::Repeat::One,
+                        (true, _) => api::Repeat::All,
+                        (false, _) => api::Repeat::Off,
+                    },
+                    shuffle: domain_status.random,
+                })
+            }
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+}
+
+impl api::Queue for YouTubeProxy {
+    fn add(&mut self, items: &[Item], at: InsertAt, after: AfterAdd) -> Result<()> {
+        // Handle Replace mode - clear first
+        if at == InsertAt::Replace {
+            self.request_ok(ServerCommand::Clear)?;
+        }
+
+        // Calculate starting position
+        let start_pos = match at {
+            InsertAt::End | InsertAt::Replace => None,
+            InsertAt::Next => {
+                // Get current position and insert after it
+                if let ServerResponse::Status(s) = self.request(ServerCommand::GetStatus)? {
+                    s.current_pos.map(|p| p + 1)
+                } else {
+                    None
+                }
+            }
+            InsertAt::Position(p) => Some(p),
+        };
+
+        // Add each item
+        for (i, item) in items.iter().enumerate() {
+            let pos = start_pos.map(|p| p + i as u32);
+            let song_data = SongData {
+                id: item.queue_id,
+                file: item.id.clone(),
+                title: Some(item.title.clone()),
+                artist: item.subtitle.clone(),
+                album: None,
+                duration_ms: item.duration.map(|d| d.as_millis() as u64),
+                thumbnail: item.thumbnail.clone(),
+                item_type: Some(match item.content_type {
+                    api::ContentType::Track => "song",
+                    api::ContentType::Album => "album",
+                    api::ContentType::Artist => "artist",
+                    api::ContentType::Playlist => "playlist",
+                    _ => "song",
+                }.to_string()),
+            };
+            self.request_ok(ServerCommand::AddSong { song: song_data, position: pos })?;
+        }
+
+        // Handle autoplay
+        match after {
+            AfterAdd::Nothing => {}
+            AfterAdd::PlayFirst => {
+                // Play the first added item
+                if let Some(pos) = start_pos {
+                    self.request_ok(ServerCommand::PlayPos(pos as usize))?;
+                } else if !items.is_empty() {
+                    // Added at end, play last position
+                    if let ServerResponse::Status(s) = self.request(ServerCommand::GetStatus)? {
+                        let play_pos = s.playlist_length.saturating_sub(items.len() as u32);
+                        self.request_ok(ServerCommand::PlayPos(play_pos as usize))?;
+                    }
+                }
+            }
+            AfterAdd::PlayIndex(idx) => {
+                if idx < items.len() {
+                    if let Some(pos) = start_pos {
+                        self.request_ok(ServerCommand::PlayPos((pos as usize) + idx))?;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn remove(&mut self, queue_ids: &[u32]) -> Result<()> {
+        for id in queue_ids {
+            self.request_ok(ServerCommand::DeleteId(*id))?;
+        }
+        Ok(())
+    }
+
+    fn list(&mut self) -> Result<Vec<Item>> {
+        match self.request(ServerCommand::GetPlaylist)? {
+            ServerResponse::Playlist(songs) => {
+                Ok(songs.into_iter().map(|sd| {
+                    Item {
+                        id: sd.file.clone(),
+                        content_type: api::ContentType::Track,
+                        title: sd.title.unwrap_or_else(|| sd.file.clone()),
+                        subtitle: sd.artist,
+                        thumbnail: sd.thumbnail,
+                        duration: sd.duration_ms.map(std::time::Duration::from_millis),
+                        queue_id: sd.id,
+                    }
+                }).collect())
+            }
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn move_items(&mut self, queue_ids: &[u32], to_position: u32) -> Result<()> {
+        // Move each item to the target position
+        // Note: This is a simplification - proper bulk move would need daemon support
+        for (i, id) in queue_ids.iter().enumerate() {
+            self.request_ok(ServerCommand::MoveId { 
+                from: *id, 
+                to: to_position + i as u32 
+            })?;
+        }
+        Ok(())
+    }
+
+    fn clear(&mut self) -> Result<()> {
+        self.request_ok(ServerCommand::Clear)
+    }
+
+    fn play_id(&mut self, queue_id: u32) -> Result<()> {
+        self.request_ok(ServerCommand::PlayId(queue_id))
+    }
+
+    fn set_repeat(&mut self, mode: api::Repeat) -> Result<()> {
+        let mode_str = match mode {
+            api::Repeat::Off => "off",
+            api::Repeat::All => "all",
+            api::Repeat::One => "one",
+        };
+        self.request_ok(ServerCommand::SetRepeat(mode_str.to_string()))
+    }
+
+    fn set_shuffle(&mut self, enabled: bool) -> Result<()> {
+        self.request_ok(ServerCommand::SetShuffle(enabled))
+    }
+}
+
+impl api::Discovery for YouTubeProxy {
+    fn search(&mut self, query: SearchQuery) -> Result<SearchResults> {
+        if query.text.is_empty() {
+            return Ok(SearchResults::default());
+        }
+        
+        match self.request(ServerCommand::Search { query: query.text })? {
+            ServerResponse::SearchResults(items) => {
+                let items = items.into_iter().filter_map(|item| {
+                    search_item_data_to_song(item).map(|song| Item::from(&song))
+                }).collect();
+                Ok(SearchResults { items })
+            }
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn browse(&mut self, path: &str) -> Result<BrowseResult> {
+        if path.is_empty() {
+            return Ok(BrowseResult {
+                path: path.to_string(),
+                items: vec![],
+                parent: None,
+            });
+        }
+
+        match self.request(ServerCommand::Browse { path: path.to_string() })? {
+            ServerResponse::BrowseResults(entries) => {
+                let items = entries.into_iter().map(|e| match e {
+                    BrowseEntry::Dir { name, path } => Item {
+                        id: path,
+                        content_type: api::ContentType::Directory,
+                        title: name,
+                        subtitle: None,
+                        thumbnail: None,
+                        duration: None,
+                        queue_id: None,
+                    },
+                    BrowseEntry::File(sd) => Item {
+                        id: sd.file.clone(),
+                        content_type: api::ContentType::Track,
+                        title: sd.title.unwrap_or_else(|| sd.file.clone()),
+                        subtitle: sd.artist,
+                        thumbnail: sd.thumbnail,
+                        duration: sd.duration_ms.map(std::time::Duration::from_millis),
+                        queue_id: sd.id,
+                    },
+                }).collect();
+
+                Ok(BrowseResult {
+                    path: path.to_string(),
+                    items,
+                    parent: path.rsplit_once('/').map(|(p, _)| p.to_string()),
+                })
+            }
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn suggestions(&mut self, partial: &str) -> Result<Vec<String>> {
+        if partial.is_empty() {
+            return Ok(vec![]);
+        }
+        match self.request(ServerCommand::GetSearchSuggestions { query: partial.to_string() })? {
+            ServerResponse::Suggestions(s) => Ok(s),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn details(&mut self, item: &Item) -> Result<crate::domain::ContentDetails> {
+        use crate::domain::{ContentDetails, AlbumDetails, ArtistDetails, PlaylistDetails};
+        use crate::domain::{ArtistRef, AlbumRef, PlaylistRef};
+        
+        match item.content_type {
+            api::ContentType::Album => {
+                let yt_album = self.browse_album_details(&item.id)?;
+                Ok(ContentDetails::Album(AlbumDetails {
+                    id: yt_album.id,
+                    title: yt_album.title,
+                    artist: ArtistRef {
+                        id: yt_album.artist.id,
+                        name: yt_album.artist.name,
+                        thumbnail: yt_album.artist.thumbnail,
+                    },
+                    year: yt_album.year,
+                    description: None, // YouTube albums may not have description in current impl
+                    thumbnail: yt_album.thumbnail,
+                    tracks: yt_album.tracks,
+                    more_by_artist: yt_album.more_by_artist.into_iter().map(|a| AlbumRef {
+                        id: a.id,
+                        title: a.title,
+                        year: a.year,
+                        thumbnail: a.thumbnail,
+                    }).collect(),
+                }))
+            }
+            api::ContentType::Artist => {
+                let yt_artist = self.browse_artist_details(&item.id)?;
+                Ok(ContentDetails::Artist(ArtistDetails {
+                    id: yt_artist.id,
+                    name: yt_artist.name,
+                    subscribers: yt_artist.subscribers,
+                    description: yt_artist.description,
+                    thumbnail: yt_artist.thumbnail,
+                    top_songs: yt_artist.top_songs,
+                    albums: yt_artist.albums.into_iter().map(|a| AlbumRef {
+                        id: a.id,
+                        title: a.title,
+                        year: a.year,
+                        thumbnail: a.thumbnail,
+                    }).collect(),
+                    singles: yt_artist.singles.into_iter().map(|a| AlbumRef {
+                        id: a.id,
+                        title: a.title,
+                        year: a.year,
+                        thumbnail: a.thumbnail,
+                    }).collect(),
+                    related_artists: yt_artist.related_artists.into_iter().map(|a| ArtistRef {
+                        id: a.id,
+                        name: a.name,
+                        thumbnail: a.thumbnail,
+                    }).collect(),
+                }))
+            }
+            api::ContentType::Playlist => {
+                let yt_playlist = self.browse_playlist_details(&item.id)?;
+                Ok(ContentDetails::Playlist(PlaylistDetails {
+                    id: yt_playlist.id,
+                    title: yt_playlist.title,
+                    author: yt_playlist.artist,
+                    year: yt_playlist.year,
+                    description: None, // Not currently fetched
+                    thumbnail: yt_playlist.thumbnail,
+                    track_count: yt_playlist.track_count,
+                    duration_text: yt_playlist.duration_text,
+                    tracks: yt_playlist.tracks,
+                    featured_artists: yt_playlist.featured_artists.into_iter().map(|a| ArtistRef {
+                        id: a.id,
+                        name: a.name,
+                        thumbnail: a.thumbnail,
+                    }).collect(),
+                    related_playlists: yt_playlist.related_playlists.into_iter().map(|p| PlaylistRef {
+                        id: p.id,
+                        title: p.title,
+                        subtitle: p.subtitle,
+                        thumbnail: p.thumbnail,
+                    }).collect(),
+                }))
+            }
+            other => Err(anyhow!("Cannot get details for content type: {:?}", other)),
+        }
+    }
+
+    // resolve() uses default implementation - track returns itself
+}
+
+impl api::Volume for YouTubeProxy {
+    fn get(&mut self) -> Result<u8> {
+        match self.request(ServerCommand::GetVolume)? {
+            ServerResponse::Volume(v) => Ok(v),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn set(&mut self, volume: u8) -> Result<()> {
+        self.request_ok(ServerCommand::SetVolume(volume))
+    }
+}
+
+impl api::Backend for YouTubeProxy {
+    fn name(&self) -> &'static str {
+        "YouTube"
+    }
+
+    fn capabilities(&self) -> &[Capability] {
+        &[Capability::RichMetadata]
     }
 }
 

@@ -4,8 +4,7 @@
 
 use anyhow::Result;
 
-use crate::backends::MusicBackend;
-use crate::mpd::commands::ValueChange;
+use crate::backends::api::Volume as VolumeTrait;
 
 /// Controls playback volume
 ///
@@ -17,39 +16,43 @@ use crate::mpd::commands::ValueChange;
 /// let current = dispatcher.volume().get()?;
 /// ```
 pub struct VolumeController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn VolumeTrait,
 }
 
 impl VolumeController<'_> {
     /// Get current volume level (0-100)
     pub fn get(&mut self) -> Result<u8> {
-        self.backend.volume()
+        self.backend.get()
     }
 
     /// Set absolute volume level (0-100)
     pub fn set(&mut self, level: u8) -> Result<()> {
-        self.backend.set_volume(ValueChange::Set(level.min(100) as u32))
+        self.backend.set(level.min(100))
     }
 
     /// Adjust volume relatively
     ///
     /// Positive values increase, negative values decrease.
     pub fn adjust(&mut self, delta: i8) -> Result<()> {
-        if delta >= 0 {
-            self.backend.set_volume(ValueChange::Increase(delta as u32))
+        let current = self.get()?;
+        let new_level = if delta >= 0 {
+            current.saturating_add(delta as u8).min(100)
         } else {
-            self.backend.set_volume(ValueChange::Decrease((-delta) as u32))
-        }
+            current.saturating_sub((-delta) as u8)
+        };
+        self.set(new_level)
     }
 
     /// Increase volume by amount
     pub fn up(&mut self, amount: u8) -> Result<()> {
-        self.backend.set_volume(ValueChange::Increase(amount as u32))
+        let current = self.get()?;
+        self.set(current.saturating_add(amount).min(100))
     }
 
     /// Decrease volume by amount
     pub fn down(&mut self, amount: u8) -> Result<()> {
-        self.backend.set_volume(ValueChange::Decrease(amount as u32))
+        let current = self.get()?;
+        self.set(current.saturating_sub(amount))
     }
 
     /// Mute (set to 0)

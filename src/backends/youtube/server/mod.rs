@@ -269,6 +269,17 @@ impl YouTubeServer {
                 handlers::handle_get_suggestions(&self.api, &query)
             }
             ServerCommand::GetLibrary { category } => handlers::handle_get_library(&category),
+            
+            // Rich browse details handlers
+            ServerCommand::BrowsePlaylistDetails { playlist_id } => {
+                handlers::handle_browse_playlist_details(&self.api, &playlist_id)
+            }
+            ServerCommand::BrowseAlbumDetails { album_id } => {
+                handlers::handle_browse_album_details(&self.api, &album_id)
+            }
+            ServerCommand::BrowseArtistDetails { artist_id } => {
+                handlers::handle_browse_artist_details(&self.api, &artist_id)
+            }
 
             // Idle handler
             ServerCommand::Idle { subsystems } => self.handle_idle(subsystems),

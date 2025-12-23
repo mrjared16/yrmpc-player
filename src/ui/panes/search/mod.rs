@@ -94,9 +94,9 @@ enum LayoutMode {
 /// Detail view content for FullDetail mode
 #[derive(Debug, Clone)]
 enum DetailView {
-    Playlist(crate::backends::youtube::PlaylistDetails),
-    Album(crate::backends::youtube::AlbumDetails),
-    Artist(crate::backends::youtube::ArtistDetails),
+    Playlist(crate::domain::PlaylistDetails),
+    Album(crate::domain::AlbumDetails),
+    Artist(crate::domain::ArtistDetails),
 }
 
 #[derive(Debug)]
@@ -142,7 +142,7 @@ impl SearchPane {
             .current_item_style(config.theme.current_item_style)
             .highlight_item_style(config.theme.highlighted_item_style)
             .stickers_supported(ctx.stickers_supported.into())
-            .strip_diacritics_supported(ctx.mpd_version >= Version::new(0, 25, 0))
+            .strip_diacritics_supported(ctx.backend_version >= Version::new(0, 25, 0))
             .build();
 
         Self {
@@ -421,11 +421,9 @@ impl SearchPane {
             .id("fetch_playlist")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_playlist(&playlist_id)?;
-                    Ok(QueryResult::PlaylistDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_playlist_details(&playlist_id)?;
+                    Ok(QueryResult::PlaylistDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }
@@ -445,11 +443,9 @@ impl SearchPane {
             .id("fetch_album")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_album(&album_id)?;
-                    Ok(QueryResult::AlbumDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_album_details(&album_id)?;
+                    Ok(QueryResult::AlbumDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }
@@ -469,11 +465,9 @@ impl SearchPane {
             .id("fetch_artist")
             .target(PaneType::Search)
             .query(move |client| {
-                use crate::backends::youtube::YouTubeBackend;
-                
-                if let Some(backend) = client.backend_mut().as_youtube_backend() {
-                    let details = backend.browse_artist(&artist_id)?;
-                    Ok(QueryResult::ArtistDetail(details))
+                if let Some(yt) = client.youtube() {
+                    let details = yt.browse_artist_details(&artist_id)?;
+                    Ok(QueryResult::ArtistDetail(details.into()))
                 } else {
                     anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
                 }
