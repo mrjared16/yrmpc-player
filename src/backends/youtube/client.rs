@@ -86,8 +86,42 @@ fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> S
     }
 }
 
-/// Proxy that connects to YouTube daemon server via IPC.
-/// This is NOT a YouTube API client - it's an IPC proxy to the daemon.
+/// YouTube backend client - connects to YouTube daemon via Unix socket IPC.
+///
+/// **This is the canonical entry point for YouTube backend in the TUI.**
+///
+/// The actual backend logic (MPV management, API calls, queue state) lives
+/// in the YouTubeServer daemon process. This proxy forwards commands via IPC.
+///
+/// # Architecture
+///
+/// ```text
+/// TUI Process          Daemon Process
+/// ───────────          ──────────────
+/// YouTubeProxy  ──IPC──>  YouTubeServer
+///                            ├─> MPV (playback)
+///                            ├─> YouTube API (metadata)
+///                            └─> QueueService (state)
+/// ```
+///
+/// # Communication
+///
+/// - **Protocol**: Custom JSON-based protocol with length-prefixed framing
+/// - **Transport**: Unix domain socket (default: `/tmp/yrmpc-yt.sock`)
+/// - **Pattern**: Request-response (synchronous from proxy perspective)
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let proxy = YouTubeProxy::connect(Path::new("/tmp/yrmpc-yt.sock"))?;
+/// // proxy implements MusicBackend trait
+/// proxy.play()?;
+/// ```
+///
+/// # Note
+///
+/// This is NOT a YouTube API client. It's an IPC proxy to the daemon.
+/// The daemon (YouTubeServer) handles all YouTube Music API communication.
 #[derive(Debug)]
 pub struct YouTubeProxy {
     reader: BufReader<UnixStream>,

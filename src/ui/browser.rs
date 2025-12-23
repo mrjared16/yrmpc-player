@@ -15,7 +15,7 @@ use crate::{
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions, MpdDelete, EXTERNAL_COMMAND},
+    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions, DeleteTarget, EXTERNAL_COMMAND},
     shared::{
         key_event::KeyEvent,
         macros::{modal, status_warn},
@@ -170,7 +170,7 @@ where
         }
     }
 
-    fn delete<'a>(&self, item: impl Iterator<Item = (usize, &'a T)>) -> Vec<MpdDelete> {
+    fn delete<'a>(&self, item: impl Iterator<Item = (usize, &'a T)>) -> Vec<DeleteTarget> {
         Vec::new()
     }
 
@@ -729,7 +729,7 @@ where
         }
     }
 
-    fn delete_items(&self, all: bool) -> Vec<MpdDelete> {
+    fn delete_items(&self, all: bool) -> Vec<DeleteTarget> {
         self.delete(self.items(all))
     }
 

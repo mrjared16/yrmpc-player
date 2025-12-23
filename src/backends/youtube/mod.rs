@@ -52,8 +52,6 @@
 //! ```bash
 //! rmpc
 //! ```
-//!
-//! CLI commands:
 
 pub mod api;
 pub mod audio_cache;
@@ -69,7 +67,6 @@ pub mod server;
 pub mod services;
 pub mod url_resolver;
 
-pub use backend::YouTubeBackend;
 pub use client::YouTubeProxy;
 pub use config::YouTubeConfig;
 pub use details::{AlbumDetails, ArtistDetails, PlaylistDetails};
@@ -79,3 +76,7 @@ pub use services::{ApiService, PlaybackService, QueueService};
 
 // Re-export MPV types for internal use
 pub use mpv::{MpvIpc, MpvEvent};
+
+// Re-export deprecated YouTubeBackend stub for backward compatibility
+#[allow(deprecated)]
+pub use backend::YouTubeBackend;

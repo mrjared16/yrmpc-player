@@ -10,8 +10,4 @@ pub use crate::backends::{
     MpdBackend,
     MpvIpc, MpvEvent,  // MPV is now internal to YouTube backend
     MusicBackend, QueueOperations,
-    YouTubeBackend,
 };
-
-#[allow(deprecated)]
-pub use crate::backends::BackendDispatcher;

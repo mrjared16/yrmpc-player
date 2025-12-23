@@ -78,17 +78,5 @@ pub use messaging::{
 
 // Re-export interaction types - using new name BackendActions
 pub use interaction::{
-    BackendActions, Enqueue, MpdDelete, PartitionedOutput, PartitionedOutputKind,
+    BackendActions, Enqueue, DeleteTarget, PartitionedOutput, PartitionedOutputKind,
 };
-
-// =============================================================================
-// DEPRECATED ALIASES - For backward compatibility
-// =============================================================================
-
-/// Deprecated alias for [`BackendDispatcher`].
-#[deprecated(since = "0.11.0", note = "Use BackendDispatcher instead")]
-pub type BackendDispatcher<'a> = BackendDispatcher<'a>;
-
-/// Deprecated alias for [`BackendActions`].
-#[deprecated(since = "0.11.0", note = "Use BackendActions instead")]
-pub use interaction::BackendActions;

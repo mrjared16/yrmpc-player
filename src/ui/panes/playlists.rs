@@ -12,7 +12,7 @@ use crate::{
     ctx::Ctx,
     domain::Song,
     mpd::mpd_client::SingleOrRange,
-    backends::{BackendDispatcher, MpdDelete},
+    backends::{BackendDispatcher, DeleteTarget},
     shared::{
         cmp::StringCompare,
         ext::btreeset_ranges::BTreeSetRanges,
@@ -371,14 +371,14 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
         Ok(())
     }
 
-    fn delete<'a>(&self, items: impl Iterator<Item = (usize, &'a DirOrSong)>) -> Vec<MpdDelete> {
+    fn delete<'a>(&self, items: impl Iterator<Item = (usize, &'a DirOrSong)>) -> Vec<DeleteTarget> {
         match self.stack().path().as_slice() {
             [playlist] => {
                 let playlist: Arc<str> = Arc::from(playlist.as_str());
                 items
                     .filter_map(|(idx, item)| match item {
                         DirOrSong::Dir { .. } => None,
-                        DirOrSong::Song(_) => Some(MpdDelete::SongInPlaylist {
+                        DirOrSong::Song(_) => Some(DeleteTarget::SongInPlaylist {
                             playlist: Arc::clone(&playlist),
                             range: SingleOrRange::single(idx),
                         }),
@@ -387,7 +387,7 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
             }
             [] => items
                 .filter_map(|(_, item)| match item {
-                    DirOrSong::Dir { name, .. } => Some(MpdDelete::Playlist { name: name.clone() }),
+                    DirOrSong::Dir { name, .. } => Some(DeleteTarget::Playlist { name: name.clone() }),
                     DirOrSong::Song(_) => None,
                 })
                 .collect_vec(),

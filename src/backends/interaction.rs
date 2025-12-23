@@ -16,7 +16,7 @@
 //!
 //! - [`BackendActions`]: Extension trait implemented on [`BackendDispatcher`](super::BackendDispatcher)
 //! - [`Enqueue`]: Items that can be added to the queue (files, directories, playlists)
-//! - [`MpdDelete`]: Items that can be deleted (queue positions, ranges)
+//! - [`DeleteTarget`]: Items that can be deleted (queue positions, ranges)
 //! - [`PartitionedOutput`]: Audio output information (MPD-specific)
 //!
 //! # Example
@@ -123,7 +123,7 @@ pub trait BackendActions {
         position: Option<QueuePosition>,
         replace: bool,
     ) -> Result<(), MpdError>;
-    fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError>;
+    fn delete_multiple(&mut self, items: Vec<DeleteTarget>) -> Result<(), MpdError>;
     fn add_to_playlist_multiple(
         &mut self,
         playlist_name: &str,
@@ -151,7 +151,7 @@ pub trait BackendActions {
 
 /// Items that can be deleted from playlists or the queue
 #[derive(Debug, Clone)]
-pub enum MpdDelete {
+pub enum DeleteTarget {
     SongInPlaylist { playlist: Arc<str>, range: SingleOrRange },
     Playlist { name: String },
 }
@@ -240,7 +240,7 @@ impl<T: MpdClient + Command + ProtoClient> BackendActions for T {
         Ok(())
     }
 
-    fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError> {
+    fn delete_multiple(&mut self, items: Vec<DeleteTarget>) -> Result<(), MpdError> {
         let items_len = items.len();
         if items_len == 0 {
             return Ok(());
@@ -249,10 +249,10 @@ impl<T: MpdClient + Command + ProtoClient> BackendActions for T {
         self.send_start_cmd_list()?;
         for item in items.into_iter().rev() {
             match item {
-                MpdDelete::SongInPlaylist { playlist, range } => {
+                DeleteTarget::SongInPlaylist { playlist, range } => {
                     self.send_delete_from_playlist(&playlist, &range)?;
                 }
-                MpdDelete::Playlist { name } => {
+                DeleteTarget::Playlist { name } => {
                     self.send_delete_playlist(&name)?;
                 }
             }
@@ -629,7 +629,7 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
         }
     }
 
-    fn delete_multiple(&mut self, items: Vec<MpdDelete>) -> Result<(), MpdError> {
+    fn delete_multiple(&mut self, items: Vec<DeleteTarget>) -> Result<(), MpdError> {
         match self {
             crate::backends::BackendDispatcher::Mpd(b) => b.client.delete_multiple(items),
             crate::backends::BackendDispatcher::YouTube(_) => Ok(()),
@@ -775,15 +775,3 @@ mod tests {
 }
 
 // =============================================================================
-// DEPRECATED ALIASES - For backward compatibility
-// =============================================================================
-
-/// Deprecated alias for [`BackendActions`].
-///
-/// This trait was renamed to better reflect that it works across all backends,
-/// not just MPD. Please update your code to use `BackendActions` instead.
-#[deprecated(
-    since = "0.11.0",
-    note = "Renamed to BackendActions to reflect backend-agnostic nature. Update imports to use BackendActions."
-)]
-pub use BackendActions as BackendActions;
