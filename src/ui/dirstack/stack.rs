@@ -4,7 +4,7 @@ use super::{DirStackItem, dir::Dir, state::DirState};
 use crate::ui::dirstack::{ScrollingState, path::Path};
 
 #[derive(Debug)]
-pub struct DirStack<T, S>
+pub(crate) struct DirStack<T, S>
 where
     T: std::fmt::Debug + DirStackItem + Clone + Send,
     S: ScrollingState + std::fmt::Debug + Default,

@@ -87,8 +87,18 @@ impl api::Playback for MpdBackend<'_> {
             volume: mpd_status.volume.0 as u8,
             repeat,
             shuffle: mpd_status.random,
+            crossfade: mpd_status.xfade.unwrap_or(0),
+            gapless: false, // MPD doesn't expose gapless state in status
         })
     }
+    
+    fn set_crossfade(&mut self, seconds: u32) -> Result<()> {
+        self.client.crossfade(seconds).map_err(Into::into)
+    }
+    
+    // Note: MPD doesn't have a simple gapless toggle command.
+    // Gapless is typically handled via replay gain settings.
+    // We keep the default no-op implementation.
 }
 
 impl api::Queue for MpdBackend<'_> {
@@ -197,6 +207,24 @@ impl api::Queue for MpdBackend<'_> {
 
     fn set_shuffle(&mut self, enabled: bool) -> Result<()> {
         self.client.random(enabled).map_err(Into::into)
+    }
+    
+    fn set_single(&mut self, mode: api::ToggleMode) -> Result<()> {
+        let mpd_mode = match mode {
+            api::ToggleMode::Off => crate::mpd::commands::OnOffOneshot::Off,
+            api::ToggleMode::On => crate::mpd::commands::OnOffOneshot::On,
+            api::ToggleMode::Oneshot => crate::mpd::commands::OnOffOneshot::Oneshot,
+        };
+        self.client.single(mpd_mode).map_err(Into::into)
+    }
+    
+    fn set_consume(&mut self, mode: api::ToggleMode) -> Result<()> {
+        let mpd_mode = match mode {
+            api::ToggleMode::Off => crate::mpd::commands::OnOffOneshot::Off,
+            api::ToggleMode::On => crate::mpd::commands::OnOffOneshot::On,
+            api::ToggleMode::Oneshot => crate::mpd::commands::OnOffOneshot::Oneshot,
+        };
+        self.client.consume(mpd_mode).map_err(Into::into)
     }
 }
 
@@ -369,11 +397,98 @@ impl api::Backend for MpdBackend<'_> {
         "MPD"
     }
 
-    fn capabilities(&self) -> &[Capability] {
+    fn capabilities(&self) -> &'static [Capability] {
         &[
             Capability::SavedPlaylists,
             Capability::Stickers,
             Capability::Outputs,
         ]
+    }
+}
+
+impl api::StatusQuery for MpdBackend<'_> {
+    fn get_status(&mut self) -> Result<crate::domain::Status> {
+        let mpd_status = self.client.get_status()?;
+        Ok(mpd_status.into())
+    }
+
+    fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
+        let song = self.client.get_current_song()?;
+        Ok(song.map(|s| s.into()))
+    }
+
+    fn queue_songs(&mut self) -> Result<Vec<crate::domain::Song>> {
+        let songs = self.client.playlist_info()?.unwrap_or_default();
+        Ok(songs.into_iter().map(|s| s.into()).collect())
+    }
+}
+
+// =============================================================================
+// PLAYLISTS (api::optional::Playlists)
+// =============================================================================
+
+impl api::optional::Playlists for MpdBackend<'_> {
+    fn list(&mut self) -> Result<Vec<crate::domain::content::ContentRef>> {
+        let playlists = self.client.list_playlists()?;
+        Ok(playlists.into_iter().map(|p| {
+            crate::domain::content::ContentRef::playlist(&p.name, &p.name)
+        }).collect())
+    }
+
+    fn get(&mut self, id: &str) -> Result<crate::domain::content::PlaylistContent> {
+        let songs = self.client.list_playlist_info(id, None)?;
+        let tracks: Vec<crate::domain::Song> = songs.into_iter().map(|s| s.into()).collect();
+        
+        Ok(crate::domain::content::PlaylistContent {
+            id: id.to_string(),
+            title: id.to_string(),
+            tracks,
+            ..Default::default()
+        })
+    }
+
+    fn create(&mut self, name: &str) -> Result<String> {
+        // MPD doesn't have a "create empty playlist" command
+        // We save the current queue as a new playlist (will be empty if queue is empty)
+        // Or we could just return the name as the ID
+        self.client.save_queue_as_playlist(name, Some(crate::mpd::commands::SaveMode::Create))?;
+        Ok(name.to_string())
+    }
+
+    fn delete(&mut self, id: &str) -> Result<()> {
+        self.client.delete_playlist(id).map_err(Into::into)
+    }
+
+    fn rename(&mut self, id: &str, new_name: &str) -> Result<()> {
+        self.client.rename_playlist(id, new_name).map_err(Into::into)
+    }
+
+    fn add_tracks(&mut self, playlist_id: &str, track_ids: &[String]) -> Result<()> {
+        for uri in track_ids {
+            self.client.add_to_playlist(playlist_id, uri, None)?;
+        }
+        Ok(())
+    }
+
+    fn remove_tracks(&mut self, playlist_id: &str, positions: &[u32]) -> Result<()> {
+        // Remove in reverse order to maintain correct positions
+        let mut positions: Vec<u32> = positions.to_vec();
+        positions.sort_by(|a, b| b.cmp(a));
+        
+        for pos in positions {
+            self.client.delete_from_playlist(
+                playlist_id, 
+                &crate::mpd::SingleOrRange::single(pos as usize)
+            )?;
+        }
+        Ok(())
+    }
+
+    fn reorder(&mut self, playlist_id: &str, from: u32, to: u32) -> Result<()> {
+        self.client.move_in_playlist(
+            playlist_id,
+            &crate::mpd::SingleOrRange::single(from as usize),
+            to as usize
+        ).map_err(Into::into)
     }
 }

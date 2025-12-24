@@ -6,7 +6,7 @@ use flexi_logger::{FileSpec, FlexiLoggerError, LoggerHandle};
 use super::events::Level;
 use crate::AppEvent;
 
-pub fn init(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
+pub(crate) fn init(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
     #[cfg(debug_assertions)]
     return init_debug(tx);
     #[cfg(not(debug_assertions))]
@@ -93,17 +93,17 @@ impl flexi_logger::writers::LogWriter for NullWriter {
     }
 }
 
-pub struct StatusBarWriter {
+pub(crate) struct StatusBarWriter {
     tx: Sender<AppEvent>,
 }
 
 impl StatusBarWriter {
-    pub fn new(tx: Sender<AppEvent>) -> Self {
+    pub(crate) fn new(tx: Sender<AppEvent>) -> Self {
         Self { tx }
     }
 }
 
-pub struct AppEventChannelWriter {
+pub(crate) struct AppEventChannelWriter {
     tx: Sender<AppEvent>,
     format_fn: Option<flexi_logger::FormatFunction>,
 }
@@ -130,7 +130,7 @@ impl flexi_logger::writers::LogWriter for StatusBarWriter {
 }
 
 impl AppEventChannelWriter {
-    pub fn new(tx: Sender<AppEvent>) -> Self {
+    pub(crate) fn new(tx: Sender<AppEvent>) -> Self {
         Self { tx, format_fn: None }
     }
 }

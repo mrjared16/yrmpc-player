@@ -1,4 +1,4 @@
-//! Saved playlist operations (MPD)
+//! Saved playlist operations
 //!
 //! Create, load, save, and manage persistent playlists.
 //! This is different from the playback queue - these are saved playlists
@@ -6,13 +6,12 @@
 
 use anyhow::Result;
 
-use crate::backends::MusicBackend;
-use crate::domain::{Song, QueuePosition};
-use crate::mpd::commands::{Playlist, SaveMode};
+use crate::backends::api::optional::Playlists;
+use crate::domain::content::{ContentRef, PlaylistContent};
 
-/// Manages saved playlists (MPD only)
+/// Manages saved playlists
 ///
-/// Note: This is for persistent playlists stored on the MPD server,
+/// Note: This is for persistent playlists stored on the server,
 /// not the current playback queue.
 ///
 /// # Example
@@ -22,64 +21,57 @@ use crate::mpd::commands::{Playlist, SaveMode};
 ///     // List all saved playlists
 ///     let all = playlists.list()?;
 ///     
-///     // Save current queue as a playlist
-///     playlists.save("favorites")?;
+///     // Get playlist contents
+///     let content = playlists.get("favorites")?;
 ///     
-///     // Load a playlist into the queue
-///     playlists.load("favorites", None)?;
+///     // Delete a playlist
+///     playlists.delete("old_playlist")?;
 /// }
 /// ```
 pub struct SavedPlaylistController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn Playlists,
 }
 
 impl SavedPlaylistController<'_> {
     /// List all saved playlists
-    pub fn list(&mut self) -> Result<Vec<Playlist>> {
-        self.backend.list_playlists()
+    pub fn list(&mut self) -> Result<Vec<ContentRef>> {
+        self.backend.list()
     }
 
     /// Get the contents of a playlist
-    pub fn contents(&mut self, name: &str) -> Result<Vec<Song>> {
-        self.backend.playlist_info_name(name)
+    pub fn get(&mut self, name: &str) -> Result<PlaylistContent> {
+        self.backend.get(name)
     }
 
-    /// Load a playlist into the queue
+    /// Create a new playlist
     ///
-    /// # Arguments
-    /// * `name` - Playlist name
-    /// * `position` - Where to insert in queue (None = end)
-    pub fn load(&mut self, name: &str, position: Option<QueuePosition>) -> Result<()> {
-        self.backend.load_playlist(name, position)
-    }
-
-    /// Save the current queue as a playlist
-    pub fn save(&mut self, name: &str) -> Result<()> {
-        self.backend.save_queue_as_playlist(name, Some(SaveMode::Create))
-    }
-
-    /// Save with mode (create, append, replace)
-    pub fn save_with_mode(&mut self, name: &str, mode: SaveMode) -> Result<()> {
-        self.backend.save_queue_as_playlist(name, Some(mode))
+    /// Returns the ID of the created playlist.
+    pub fn create(&mut self, name: &str) -> Result<String> {
+        self.backend.create(name)
     }
 
     /// Delete a saved playlist
     pub fn delete(&mut self, name: &str) -> Result<()> {
-        self.backend.delete_playlist(name)
+        self.backend.delete(name)
     }
 
     /// Rename a saved playlist
     pub fn rename(&mut self, old_name: &str, new_name: &str) -> Result<()> {
-        self.backend.rename_playlist(old_name, new_name)
+        self.backend.rename(old_name, new_name)
     }
 
-    /// Add a song to a saved playlist
-    pub fn add_song(&mut self, playlist: &str, uri: &str) -> Result<()> {
-        self.backend.add_to_playlist(playlist, uri)
+    /// Add tracks to a saved playlist
+    pub fn add_tracks(&mut self, playlist: &str, uris: &[String]) -> Result<()> {
+        self.backend.add_tracks(playlist, uris)
     }
 
-    /// Remove a song from a saved playlist by position
-    pub fn remove_song(&mut self, playlist: &str, position: u32) -> Result<()> {
-        self.backend.delete_from_playlist(playlist, position)
+    /// Remove tracks from a saved playlist by position
+    pub fn remove_tracks(&mut self, playlist: &str, positions: &[u32]) -> Result<()> {
+        self.backend.remove_tracks(playlist, positions)
+    }
+    
+    /// Reorder a track within a playlist
+    pub fn reorder(&mut self, playlist: &str, from: u32, to: u32) -> Result<()> {
+        self.backend.reorder(playlist, from, to)
     }
 }

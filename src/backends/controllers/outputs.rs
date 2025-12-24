@@ -4,12 +4,12 @@
 
 use anyhow::Result;
 
-use crate::backends::MusicBackend;
+use crate::backends::mpd::specific::Outputs;
 use crate::mpd::commands::Output;
 
 /// Controls audio outputs (MPD only)
 ///
-/// This controller is only available when the backend supports `OutputControl` capability.
+/// This controller is only available when the backend supports `MpdOutputs` capability.
 /// Use `dispatcher.outputs_control()` to get an instance - it returns `None` for backends
 /// that don't support output control (like YouTube).
 ///
@@ -27,27 +27,27 @@ use crate::mpd::commands::Output;
 /// }
 /// ```
 pub struct OutputController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn Outputs,
 }
 
 impl OutputController<'_> {
     /// List all audio outputs
     pub fn list(&mut self) -> Result<Vec<Output>> {
-        self.backend.outputs()
+        self.backend.list()
     }
 
     /// Enable an output by ID
     pub fn enable(&mut self, id: u32) -> Result<()> {
-        self.backend.enable_output(id)
+        self.backend.enable(id)
     }
 
     /// Disable an output by ID
     pub fn disable(&mut self, id: u32) -> Result<()> {
-        self.backend.disable_output(id)
+        self.backend.disable(id)
     }
 
     /// Toggle an output by ID
     pub fn toggle(&mut self, id: u32) -> Result<()> {
-        self.backend.toggle_output(id)
+        self.backend.toggle(id)
     }
 }

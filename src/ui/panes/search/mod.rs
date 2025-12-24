@@ -421,11 +421,22 @@ impl SearchPane {
             .id("fetch_playlist")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_playlist_details(&playlist_id)?;
-                    Ok(QueryResult::PlaylistDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: playlist_id.clone(),
+                    content_type: ContentType::Playlist,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
+                    _ => anyhow::bail!("Expected playlist details"),
                 }
             });
     }
@@ -443,11 +454,22 @@ impl SearchPane {
             .id("fetch_album")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_album_details(&album_id)?;
-                    Ok(QueryResult::AlbumDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: album_id.clone(),
+                    content_type: ContentType::Album,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
+                    _ => anyhow::bail!("Expected album details"),
                 }
             });
     }
@@ -465,11 +487,22 @@ impl SearchPane {
             .id("fetch_artist")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_artist_details(&artist_id)?;
-                    Ok(QueryResult::ArtistDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: artist_id.clone(),
+                    content_type: ContentType::Artist,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
+                    _ => anyhow::bail!("Expected artist details"),
                 }
             });
     }
@@ -1696,11 +1729,13 @@ impl Pane for SearchPane {
                         if let Some(idx) = self.songs_dir.state.get_at_rendered_row(clicked_row) {
                             self.songs_dir.select_idx(idx, ctx.config.scrolloff);
                             self.songs_dir.select_idx(idx, ctx.config.scrolloff);
-                            if let Some(item) = self.songs_dir.selected() {
-                                let item = item.uri.clone();
+                            if let Some(song) = self.songs_dir.selected() {
+                                use crate::backends::api::{Item, InsertAt, AfterAdd};
+                                let item: Item = song.into();
+                                let title = item.title.clone();
                                 ctx.command(move |client| {
-                                    client.add(&item, None)?;
-                                    status_info!("Added '{item}' to queue");
+                                    client.queue().add(&[item], InsertAt::End, AfterAdd::Nothing)?;
+                                    status_info!("Added '{title}' to queue");
                                     Ok(())
                                 });
                             }

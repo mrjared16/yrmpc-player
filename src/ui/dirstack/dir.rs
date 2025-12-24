@@ -15,7 +15,7 @@ use crate::{
 };
 
 #[derive(Debug, Clone)]
-pub struct Dir<T, S>
+pub(crate) struct Dir<T, S>
 where
     T: std::fmt::Debug + DirStackItem + Clone + Send,
     S: ScrollingState + std::fmt::Debug + Default,

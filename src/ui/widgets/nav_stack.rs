@@ -1,7 +1,8 @@
-//! BrowseStack - Hierarchical navigation for list views
+//! NavStack - Hierarchical navigation for list views
 //!
-//! Provides a stack-based browse interface for entering/leaving nested content.
+//! Provides a stack-based navigation interface for entering/leaving nested content.
 //! Used by SearchPane for navigating into albums, artists, playlists.
+//! Will be extended with DetailStack for Artist/Album/Playlist detail views.
 //!
 //! ## Design
 //!
@@ -13,9 +14,9 @@
 
 use super::interactive_list_view::InteractiveListView;
 
-/// A single level in the browse stack
+/// A single level in the navigation stack
 #[derive(Debug, Clone)]
-pub struct BrowseLevel<T> {
+pub struct NavLevel<T> {
     /// Items at this level
     pub items: Vec<T>,
     /// View state (selection, marks, filter, etc.)
@@ -24,8 +25,8 @@ pub struct BrowseLevel<T> {
     pub path_segment: String,
 }
 
-impl<T> BrowseLevel<T> {
-    /// Create a new browse level
+impl<T> NavLevel<T> {
+    /// Create a new navigation level
     pub fn new(items: Vec<T>, path_segment: String) -> Self {
         let mut view = InteractiveListView::new();
         // Select first item if available
@@ -54,14 +55,14 @@ impl<T> BrowseLevel<T> {
 ///
 /// Enables enter/leave navigation through nested content.
 #[derive(Debug, Clone)]
-pub struct BrowseStack<T> {
+pub struct NavStack<T> {
     /// Stack of browse levels (root is at index 0)
-    levels: Vec<BrowseLevel<T>>,
+    levels: Vec<NavLevel<T>>,
     /// Separator for path display
     path_separator: &'static str,
 }
 
-impl<T> Default for BrowseStack<T> {
+impl<T> Default for NavStack<T> {
     fn default() -> Self {
         Self {
             levels: Vec::new(),
@@ -70,7 +71,7 @@ impl<T> Default for BrowseStack<T> {
     }
 }
 
-impl<T> BrowseStack<T> {
+impl<T> NavStack<T> {
     /// Create empty stack
     pub fn new() -> Self {
         Self::default()
@@ -79,7 +80,7 @@ impl<T> BrowseStack<T> {
     /// Create with root level
     pub fn with_root(items: Vec<T>, segment: impl Into<String>) -> Self {
         let mut stack = Self::new();
-        stack.levels.push(BrowseLevel::new(items, segment.into()));
+        stack.levels.push(NavLevel::new(items, segment.into()));
         stack
     }
 
@@ -87,7 +88,7 @@ impl<T> BrowseStack<T> {
 
     /// Enter a new level (push)
     pub fn enter(&mut self, items: Vec<T>, segment: impl Into<String>) {
-        self.levels.push(BrowseLevel::new(items, segment.into()));
+        self.levels.push(NavLevel::new(items, segment.into()));
     }
 
     /// Leave current level (pop), returns false if already at root
@@ -125,12 +126,12 @@ impl<T> BrowseStack<T> {
     // ========== CURRENT LEVEL ACCESS ==========
 
     /// Get current (top) level reference
-    pub fn current(&self) -> Option<&BrowseLevel<T>> {
+    pub fn current(&self) -> Option<&NavLevel<T>> {
         self.levels.last()
     }
 
     /// Get current level mutable reference
-    pub fn current_mut(&mut self) -> Option<&mut BrowseLevel<T>> {
+    pub fn current_mut(&mut self) -> Option<&mut NavLevel<T>> {
         self.levels.last_mut()
     }
 
@@ -143,7 +144,7 @@ impl<T> BrowseStack<T> {
     pub fn current_items_mut(&mut self) -> &mut Vec<T> {
         self.current_mut()
             .map(|l| &mut l.items)
-            .expect("BrowseStack should have at least one level")
+            .expect("NavStack should have at least one level")
     }
 
     /// Get current view reference
@@ -185,7 +186,7 @@ impl<T> BrowseStack<T> {
     /// Set root level (replaces all)
     pub fn set_root(&mut self, items: Vec<T>, segment: impl Into<String>) {
         self.levels.clear();
-        self.levels.push(BrowseLevel::new(items, segment.into()));
+        self.levels.push(NavLevel::new(items, segment.into()));
     }
 }
 
@@ -195,7 +196,7 @@ mod tests {
 
     #[test]
     fn enter_and_leave_navigation() {
-        let mut stack: BrowseStack<String> = BrowseStack::with_root(
+        let mut stack: NavStack<String> = NavStack::with_root(
             vec!["a".into(), "b".into()],
             "Root",
         );
@@ -216,7 +217,7 @@ mod tests {
 
     #[test]
     fn path_display() {
-        let mut stack: BrowseStack<i32> = BrowseStack::with_root(vec![1, 2, 3], "Search");
+        let mut stack: NavStack<i32> = NavStack::with_root(vec![1, 2, 3], "Search");
         stack.enter(vec![10, 20], "Artist");
         stack.enter(vec![100], "Albums");
 
@@ -225,7 +226,7 @@ mod tests {
 
     #[test]
     fn selected_item_works() {
-        let mut stack = BrowseStack::with_root(vec!["first", "second", "third"], "Root");
+        let mut stack = NavStack::with_root(vec!["first", "second", "third"], "Root");
 
         if let Some(view) = stack.current_view_mut() {
             view.select(Some(1));

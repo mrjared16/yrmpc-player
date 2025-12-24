@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 
-use crate::backends::MusicBackend;
+use crate::backends::mpd::specific::Database;
 
 /// Manages the music database (MPD only)
 ///
@@ -20,7 +20,7 @@ use crate::backends::MusicBackend;
 /// }
 /// ```
 pub struct DatabaseController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn Database,
 }
 
 impl DatabaseController<'_> {

@@ -1,25 +1,10 @@
 //! Status and information queries
 //!
 //! Get current playback status, currently playing song, and queue info.
-//!
-//! # Why This Uses `MusicBackend` Instead of `api::Playback`
-//!
-//! This controller returns [`domain::Status`] (rich, full-featured) rather than
-//! [`api::Status`] (minimal). The UI needs fields like:
-//! - `songid` / `next_songid` - for queue highlighting
-//! - `playlist` version - for change detection  
-//! - `consume` / `single` modes - for mode display
-//! - `updating_db` - for database update indicator
-//!
-//! These are MPD-specific but useful for rich UI display. The YouTube backend
-//! provides stubs for these fields.
-//!
-//! For minimal status (just state/position/volume), use [`api::Playback::status()`]
-//! via [`PlaybackController`].
 
 use anyhow::Result;
 
-use crate::backends::MusicBackend;
+use crate::backends::api::StatusQuery;
 use crate::domain::{Song, Status};
 
 /// Provides playback status and song information
@@ -33,7 +18,7 @@ use crate::domain::{Song, Status};
 /// }
 /// ```
 pub struct StatusProvider<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn StatusQuery,
 }
 
 impl StatusProvider<'_> {
@@ -54,6 +39,6 @@ impl StatusProvider<'_> {
 
     /// Get the current queue (alias for queue().list())
     pub fn queue(&mut self) -> Result<Vec<Song>> {
-        self.backend.playlist_info()
+        self.backend.queue_songs()
     }
 }

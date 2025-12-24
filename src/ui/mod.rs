@@ -43,7 +43,7 @@ use crate::{
         mpd_client::ValueChange,
         version::Version,
     },
-    backends::{BackendCapability, Enqueue, BackendActions},
+    backends::{Capability, Enqueue, BackendActions},
     shared::{
         events::{Level, WorkRequest},
         id::Id,
@@ -453,7 +453,7 @@ impl<'ui> Ui<'ui> {
                 }
                 GlobalAction::Stop if matches!(ctx.status.state, State::Play | State::Pause) => {
                     ctx.command(move |client| {
-                        client.stop()?;
+                        client.playback().stop()?;
                         Ok(())
                     });
                     // Status update handled by continuous polling for YouTube backend
@@ -519,7 +519,7 @@ impl<'ui> Ui<'ui> {
                         });
                     } else {
                         ctx.command(move |client| {
-                            client.play()?;
+                            client.playback().play()?;
                             Ok(())
                         });
                     }
@@ -580,7 +580,7 @@ impl<'ui> Ui<'ui> {
                     });
                 }
                 GlobalAction::Update => {
-                    if ctx.supports(BackendCapability::DatabaseManagement) {
+                    if ctx.supports(Capability::MpdDatabase) {
                         ctx.command(move |client| {
                             client.update(None)?;
                             Ok(())
@@ -590,7 +590,7 @@ impl<'ui> Ui<'ui> {
                     }
                 }
                 GlobalAction::Rescan => {
-                    if ctx.supports(BackendCapability::DatabaseManagement) {
+                    if ctx.supports(Capability::MpdDatabase) {
                         ctx.command(move |client| {
                             client.rescan(None)?;
                             Ok(())
@@ -633,7 +633,7 @@ impl<'ui> Ui<'ui> {
                     modal!(ctx, modal);
                 }
                 GlobalAction::ShowOutputs => {
-                    if ctx.supports(BackendCapability::OutputControl) {
+                    if ctx.supports(Capability::MpdOutputs) {
                         let current_partition = ctx.status.partition.clone();
                         ctx.query().id(OPEN_OUTPUTS_MODAL).replace_id(OPEN_OUTPUTS_MODAL).query(
                             move |client| {
@@ -701,7 +701,7 @@ impl<'ui> Ui<'ui> {
             )]
             match action {
                 CommonAction::Rate { kind, current: true, min_rating, max_rating } => {
-                    if !ctx.supports(BackendCapability::Stickers) {
+                    if !ctx.supports(Capability::MpdStickers) {
                         status_warn!("Rating/stickers not supported by this backend");
                     } else if let Some((_, song)) = ctx.find_current_song_in_queue() {
                         match kind {
@@ -778,7 +778,7 @@ impl<'ui> Ui<'ui> {
         })
     }
 
-    pub fn on_ui_app_event(&mut self, event: UiAppEvent, ctx: &mut Ctx) -> Result<()> {
+    pub(crate) fn on_ui_app_event(&mut self, event: UiAppEvent, ctx: &mut Ctx) -> Result<()> {
         match event {
             UiAppEvent::Modal(modal) => {
                 let existing_modal = modal.replacement_id().and_then(|id| {
@@ -896,7 +896,7 @@ impl<'ui> Ui<'ui> {
                          // client.find(&[Filter::new(Tag::Album, current)], None)?
                          
                          // So if we push "album:ID", it will search for Tag::Album = "album:ID".
-                         // My `YouTubeBackend::find` handles this!
+                         // The YouTube backend's find method handles this!
                          
                          albums_pane.stack_mut().push(album_id.clone());
                          
@@ -1205,7 +1205,7 @@ impl<'ui> Ui<'ui> {
 }
 
 #[derive(Debug)]
-pub enum UiAppEvent {
+pub(crate) enum UiAppEvent {
     Modal(Box<dyn Modal + Send + Sync>),
     PopModal(Id),
     PopConfigErrorModal,

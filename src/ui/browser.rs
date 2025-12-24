@@ -15,7 +15,7 @@ use crate::{
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions, DeleteTarget, EXTERNAL_COMMAND},
+    backends::{Capability, BackendDispatcher, Enqueue, BackendActions, DeleteTarget, EXTERNAL_COMMAND},
     shared::{
         key_event::KeyEvent,
         macros::{modal, status_warn},
@@ -573,7 +573,7 @@ where
                 min_rating: _,
                 max_rating: _,
             } => {
-                if !ctx.supports(BackendCapability::Stickers) {
+                if !ctx.supports(Capability::MpdStickers) {
                     status_warn!("Rating/stickers not supported by this backend");
                     return Ok(());
                 }
@@ -589,7 +589,7 @@ where
                 min_rating,
                 max_rating,
             } => {
-                if !ctx.supports(BackendCapability::Stickers) {
+                if !ctx.supports(Capability::MpdStickers) {
                     status_warn!("Rating/stickers not supported by this backend");
                     return Ok(());
                 }
@@ -608,7 +608,7 @@ where
                 );
             }
             CommonAction::Rate { kind: RateKind::Like(), current: false, .. } => {
-                if !ctx.supports(BackendCapability::Stickers) {
+                if !ctx.supports(Capability::MpdStickers) {
                     status_warn!("Rating/stickers not supported by this backend");
                     return Ok(());
                 }
@@ -619,7 +619,7 @@ where
                 });
             }
             CommonAction::Rate { kind: RateKind::Neutral(), current: false, .. } => {
-                if !ctx.supports(BackendCapability::Stickers) {
+                if !ctx.supports(Capability::MpdStickers) {
                     status_warn!("Rating/stickers not supported by this backend");
                     return Ok(());
                 }
@@ -630,7 +630,7 @@ where
                 });
             }
             CommonAction::Rate { kind: RateKind::Dislike(), current: false, .. } => {
-                if !ctx.supports(BackendCapability::Stickers) {
+                if !ctx.supports(Capability::MpdStickers) {
                     status_warn!("Rating/stickers not supported by this backend");
                     return Ok(());
                 }

@@ -6,7 +6,7 @@
 use anyhow::Result;
 use std::collections::HashMap;
 
-use crate::backends::MusicBackend;
+use crate::backends::mpd::specific::Stickers;
 
 /// Manages sticker metadata (MPD only)
 ///
@@ -27,7 +27,7 @@ use crate::backends::MusicBackend;
 /// }
 /// ```
 pub struct StickerController<'a> {
-    pub(crate) backend: &'a mut dyn MusicBackend,
+    pub(crate) backend: &'a mut dyn Stickers,
 }
 
 impl StickerController<'_> {
@@ -35,28 +35,32 @@ impl StickerController<'_> {
     ///
     /// Returns `None` if the sticker doesn't exist.
     pub fn get(&mut self, uri: &str, key: &str) -> Result<Option<String>> {
-        let stickers = self.backend.list_stickers(uri)?;
-        Ok(stickers.get(key).cloned())
+        self.backend.get(uri, key)
     }
 
     /// Set a sticker value
     pub fn set(&mut self, uri: &str, key: &str, value: &str) -> Result<()> {
-        self.backend.set_sticker(uri, key, value)
+        self.backend.set(uri, key, value)
     }
 
     /// Delete a sticker
     pub fn delete(&mut self, uri: &str, key: &str) -> Result<()> {
-        self.backend.delete_sticker(uri, key)
+        self.backend.delete(uri, key)
     }
 
     /// List all stickers for a song
     pub fn list(&mut self, uri: &str) -> Result<HashMap<String, String>> {
-        self.backend.list_stickers(uri)
+        self.backend.list(uri)
     }
 
     /// Check if a song has a specific sticker
     pub fn has(&mut self, uri: &str, key: &str) -> Result<bool> {
-        let stickers = self.backend.list_stickers(uri)?;
+        let stickers = self.backend.list(uri)?;
         Ok(stickers.contains_key(key))
+    }
+    
+    /// Delete all stickers for a song
+    pub fn delete_all(&mut self, uri: &str) -> Result<()> {
+        self.backend.delete_all(uri)
     }
 }

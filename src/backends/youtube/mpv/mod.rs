@@ -4,7 +4,7 @@
 //! It is internal to the YouTube backend and not intended for standalone use.
 //!
 //! For YouTube playback, the flow is:
-//! - YouTubeBackend -> PlaybackService -> MpvIpc -> MPV process
+//! - YouTubeProxy -> PlaybackService -> MpvIpc -> MPV process
 
 pub mod ipc;
 

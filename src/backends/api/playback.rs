@@ -32,6 +32,10 @@ pub struct Status {
     pub volume: u8,
     pub repeat: Repeat,
     pub shuffle: bool,
+    /// Crossfade duration in seconds (0 = disabled)
+    pub crossfade: u32,
+    /// Gapless playback enabled
+    pub gapless: bool,
 }
 
 /// Playback control trait
@@ -44,6 +48,28 @@ pub trait Playback: Send + Sync {
     fn seek(&mut self, position: Duration) -> Result<()>;
     fn seek_relative(&mut self, delta_secs: i64) -> Result<()>;
     fn status(&mut self) -> Result<Status>;
+    
+    // =========================================================================
+    // Audio Effects (optional - default no-op)
+    // =========================================================================
+    
+    /// Set crossfade duration in seconds (0 to disable).
+    ///
+    /// Crossfade blends audio between tracks for smooth transitions.
+    /// Check `Capability::Crossfade` before using.
+    fn set_crossfade(&mut self, seconds: u32) -> Result<()> {
+        let _ = seconds;
+        Ok(())
+    }
+    
+    /// Enable or disable gapless playback.
+    ///
+    /// Gapless playback removes silence between tracks.
+    /// Check `Capability::GaplessPlayback` before using.
+    fn set_gapless(&mut self, enabled: bool) -> Result<()> {
+        let _ = enabled;
+        Ok(())
+    }
 }
 
 /// Volume control trait

@@ -16,7 +16,7 @@ use crate::{
     Query,
     QueryResult,
     WorkRequest,
-    backends::BackendCapability,
+    backends::api::Capability,
     config::{
         Config,
         album_art::ImageMethod,
@@ -58,7 +58,7 @@ pub struct Ctx {
     pub(crate) active_tab: TabName,
     pub(crate) supported_commands: HashSet<String>,
     /// Backend capabilities (cached at init from backend)
-    pub(crate) capabilities: &'static [BackendCapability],
+    pub(crate) capabilities: &'static [Capability],
     pub(crate) db_update_start: Option<Instant>,
     #[debug(skip)]
     pub(crate) app_event_sender: Sender<AppEvent>,
@@ -98,8 +98,7 @@ impl Ctx {
         let supported_commands: HashSet<String> = client.supported_commands();
         let stickers_supported = {
             // Use capability system for cleaner backend-agnostic check
-            use crate::backends::BackendCapability;
-            if client.supports(BackendCapability::Stickers) {
+            if client.supports(Capability::MpdStickers) {
                 StickersSupport::Supported
             } else {
                 // YouTube and other streaming backends don't support MPD stickers
@@ -109,7 +108,7 @@ impl Ctx {
         log::info!(supported_commands:? = supported_commands; "Supported commands by server");
 
         // Capture backend capabilities at init time (static, never changes)
-        let capabilities = client.backend_mut().capabilities();
+        let capabilities = client.capabilities();
         log::info!(capabilities:? = capabilities; "Backend capabilities");
 
         let image_cache = ImageCache::new(app_event_sender.clone());
@@ -192,7 +191,7 @@ impl Ctx {
     ///     return Ok(());
     /// }
     /// ```
-    pub fn supports(&self, cap: BackendCapability) -> bool {
+    pub fn supports(&self, cap: Capability) -> bool {
         self.capabilities.contains(&cap)
     }
 

@@ -454,9 +454,9 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         "MPD"
     }
 
-    fn capabilities(&self) -> &'static [crate::backends::BackendCapability] {
-        use crate::backends::BackendCapability::*;
-        &[SavedPlaylists, DatabaseManagement, Stickers, OutputControl, Partitions]
+    fn capabilities(&self) -> &'static [crate::backends::api::Capability] {
+        use crate::backends::api::Capability::*;
+        &[Playlists, PlaylistCreate, PlaylistEdit, MpdDatabase, MpdStickers, MpdOutputs, MpdPartitions]
     }
 
     // supports() uses default implementation from trait

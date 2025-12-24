@@ -1,5 +1,19 @@
 //! Music player backend traits
 //!
+//! **DEPRECATED**: This module contains the legacy `MusicBackend` trait.
+//! New code should use the `api::*` traits instead:
+//! - `api::Playback` for play/pause/stop/seek
+//! - `api::Queue` for queue management  
+//! - `api::Discovery` for search and browse
+//! - `api::Volume` for volume control
+//!
+//! Access these via controllers on `BackendDispatcher`:
+//! - `dispatcher.playback().play()?`
+//! - `dispatcher.queue().add(&items, ...)?`
+//! - `dispatcher.library().search(...)?`
+//!
+//! ## Legacy Documentation
+//!
 //! ## Terminology
 //!
 //! - **Queue**: User's playlist of songs to play
@@ -37,22 +51,8 @@ use crate::{
     mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Version},
 };
 
-/// Features that backends may or may not support
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum BackendCapability {
-    /// Persistent playlist storage (save/load playlists)
-    SavedPlaylists,
-    /// Database update/rescan
-    DatabaseManagement,
-    /// Sticker metadata
-    Stickers,
-    /// Audio output selection
-    OutputControl,
-    /// MPD partitions
-    Partitions,
-    /// Rich metadata (thumbnails, etc)
-    RichMetadata,
-}
+// BackendCapability is now a type alias in backends/mod.rs pointing to api::Capability
+// The enum definition has been moved to api/content.rs as `Capability`
 
 /// Trait for queue operations (Single Responsibility: only queue management)
 ///
@@ -81,8 +81,16 @@ pub trait QueueOperations: Send + Sync {
 
 /// Core music backend trait.
 ///
+/// **DEPRECATED**: Use `api::Playback`, `api::Queue`, `api::Discovery`, `api::Volume` instead.
+/// Access via `BackendDispatcher` controllers: `dispatcher.playback()`, `dispatcher.queue()`, etc.
+///
 /// All backends must implement the required methods (no default).
 /// Optional features have default no-op implementations.
+#[deprecated(
+    since = "0.12.0",
+    note = "Use api::Playback, api::Queue, api::Discovery, api::Volume traits instead. \
+            Access via BackendDispatcher controllers: dispatcher.playback(), dispatcher.queue(), etc."
+)]
 pub trait MusicBackend: QueueOperations + Send + Sync {
     // =========================================================================
     // BACKEND IDENTIFICATION (required)
@@ -93,11 +101,11 @@ pub trait MusicBackend: QueueOperations + Send + Sync {
 
     /// Returns all capabilities this backend supports.
     /// Each backend declares its own capabilities (Single Source of Truth).
-    fn capabilities(&self) -> &'static [BackendCapability];
+    fn capabilities(&self) -> &'static [crate::backends::api::Capability];
 
     /// Check if this backend supports a specific capability.
     /// Default implementation uses capabilities() - no need to override.
-    fn supports(&self, capability: BackendCapability) -> bool {
+    fn supports(&self, capability: crate::backends::api::Capability) -> bool {
         self.capabilities().contains(&capability)
     }
 

@@ -1,6 +1,6 @@
-//! SearchPaneV2 - New search pane using BrowseStack + InteractiveListView
+//! SearchPaneV2 - New search pane using NavStack + InteractiveListView
 //!
-//! This implementation uses BrowseStack for hierarchical navigation and
+//! This implementation uses NavStack for hierarchical navigation and
 //! reuses InputGroups from the legacy search pane for search inputs.
 
 use anyhow::Result;
@@ -18,7 +18,7 @@ use crate::{
     QueryResult,
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
-    domain::Song,
+    domain::{Song, DetailItem, ContentType, flatten_content},
     mpd::mpd_client::Filter,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
@@ -26,7 +26,7 @@ use crate::{
         UiEvent,
         panes::search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
         widgets::{
-            browse_stack::BrowseStack,
+            nav_stack::NavStack,
             interactive_list_view::NavConfig,
         },
     },
@@ -43,15 +43,15 @@ enum Phase {
     BrowseResults,
 }
 
-/// SearchPaneV2 using BrowseStack architecture
+/// SearchPaneV2 using NavStack architecture
 #[derive(Debug)]
 pub struct SearchPaneV2 {
     /// Search input groups (reused from legacy)
     inputs: InputGroups,
     /// Current phase
     phase: Phase,
-    /// BrowseStack for hierarchical navigation
-    stack: BrowseStack<Song>,
+    /// NavStack for hierarchical navigation (now uses DetailItem for type safety)
+    stack: NavStack<DetailItem>,
     /// Navigation config
     nav_config: NavConfig,
 }
@@ -77,7 +77,7 @@ impl SearchPaneV2 {
         Self {
             inputs,
             phase: Phase::Search,
-            stack: BrowseStack::with_root(Vec::new(), "Results"),
+            stack: NavStack::with_root(Vec::new(), "Results"),
             nav_config: NavConfig {
                 scrolloff: config.scrolloff,
                 wrap: config.wrap_navigation,
@@ -149,12 +149,9 @@ impl SearchPaneV2 {
 
         if all {
             level.items.iter()
-                .filter_map(|song| {
-                    let item_type = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
-                    match item_type {
-                        Some("song" | "video") | None => Some(Enqueue::Song { song: song.clone() }),
-                        _ => None,
-                    }
+                .filter_map(|item| match item {
+                    DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
+                    _ => None,
                 })
                 .collect()
         } else {
@@ -163,22 +160,16 @@ impl SearchPaneV2 {
             if !marked.is_empty() {
                 marked.iter()
                     .filter_map(|&idx| level.items.get(idx))
-                    .filter_map(|song| {
-                        let item_type = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
-                        match item_type {
-                            Some("song" | "video") | None => Some(Enqueue::Song { song: song.clone() }),
-                            _ => None,
-                        }
+                    .filter_map(|item| match item {
+                        DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
+                        _ => None,
                     })
                     .collect()
             } else if let Some(idx) = level.view.selected() {
                 level.items.get(idx)
-                    .and_then(|song| {
-                        let item_type = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
-                        match item_type {
-                            Some("song" | "video") | None => Some(Enqueue::Song { song: song.clone() }),
-                            _ => None,
-                        }
+                    .and_then(|item| match item {
+                        DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
+                        _ => None,
                     })
                     .into_iter()
                     .collect()
@@ -367,36 +358,31 @@ impl SearchPaneV2 {
         let Some(idx) = level.view.selected() else {
             return Ok(());
         };
-        let Some(song) = level.items.get(idx) else {
+        let Some(item) = level.items.get(idx) else {
             return Ok(());
         };
 
-        // Check item type
-        let item_type = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
-
-        match item_type {
-            Some("playlist") => {
-                if let Some(id) = song.metadata.get("playlist_id").and_then(|v| v.first()) {
-                    self.fetch_playlist_detail(ctx, id.clone());
+        match item {
+            DetailItem::Header { .. } => {
+                // Headers are not interactive
+            }
+            DetailItem::Ref(content_ref) => {
+                // Navigate into album/artist/playlist
+                let id = content_ref.id.clone();
+                match content_ref.content_type {
+                    ContentType::Playlist => self.fetch_playlist_detail(ctx, id),
+                    ContentType::Album => self.fetch_album_detail(ctx, id),
+                    ContentType::Artist => self.fetch_artist_detail(ctx, id),
+                    _ => {}
                 }
             }
-            Some("album") => {
-                if let Some(id) = song.metadata.get("browse_id").and_then(|v| v.first()) {
-                    self.fetch_album_detail(ctx, id.clone());
-                }
-            }
-            Some("artist") => {
-                if let Some(id) = song.metadata.get("artist_id").and_then(|v| v.first()) {
-                    self.fetch_artist_detail(ctx, id.clone());
-                }
-            }
-            _ => {
+            DetailItem::Song(song) => {
                 // YouTube Music-like behavior for songs/videos:
                 // Check if this exact song is currently playing
-                let selected_file = &song.uri;
+                let selected_uri = &song.uri;
 
                 if let Some((_, current_song)) = ctx.find_current_song_in_queue() {
-                    if &current_song.uri == selected_file {
+                    if &current_song.uri == selected_uri {
                         // Same song → toggle play/pause (don't restart or add duplicate)
                         ctx.command(|client| {
                             client.pause_toggle()?;
@@ -435,11 +421,22 @@ impl SearchPaneV2 {
             .id("fetch_playlist_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_playlist_details(&playlist_id)?;
-                    Ok(QueryResult::PlaylistDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: playlist_id.clone(),
+                    content_type: ContentType::Playlist,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
+                    _ => anyhow::bail!("Expected playlist details"),
                 }
             });
     }
@@ -449,11 +446,22 @@ impl SearchPaneV2 {
             .id("fetch_album_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_album_details(&album_id)?;
-                    Ok(QueryResult::AlbumDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: album_id.clone(),
+                    content_type: ContentType::Album,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
+                    _ => anyhow::bail!("Expected album details"),
                 }
             });
     }
@@ -463,11 +471,22 @@ impl SearchPaneV2 {
             .id("fetch_artist_v2")
             .target(PaneType::Search)
             .query(move |client| {
-                if let Some(yt) = client.youtube() {
-                    let details = yt.browse_artist_details(&artist_id)?;
-                    Ok(QueryResult::ArtistDetail(details.into()))
-                } else {
-                    anyhow::bail!("This feature requires YouTube backend. Switch to YouTube mode in config.")
+                use crate::backends::api::{Discovery, Item, ContentType};
+                use crate::domain::content::ContentDetails;
+                
+                let item = Item {
+                    id: artist_id.clone(),
+                    content_type: ContentType::Artist,
+                    title: String::new(),
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                };
+                
+                match client.details(&item)? {
+                    ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
+                    _ => anyhow::bail!("Expected artist details"),
                 }
             });
     }
@@ -512,7 +531,7 @@ impl SearchPaneV2 {
     fn render_preview(&self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
         
-        // Get selected item from BrowseStack
+        // Get selected item from NavStack
         if let Some(song) = self.stack.selected_item() {
             let preview = song.to_preview(
                 config.theme.preview_label_style,

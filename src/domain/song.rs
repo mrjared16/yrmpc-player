@@ -111,6 +111,14 @@ impl Song {
             .and_then(|v| v.first())
             .map(|s| s.as_str())
     }
+
+    /// Get the browse ID for navigable items (albums, artists, playlists).
+    /// This is the ID used to fetch details from the backend.
+    pub fn browse_id(&self) -> Option<&str> {
+        self.metadata.get("browse_id")
+            .and_then(|v| v.first())
+            .map(|s| s.as_str())
+    }
 }
 
 impl ListItemDisplay for Song {

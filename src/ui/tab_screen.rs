@@ -59,7 +59,7 @@ impl TabScreen {
 }
 
 impl TabScreen {
-    pub fn render(
+    pub(crate) fn render(
         &mut self,
         pane_container: &mut PaneContainer,
         frame: &mut Frame,
@@ -214,7 +214,7 @@ impl TabScreen {
         Ok(())
     }
 
-    pub fn on_hide(&mut self, panes: &mut PaneContainer, ctx: &Ctx) -> Result<()> {
+    pub(crate) fn on_hide(&mut self, panes: &mut PaneContainer, ctx: &Ctx) -> Result<()> {
         for pane in self.panes.panes_iter() {
             let mut pane = panes.get_mut(&pane.pane, ctx)?;
             pane_call!(pane, on_hide(ctx))?;
@@ -222,7 +222,7 @@ impl TabScreen {
         Ok(())
     }
 
-    pub fn before_show(
+    pub(crate) fn before_show(
         &mut self,
         pane_container: &mut PaneContainer,
         area: Rect,
@@ -258,7 +258,7 @@ impl TabScreen {
         Ok(())
     }
 
-    pub fn resize(
+    pub(crate) fn resize(
         &mut self,
         pane_container: &mut PaneContainer,
         area: Rect,

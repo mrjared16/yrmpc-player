@@ -9,5 +9,4 @@ pub use crate::backends::{
     LibraryCategory,
     MpdBackend,
     MpvIpc, MpvEvent,  // MPV is now internal to YouTube backend
-    MusicBackend, QueueOperations,
 };

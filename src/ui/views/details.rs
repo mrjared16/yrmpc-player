@@ -31,10 +31,12 @@
 //! }
 //! ```
 
-use std::time::Duration;
 use crate::domain::{
-    ContentDetails, AlbumDetails, ArtistDetails, PlaylistDetails,
-    Song,
+    ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
+    Song, ContentRef, ContentType,
+    Section as DomainSection, SectionKey, SectionData,
+    Stat as DomainStat, StatValue, Action as DomainAction, ActionKind,
+    Extensions,
 };
 
 /// Visual identity for the content.
@@ -101,6 +103,8 @@ pub enum Action {
     Shuffle { id: String },
     /// Start radio/mix.
     Radio { id: String },
+    /// Add to queue.
+    AddToQueue { id: String },
 }
 
 /// Content type for the details page.
@@ -188,31 +192,16 @@ impl From<ContentDetails> for DetailsPage {
     }
 }
 
-impl From<AlbumDetails> for DetailsPage {
-    fn from(album: AlbumDetails) -> Self {
-        let mut stats = Vec::new();
-        if let Some(year) = &album.year {
-            stats.push(Stat { label: "Year".into(), value: year.clone() });
-        }
-        stats.push(Stat { 
-            label: "Tracks".into(), 
-            value: format!("{} tracks", album.tracks.len()) 
-        });
-
-        let mut sections = Vec::new();
-        if !album.more_by_artist.is_empty() {
-            sections.push(Section {
-                title: "More by artist".into(),
-                items: album.more_by_artist.into_iter().map(|a| SectionItem {
-                    id: a.id,
-                    title: a.title,
-                    subtitle: a.year,
-                    thumbnail: a.thumbnail,
-                    item_type: SectionItemType::Album,
-                }).collect(),
-                layout: Layout::Grid,
-            });
-        }
+impl From<AlbumContent> for DetailsPage {
+    fn from(album: AlbumContent) -> Self {
+        // Convert stats from extensions
+        let stats = convert_stats(album.extensions.stats());
+        
+        // Convert sections from extensions (filter out Stats and Actions)
+        let sections = convert_sections(&album.extensions);
+        
+        // Convert actions from extensions
+        let actions = convert_actions(album.extensions.actions(), &album.id);
 
         DetailsPage {
             id: album.id.clone(),
@@ -227,64 +216,21 @@ impl From<AlbumDetails> for DetailsPage {
             description: album.description,
             tracks: album.tracks,
             sections,
-            actions: vec![
-                Action::Play { id: album.id.clone() },
-                Action::Shuffle { id: album.id },
-            ],
+            actions,
         }
     }
 }
 
-impl From<ArtistDetails> for DetailsPage {
-    fn from(artist: ArtistDetails) -> Self {
-        let mut stats = Vec::new();
-        if let Some(subs) = &artist.subscribers {
-            stats.push(Stat { label: "Subscribers".into(), value: subs.clone() });
-        }
-
-        let mut sections = Vec::new();
+impl From<ArtistContent> for DetailsPage {
+    fn from(artist: ArtistContent) -> Self {
+        // Convert stats from extensions
+        let stats = convert_stats(artist.extensions.stats());
         
-        if !artist.albums.is_empty() {
-            sections.push(Section {
-                title: "Albums".into(),
-                items: artist.albums.into_iter().map(|a| SectionItem {
-                    id: a.id,
-                    title: a.title,
-                    subtitle: a.year,
-                    thumbnail: a.thumbnail,
-                    item_type: SectionItemType::Album,
-                }).collect(),
-                layout: Layout::Grid,
-            });
-        }
-
-        if !artist.singles.is_empty() {
-            sections.push(Section {
-                title: "Singles".into(),
-                items: artist.singles.into_iter().map(|a| SectionItem {
-                    id: a.id,
-                    title: a.title,
-                    subtitle: a.year,
-                    thumbnail: a.thumbnail,
-                    item_type: SectionItemType::Album,
-                }).collect(),
-                layout: Layout::Grid,
-            });
-        }
-
-        if !artist.related_artists.is_empty() {
-            sections.push(Section {
-                title: "Fans also like".into(),
-                items: artist.related_artists.into_iter().map(|a| SectionItem {
-                    id: a.id,
-                    title: a.name,
-                    subtitle: None,
-                    thumbnail: a.thumbnail,
-                    item_type: SectionItemType::Artist,
-                }).collect(),
-                layout: Layout::Carousel,
-            });
-        }
+        // Convert sections from extensions
+        let sections = convert_sections(&artist.extensions);
+        
+        // Convert actions from extensions
+        let actions = convert_actions(artist.extensions.actions(), &artist.id);
 
         DetailsPage {
             id: artist.id.clone(),
@@ -293,66 +239,33 @@ impl From<ArtistDetails> for DetailsPage {
             subtitle: None,
             artwork: Artwork {
                 thumbnail: artist.thumbnail,
-                backdrop: None, // Could add banner support later
+                backdrop: None,
             },
             stats,
-            description: artist.description,
+            description: artist.bio,
             tracks: artist.top_songs,
             sections,
-            actions: vec![
-                Action::Play { id: artist.id.clone() },
-                Action::Shuffle { id: artist.id },
-            ],
+            actions,
         }
     }
 }
 
-impl From<PlaylistDetails> for DetailsPage {
-    fn from(playlist: PlaylistDetails) -> Self {
-        let mut stats = Vec::new();
-        stats.push(Stat { 
-            label: "Tracks".into(), 
-            value: format!("{} tracks", playlist.track_count) 
-        });
-        if let Some(duration) = &playlist.duration_text {
-            stats.push(Stat { label: "Duration".into(), value: duration.clone() });
-        }
-
-        let mut sections = Vec::new();
+impl From<PlaylistContent> for DetailsPage {
+    fn from(playlist: PlaylistContent) -> Self {
+        // Convert stats from extensions
+        let stats = convert_stats(playlist.extensions.stats());
         
-        if !playlist.featured_artists.is_empty() {
-            sections.push(Section {
-                title: "Featured artists".into(),
-                items: playlist.featured_artists.into_iter().map(|a| SectionItem {
-                    id: a.id,
-                    title: a.name,
-                    subtitle: None,
-                    thumbnail: a.thumbnail,
-                    item_type: SectionItemType::Artist,
-                }).collect(),
-                layout: Layout::Carousel,
-            });
-        }
-
-        if !playlist.related_playlists.is_empty() {
-            sections.push(Section {
-                title: "Similar playlists".into(),
-                items: playlist.related_playlists.into_iter().map(|p| SectionItem {
-                    id: p.id,
-                    title: p.title,
-                    subtitle: p.subtitle,
-                    thumbnail: p.thumbnail,
-                    item_type: SectionItemType::Playlist,
-                }).collect(),
-                layout: Layout::Grid,
-            });
-        }
+        // Convert sections from extensions
+        let sections = convert_sections(&playlist.extensions);
+        
+        // Convert actions from extensions
+        let actions = convert_actions(playlist.extensions.actions(), &playlist.id);
 
         DetailsPage {
             id: playlist.id.clone(),
             kind: PageKind::Playlist,
             title: playlist.title,
-            subtitle: playlist.author,
+            subtitle: playlist.author.map(|a| a.name),
             artwork: Artwork {
                 thumbnail: playlist.thumbnail,
                 backdrop: None,
@@ -361,32 +274,117 @@ impl From<PlaylistDetails> for DetailsPage {
             description: playlist.description,
             tracks: playlist.tracks,
             sections,
-            actions: vec![
-                Action::Play { id: playlist.id.clone() },
-                Action::Shuffle { id: playlist.id },
-            ],
+            actions,
         }
+    }
+}
+
+// =============================================================================
+// Helper functions for conversion
+// =============================================================================
+
+fn convert_stats(domain_stats: &[DomainStat]) -> Vec<Stat> {
+    domain_stats.iter().map(|s| Stat {
+        label: s.label.clone(),
+        value: match &s.value {
+            StatValue::Text(t) => t.clone(),
+            StatValue::Number(n) => n.to_string(),
+            StatValue::Duration(d) => format_duration(*d),
+        },
+    }).collect()
+}
+
+fn convert_sections(extensions: &Extensions) -> Vec<Section> {
+    extensions.iter()
+        .filter(|s| !matches!(s.key, SectionKey::Stats | SectionKey::Actions))
+        .filter_map(|s| {
+            match &s.content {
+                SectionData::Items(refs) => {
+                    let items: Vec<SectionItem> = refs.iter().map(|r| SectionItem {
+                        id: r.id.clone(),
+                        title: r.name.clone(),
+                        subtitle: r.subtitle.clone(),
+                        thumbnail: r.thumbnail.clone(),
+                        item_type: content_type_to_section_type(&r.content_type),
+                    }).collect();
+                    
+                    if items.is_empty() {
+                        return None;
+                    }
+                    
+                    // Choose layout based on section key
+                    let layout = match s.key {
+                        SectionKey::RelatedArtists | SectionKey::FeaturedArtists => Layout::Carousel,
+                        SectionKey::Albums | SectionKey::Singles | 
+                        SectionKey::MoreByArtist | SectionKey::RelatedPlaylists => Layout::Grid,
+                        _ => Layout::List,
+                    };
+                    
+                    Some(Section {
+                        title: s.title.clone(),
+                        items,
+                        layout,
+                    })
+                },
+                SectionData::Tracks(_songs) => {
+                    // For track sections, skip (tracks are in main tracks field)
+                    None
+                },
+                _ => None,
+            }
+        }).collect()
+}
+
+fn convert_actions(domain_actions: &[DomainAction], id: &str) -> Vec<Action> {
+    domain_actions.iter().filter_map(|a| {
+        match a.kind {
+            ActionKind::Play => Some(Action::Play { id: id.to_string() }),
+            ActionKind::Shuffle => Some(Action::Shuffle { id: id.to_string() }),
+            ActionKind::Radio => Some(Action::Radio { id: id.to_string() }),
+            ActionKind::AddToQueue => Some(Action::AddToQueue { id: id.to_string() }),
+            // Skip actions we don't support in UI yet
+            ActionKind::AddToLibrary | ActionKind::Share => None,
+        }
+    }).collect()
+}
+
+fn content_type_to_section_type(ct: &ContentType) -> SectionItemType {
+    match ct {
+        ContentType::Album => SectionItemType::Album,
+        ContentType::Artist => SectionItemType::Artist,
+        ContentType::Playlist => SectionItemType::Playlist,
+        _ => SectionItemType::Track,
+    }
+}
+
+fn format_duration(duration: std::time::Duration) -> String {
+    let total_secs = duration.as_secs();
+    let hours = total_secs / 3600;
+    let minutes = (total_secs % 3600) / 60;
+    
+    if hours > 0 {
+        format!("{} hr {} min", hours, minutes)
+    } else {
+        format!("{} min", minutes)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::{ArtistRef, AlbumRef};
 
     #[test]
     fn test_album_to_details_page() {
-        let album = AlbumDetails {
+        let album = AlbumContent {
             id: "album1".into(),
             title: "Abbey Road".into(),
-            artist: ArtistRef::new("artist1", "The Beatles"),
-            year: Some("1969".into()),
+            artist: ContentRef::artist("artist1", "The Beatles"),
+            year: Some(1969),
             description: None,
             thumbnail: Some("https://example.com/cover.jpg".into()),
             tracks: vec![],
-            more_by_artist: vec![
-                AlbumRef::new("album2", "Let It Be"),
-            ],
+            release_type: None,
+            extensions: Extensions::new(),
         };
 
         let page = DetailsPage::from(ContentDetails::Album(album));
@@ -394,22 +392,17 @@ mod tests {
         assert_eq!(page.kind, PageKind::Album);
         assert_eq!(page.title, "Abbey Road");
         assert_eq!(page.subtitle, Some("The Beatles".into()));
-        assert_eq!(page.stats.len(), 2); // Year + Tracks
-        assert_eq!(page.sections.len(), 1); // More by artist
     }
 
     #[test]
     fn test_artist_to_details_page() {
-        let artist = ArtistDetails {
+        let artist = ArtistContent {
             id: "artist1".into(),
             name: "The Beatles".into(),
-            subscribers: Some("10M subscribers".into()),
-            description: Some("British rock band".into()),
+            bio: Some("British rock band".into()),
             thumbnail: None,
             top_songs: vec![],
-            albums: vec![],
-            singles: vec![],
-            related_artists: vec![],
+            extensions: Extensions::new(),
         };
 
         let page = DetailsPage::from(ContentDetails::Artist(artist));
@@ -417,7 +410,27 @@ mod tests {
         assert_eq!(page.kind, PageKind::Artist);
         assert_eq!(page.title, "The Beatles");
         assert!(page.subtitle.is_none()); // Artists don't have subtitle
-        assert_eq!(page.stats.len(), 1); // Subscribers
         assert_eq!(page.description, Some("British rock band".into()));
+    }
+
+    #[test]
+    fn test_playlist_to_details_page() {
+        let playlist = PlaylistContent {
+            id: "playlist1".into(),
+            title: "My Favorites".into(),
+            author: Some(ContentRef::new("user1", "John")),
+            tracks: vec![],
+            thumbnail: None,
+            description: None,
+            track_count: Some(10),
+            duration_text: Some("45 min".into()),
+            extensions: Extensions::new(),
+        };
+
+        let page = DetailsPage::from(ContentDetails::Playlist(playlist));
+
+        assert_eq!(page.kind, PageKind::Playlist);
+        assert_eq!(page.title, "My Favorites");
+        assert_eq!(page.subtitle, Some("John".into()));
     }
 }

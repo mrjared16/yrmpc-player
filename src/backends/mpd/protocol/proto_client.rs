@@ -15,26 +15,26 @@ use crate::{mpd::errors::ErrorCode, shared::string_util::StringExt};
 type MpdResult<T> = Result<T, MpdError>;
 
 #[derive(Debug, Default, PartialEq)]
-pub struct BinaryMpdResponse {
+pub(crate) struct BinaryMpdResponse {
     pub bytes_read: u64,
     pub size_total: u32,
     pub mime_type: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
-pub enum MpdLine {
+pub(crate) enum MpdLine {
     Ok,
     Value(String),
 }
 
-pub trait SocketClient {
+pub(crate) trait SocketClient {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<()>;
     fn read(&mut self) -> &mut impl BufRead;
     fn version(&self) -> Version;
     fn clear_read_buf(&mut self) -> Result<()>;
 }
 
-pub trait ProtoClient {
+pub(crate) trait ProtoClient {
     fn should_reinit_buffer(err: &MpdError) -> bool {
         !matches!(
             err,

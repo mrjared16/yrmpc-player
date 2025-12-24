@@ -298,6 +298,12 @@ impl YouTubeProxy {
         log::debug!("YouTubeClient::add_song result: {:?}", result.as_ref().map(|_| "Ok"));
         result
     }
+
+    /// Get library contents for a category (YouTube-specific)
+    pub fn get_library_internal(&mut self, _category: LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+        // YouTube library categories are not implemented yet
+        Ok(vec![])
+    }
 }
 
 // === QueueOperations Implementation ===
@@ -334,9 +340,9 @@ impl MusicBackend for YouTubeProxy {
         "YouTube"
     }
 
-    fn capabilities(&self) -> &'static [crate::backends::BackendCapability] {
-        use crate::backends::BackendCapability::*;
-        &[RichMetadata]
+    fn capabilities(&self) -> &'static [crate::backends::api::Capability] {
+        use crate::backends::api::Capability::*;
+        &[RichMetadata, SearchSuggestions, Radio]
     }
 
     // supports() uses default implementation from trait
@@ -623,6 +629,8 @@ impl api::Playback for YouTubeProxy {
                         (false, _) => api::Repeat::Off,
                     },
                     shuffle: domain_status.random,
+                    crossfade: 0, // YouTube backend doesn't support crossfade
+                    gapless: false, // YouTube backend doesn't support gapless
                 })
             }
             ServerResponse::Error(e) => Err(anyhow!(e)),
@@ -1024,8 +1032,38 @@ impl api::Backend for YouTubeProxy {
         "YouTube"
     }
 
-    fn capabilities(&self) -> &[Capability] {
-        &[Capability::RichMetadata]
+    fn capabilities(&self) -> &'static [Capability] {
+        &[
+            Capability::RichMetadata,
+            Capability::SearchSuggestions,
+            Capability::Radio,
+        ]
+    }
+}
+
+impl api::StatusQuery for YouTubeProxy {
+    fn get_status(&mut self) -> anyhow::Result<crate::domain::Status> {
+        match self.request(ServerCommand::GetStatus)? {
+            ServerResponse::Status(s) => Ok(s.to_status()),
+            ServerResponse::Error(e) => Err(anyhow::anyhow!(e)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn current_song(&mut self) -> anyhow::Result<Option<crate::domain::Song>> {
+        match self.request(ServerCommand::GetCurrentSong)? {
+            ServerResponse::Song(song) => Ok(song.map(|s| s.to_song())),
+            ServerResponse::Error(e) => Err(anyhow::anyhow!(e)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
+    }
+
+    fn queue_songs(&mut self) -> anyhow::Result<Vec<crate::domain::Song>> {
+        match self.request(ServerCommand::GetPlaylist)? {
+            ServerResponse::Playlist(songs) => Ok(songs.into_iter().map(|s| s.to_song()).collect()),
+            ServerResponse::Error(e) => Err(anyhow::anyhow!(e)),
+            other => Err(anyhow::anyhow!("Unexpected response: {:?}", other)),
+        }
     }
 }
 

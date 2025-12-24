@@ -93,8 +93,17 @@ pub use api::{
 pub use client::BackendDispatcher;
 pub use library_category::LibraryCategory;
 pub use mpd::MpdBackend;
-pub use traits::{MusicBackend, QueueOperations, BackendCapability};
 pub use youtube::YouTubeProxy;
+
+// === Deprecated Legacy Traits ===
+// These are kept for backward compatibility but are no longer used by client.rs
+// All operations now go through api::* traits
+#[deprecated(since = "0.12.0", note = "Use api::Playback, api::Queue, api::Discovery, api::Volume traits instead")]
+pub use traits::{MusicBackend, QueueOperations};
+
+// BackendCapability is deprecated, use Capability instead
+#[deprecated(since = "0.1.0", note = "Use Capability instead")]
+pub type BackendCapability = api::Capability;
 
 // Re-export controllers for the new organized API
 pub use controllers::{
@@ -107,8 +116,8 @@ pub use controllers::{
 // MPV is now internal to the YouTube backend
 pub use youtube::mpv::{MpvIpc, MpvEvent};
 
-// Re-export messaging types
-pub use messaging::{
+// Re-export messaging types (pub(crate) since they're internal)
+pub(crate) use messaging::{
     ClientRequest, PlayerCommand, Query, QueryResult, QuerySync, PreviewGroup,
     EXTERNAL_COMMAND, GLOBAL_STATUS_UPDATE, GLOBAL_VOLUME_UPDATE,
     GLOBAL_QUEUE_UPDATE, GLOBAL_STICKERS_UPDATE, run_status_update,

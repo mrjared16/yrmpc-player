@@ -47,7 +47,6 @@ use crate::{
         mpd_client::{Filter, FilterKind, MpdClient, Command, SingleOrRange, Tag},
         proto_client::ProtoClient,
     },
-    backends::MusicBackend,
     shared::macros::{status_info, status_warn},
 };
 
@@ -581,32 +580,35 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
                 b.client.enqueue_multiple(items, autoplay_idx, position, replace)
             }
             crate::backends::BackendDispatcher::YouTube(backend) => {
+                use crate::backends::api::{Queue, StatusQuery};
+                
                 log::debug!("enqueue_multiple for YouTube backend: {} items, replace={}, autoplay_idx={:?}", items.len(), replace, autoplay_idx);
 
                 if replace {
-                    backend.clear()?;
+                    Queue::clear(backend)?;
                 }
 
-                let queue_len_before = backend.playlist_info().map(|q| q.len()).unwrap_or(0);
+                let queue_len_before = StatusQuery::queue_songs(backend).map(|q| q.len()).unwrap_or(0);
 
                 // Add each item to the queue
                 for item in items.iter() {
                     match item {
                         Enqueue::File { path } => {
                             log::debug!("YouTube: adding file to queue (no metadata): {}", path);
-                            // Legacy: Add the song to the queue without metadata
-                            backend.add(path, None)?;
+                            // Create a minimal Item and use api::Queue
+                            let item = crate::backends::api::Item::track(path, path);
+                            Queue::add(backend, &[item], crate::backends::api::InsertAt::End, crate::backends::api::AfterAdd::Nothing)?;
                         }
                         Enqueue::Song { song } => {
                             let title = song.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or(&song.uri);
                             log::info!("YouTube: adding song to queue: {} ({})", title, &song.uri);
-                            // Add song with full metadata
+                            // Add song with full metadata using public method
                             backend.add_song(song, None)?;
                         }
                         Enqueue::Playlist { name } => {
                             log::debug!("YouTube: loading playlist: {}", name);
-                            // For playlists, try to load them
-                            backend.load_playlist(name, None)?;
+                            // Playlists not fully supported on YouTube yet
+                            log::warn!("Playlist loading not yet supported for YouTube backend: {}", name);
                         }
                         Enqueue::Find { filter: _ } => {
                             log::warn!("Find filter not supported for YouTube backend");

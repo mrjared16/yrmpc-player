@@ -1,6 +1,6 @@
 use crate::ui::dirstack::{Dir, DirStack, DirStackItem, Path, ScrollingState};
 
-pub struct Walk<'a, T, S>
+pub(crate) struct Walk<'a, T, S>
 where
     T: std::fmt::Debug + DirStackItem + Clone + Send,
     S: ScrollingState + std::fmt::Debug + Default,
@@ -13,7 +13,7 @@ where
     idx: usize,
 }
 
-pub trait WalkDirStackItem<'a, T, S>
+pub(crate) trait WalkDirStackItem<'a, T, S>
 where
     T: std::fmt::Debug + DirStackItem + Clone + Send,
     S: ScrollingState + std::fmt::Debug + Default,

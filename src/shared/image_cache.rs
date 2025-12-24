@@ -68,7 +68,7 @@ pub struct ImageCache {
 }
 
 impl ImageCache {
-    pub fn new(app_event_sender: Sender<AppEvent>) -> Self {
+    pub(crate) fn new(app_event_sender: Sender<AppEvent>) -> Self {
         let picker = Picker::from_query_stdio().unwrap_or_else(|_| Picker::from_fontsize((8, 16)));
 
         let inner = CacheInner {

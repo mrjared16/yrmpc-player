@@ -23,8 +23,8 @@ use crate::{
     ui::UiAppEvent,
 };
 
-// Re-export ClientRequest from backends::messaging for backward compatibility
-pub use crate::backends::messaging::ClientRequest;
+// Re-export ClientRequest from backends::messaging for internal use
+pub(crate) use crate::backends::messaging::ClientRequest;
 
 #[derive(Debug)]
 #[allow(unused)]

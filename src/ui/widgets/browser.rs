@@ -20,7 +20,7 @@ pub enum BrowserArea {
 }
 
 #[derive(Debug)]
-pub struct Browser<T: std::fmt::Debug + DirStackItem + Clone + Send> {
+pub(crate) struct Browser<T: std::fmt::Debug + DirStackItem + Clone + Send> {
     state_type_marker: std::marker::PhantomData<T>,
     pub areas: EnumMap<BrowserArea, Rect>,
     filter_input_active: bool,

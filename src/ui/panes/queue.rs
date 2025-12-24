@@ -36,7 +36,7 @@ use crate::{
     mpd::{
         mpd_client::SingleOrRange,
     },
-    backends::{BackendCapability, BackendDispatcher, Enqueue, BackendActions},
+    backends::{Capability, BackendDispatcher, Enqueue, BackendActions},
     shared::{
         ext::{btreeset_ranges::BTreeSetRanges, rect::RectExt},
         key_event::KeyEvent,
@@ -289,7 +289,7 @@ impl QueuePane {
             .list_section(ctx, |mut section| {
                 let items = self.queue.items.iter().map(|song| song.uri.clone()).collect_vec();
                 section.add_item("Add queue to playlist", |ctx| {
-                    if !ctx.supports(BackendCapability::SavedPlaylists) {
+                    if !ctx.supports(Capability::Playlists) {
                         status_warn!("Saved playlists not supported by this backend");
                         return Ok(());
                     }
@@ -316,7 +316,7 @@ impl QueuePane {
                     Ok(())
                 });
                 section.add_item("Save queue as playlist", move |ctx| {
-                    if !ctx.supports(BackendCapability::SavedPlaylists) {
+                    if !ctx.supports(Capability::Playlists) {
                         status_warn!("Saved playlists not supported by this backend");
                         return Ok(());
                     }

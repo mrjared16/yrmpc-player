@@ -29,7 +29,7 @@ use crate::{
     },
 };
 
-pub fn init(
+pub(crate) fn init(
     client_rx: Receiver<ClientRequest>,
     event_tx: Sender<AppEvent>,
     client: BackendDispatcher<'static>,

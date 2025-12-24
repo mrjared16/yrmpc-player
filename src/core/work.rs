@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-pub fn init(
+pub(crate) fn init(
     work_rx: Receiver<WorkRequest>,
     client_tx: Sender<ClientRequest>,
     event_tx: Sender<AppEvent>,

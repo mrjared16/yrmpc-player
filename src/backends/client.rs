@@ -26,7 +26,7 @@ use crate::{
         mpd_client::{Filter, Command, SingleOrRange},
         proto_client::ProtoClient,
     },
-    backends::{MusicBackend, MpdBackend, youtube, BackendCapability},
+    backends::{MpdBackend, youtube, BackendCapability},
     backends::interaction::{BackendActions, PartitionedOutput},
     backends::controllers::{
         PlaybackController, QueueController, StatusProvider, VolumeController,
@@ -35,6 +35,49 @@ use crate::{
     },
 };
 use std::sync::{Arc, RwLock};
+
+use crate::backends::api::{self, Item, InsertAt, AfterAdd, SearchQuery, SearchResults, BrowseResult, Capability, ToggleMode};
+
+// =============================================================================
+// HELPER FUNCTIONS FOR TYPE CONVERSION
+// =============================================================================
+
+/// Convert domain::QueuePosition to api::InsertAt
+fn queue_position_to_insert_at(pos: Option<crate::domain::QueuePosition>) -> InsertAt {
+    match pos {
+        None => InsertAt::End,
+        Some(crate::domain::QueuePosition::End) => InsertAt::End,
+        Some(crate::domain::QueuePosition::Next) => InsertAt::Next,
+        Some(crate::domain::QueuePosition::Absolute(n)) => InsertAt::Position(n as u32),
+        Some(crate::domain::QueuePosition::Relative(_)) => InsertAt::End, // Relative not directly supported
+    }
+}
+
+/// Convert OnOffOneshot to api::ToggleMode
+fn onoff_to_toggle_mode(onoff: OnOffOneshot) -> ToggleMode {
+    match onoff {
+        OnOffOneshot::On => ToggleMode::On,
+        OnOffOneshot::Off => ToggleMode::Off,
+        OnOffOneshot::Oneshot => ToggleMode::Oneshot,
+    }
+}
+
+/// Convert api::Item to domain::Song (for backward compatibility)
+fn item_to_song(item: &Item) -> crate::domain::Song {
+    let mut metadata = std::collections::HashMap::new();
+    metadata.insert("title".to_string(), vec![item.title.clone()]);
+    if let Some(ref artist) = item.subtitle {
+        metadata.insert("artist".to_string(), vec![artist.clone()]);
+    }
+    
+    crate::domain::Song {
+        id: item.queue_id,
+        uri: item.id.clone(),
+        duration: item.duration,
+        metadata,
+        ..Default::default()
+    }
+}
 
 /// Unified backend dispatcher that routes commands to the active backend.
 ///
@@ -153,24 +196,6 @@ impl<'name> BackendDispatcher<'name> {
     /// - `library()` for search/browse
     /// - `youtube()` for YouTube-specific features (browse details)
     /// 
-    /// This method is `pub(crate)` because:
-    /// 1. MPD-specific controllers (stickers, outputs, database) need it
-    /// 2. StatusProvider needs it for rich `domain::Status`
-    pub(crate) fn backend_mut(&mut self) -> &mut dyn MusicBackend {
-        match self {
-            BackendDispatcher::Mpd(b) => b as &mut dyn MusicBackend,
-            BackendDispatcher::YouTube(b) => b as &mut dyn MusicBackend,
-        }
-    }
-
-    // Helper to get immutable reference to backend as trait object
-    fn backend(&self) -> &dyn MusicBackend {
-        match self {
-            BackendDispatcher::Mpd(b) => b as &dyn MusicBackend,
-            BackendDispatcher::YouTube(b) => b as &dyn MusicBackend,
-        }
-    }
-
     // =========================================================================
     // CONTROLLER API - New organized interface
     // =========================================================================
@@ -204,7 +229,10 @@ impl<'name> BackendDispatcher<'name> {
 
     /// Get status provider for current state queries
     pub fn status(&mut self) -> StatusProvider<'_> {
-        StatusProvider { backend: self.backend_mut() }
+        match self {
+            BackendDispatcher::Mpd(b) => StatusProvider { backend: b as &mut dyn api::StatusQuery },
+            BackendDispatcher::YouTube(b) => StatusProvider { backend: b as &mut dyn api::StatusQuery },
+        }
     }
 
     /// Get volume controller
@@ -227,10 +255,11 @@ impl<'name> BackendDispatcher<'name> {
     /// 
     /// Returns `None` if the backend doesn't support saved playlists.
     pub fn saved_playlists(&mut self) -> Option<SavedPlaylistController<'_>> {
-        if self.backend().supports(BackendCapability::SavedPlaylists) {
-            Some(SavedPlaylistController { backend: self.backend_mut() })
-        } else {
-            None
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                Some(SavedPlaylistController { backend: b as &mut dyn api::optional::Playlists })
+            }
+            BackendDispatcher::YouTube(_) => None,
         }
     }
 
@@ -238,10 +267,11 @@ impl<'name> BackendDispatcher<'name> {
     /// 
     /// Returns `None` if the backend doesn't support stickers.
     pub fn stickers(&mut self) -> Option<StickerController<'_>> {
-        if self.backend().supports(BackendCapability::Stickers) {
-            Some(StickerController { backend: self.backend_mut() })
-        } else {
-            None
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                Some(StickerController { backend: b as &mut dyn crate::backends::mpd::specific::Stickers })
+            }
+            BackendDispatcher::YouTube(_) => None,
         }
     }
 
@@ -249,10 +279,11 @@ impl<'name> BackendDispatcher<'name> {
     /// 
     /// Returns `None` if the backend doesn't support output control.
     pub fn outputs_control(&mut self) -> Option<OutputController<'_>> {
-        if self.backend().supports(BackendCapability::OutputControl) {
-            Some(OutputController { backend: self.backend_mut() })
-        } else {
-            None
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                Some(OutputController { backend: b as &mut dyn crate::backends::mpd::specific::Outputs })
+            }
+            BackendDispatcher::YouTube(_) => None,
         }
     }
 
@@ -260,40 +291,29 @@ impl<'name> BackendDispatcher<'name> {
     /// 
     /// Returns `None` if the backend doesn't support database management.
     pub fn database(&mut self) -> Option<DatabaseController<'_>> {
-        if self.backend().supports(BackendCapability::DatabaseManagement) {
-            Some(DatabaseController { backend: self.backend_mut() })
-        } else {
-            None
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                Some(DatabaseController { backend: b as &mut dyn crate::backends::mpd::specific::Database })
+            }
+            BackendDispatcher::YouTube(_) => None,
         }
     }
 
     /// Check if this backend supports a capability
-    pub fn supports(&self, capability: BackendCapability) -> bool {
-        self.backend().supports(capability)
+    pub fn supports(&self, capability: api::Capability) -> bool {
+        api::Backend::supports(self, capability)
     }
 
     /// Get the backend name (e.g., "MPD", "YouTube")
     pub fn name(&self) -> &'static str {
-        self.backend().backend_name()
+        api::Backend::name(self)
     }
-
-    /// Get direct access to MPD backend (if using MPD)
-    /// 
-    /// Use this for advanced MPD-specific operations not covered by controllers.
-    pub fn mpd(&mut self) -> Option<&mut MpdBackend<'name>> {
+    
+    /// Get the backend capabilities using the new api::Backend trait
+    pub fn capabilities(&self) -> &'static [api::Capability] {
         match self {
-            BackendDispatcher::Mpd(b) => Some(b),
-            _ => None,
-        }
-    }
-
-    /// Get direct access to YouTube backend (if using YouTube)
-    /// 
-    /// Use this for YouTube-specific operations not covered by controllers.
-    pub fn youtube(&mut self) -> Option<&mut youtube::YouTubeProxy> {
-        match self {
-            BackendDispatcher::YouTube(b) => Some(b),
-            _ => None,
+            BackendDispatcher::Mpd(b) => api::Backend::capabilities(b),
+            BackendDispatcher::YouTube(b) => api::Backend::capabilities(b),
         }
     }
 
@@ -316,112 +336,127 @@ impl<'name> BackendDispatcher<'name> {
     // =========================================================================
 
     // ----- Playback (use playback() instead) -----
+    // NOTE: These methods now delegate to api::Playback trait (not MusicBackend)
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().play() instead")]
     pub fn play(&mut self) -> Result<()> {
-        self.backend_mut().play()
+        api::Playback::play(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().pause(state) instead")]
     pub fn pause_state(&mut self, state: bool) -> Result<()> {
-        self.backend_mut().pause(state)
+        if state {
+            api::Playback::pause(self)
+        } else {
+            api::Playback::play(self)
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().pause(true) instead")]
     pub fn pause(&mut self) -> Result<()> {
-        self.pause_state(true)
+        api::Playback::pause(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().stop() instead")]
     pub fn stop(&mut self) -> Result<()> {
-        self.backend_mut().stop()
+        api::Playback::stop(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().next() instead")]
     pub fn next(&mut self) -> Result<()> {
-        self.backend_mut().next()
+        api::Playback::next(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().previous() instead")]
     pub fn previous(&mut self) -> Result<()> {
-        self.backend_mut().previous()
+        api::Playback::previous(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().seek(position) instead")]
     pub fn seek_current(&mut self, position: SeekPosition) -> Result<()> {
-        self.backend_mut().seek_current(position)
+        match position {
+            SeekPosition::Absolute(secs) => {
+                api::Playback::seek(self, std::time::Duration::from_secs_f64(secs))
+            }
+            SeekPosition::Relative(secs) => {
+                api::Playback::seek_relative(self, secs as i64)
+            }
+        }
     }
 
     // ----- Status (use status() instead) -----
+    // NOTE: These methods now delegate to api::StatusQuery trait (not MusicBackend)
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.status().get() instead")]
     pub fn get_status(&mut self) -> Result<crate::domain::Status> {
-        self.backend_mut().get_status()
+        api::StatusQuery::get_status(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.status().queue() instead")]
     pub fn playlist_info(&mut self) -> Result<Vec<crate::domain::Song>> {
-        self.backend_mut().playlist_info()
+        api::StatusQuery::queue_songs(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.status().current_song() instead")]
     pub fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
-        self.backend_mut().current_song()
+        api::StatusQuery::current_song(self)
     }
 
     // ----- Queue (use queue() instead) -----
+    // NOTE: These methods now delegate to api::Queue trait (not MusicBackend)
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().add(uri, position) instead")]
     pub fn add(&mut self, uri: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
-        self.backend_mut().add(uri, position)
+        let item = Item::track(uri, uri);
+        let at = queue_position_to_insert_at(position);
+        api::Queue::add(self, &[item], at, AfterAdd::Nothing)
     }
 
-    /// Add song with full metadata (uses QueueOperations.enqueue)
+    /// Add song with full metadata
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().add_song(song, position) instead")]
     pub fn add_song(&mut self, song: &crate::domain::Song, position: Option<crate::domain::QueuePosition>) -> Result<()> {
-        use crate::backends::QueueOperations;
-        self.backend_mut().enqueue(song, position)
+        let item = Item::from(song);
+        let at = queue_position_to_insert_at(position);
+        api::Queue::add(self, &[item], at, AfterAdd::Nothing)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().delete(id) instead")]
     pub fn delete_id(&mut self, id: u32) -> Result<()> {
-        self.backend_mut().delete_id(id)
+        api::Queue::remove(self, &[id])
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().clear() instead")]
     pub fn clear(&mut self) -> Result<()> {
-        self.backend_mut().clear()
+        api::Queue::clear(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().move_item(from, to) instead")]
     pub fn move_id(&mut self, from: u32, to: u32) -> Result<()> {
-        self.backend_mut().move_id(from, to)
+        api::Queue::move_items(self, &[from], to)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().play_id(id) instead")]
     pub fn play_id(&mut self, id: u32) -> Result<()> {
-        self.backend_mut().play_id(id)
+        api::Queue::play_id(self, id)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().play_pos(pos) instead")]
     pub fn play_pos(&mut self, pos: usize) -> Result<()> {
+        // Note: api::Queue doesn't have play_pos, need direct backend call
         match self {
             BackendDispatcher::Mpd(b) => b.client.play_pos(pos).map_err(Into::into),
             BackendDispatcher::YouTube(b) => b.play_pos(pos),
         }
     }
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().unpause() instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().play() instead")]
     pub fn unpause(&mut self) -> Result<()> {
-        match self {
-            BackendDispatcher::Mpd(b) => b.client.unpause().map_err(Into::into),
-            BackendDispatcher::YouTube(_) => self.pause_state(false),
-        }
+        api::Playback::play(self)
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.status().current_song() instead")]
     pub fn get_current_song(&mut self) -> Result<Option<crate::domain::Song>> {
-        self.current_song()
+        api::StatusQuery::current_song(self)
     }
 
     pub fn find_one(&mut self, filter: &[Filter]) -> Result<Option<crate::domain::Song>> {
@@ -453,13 +488,15 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     // ----- Library (use library() instead) -----
+    // NOTE: These methods now delegate to api::Discovery trait (not MusicBackend)
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().suggestions(query) instead")]
     pub fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
-        self.backend_mut().get_search_suggestions(query)
+        api::Discovery::suggestions(self, &query)
     }
 
     // ----- Volume (use volume_control() instead) -----
+    // NOTE: These methods now delegate to api::Volume trait (not MusicBackend)
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.volume_control().set(change) instead")]
     pub fn volume(&mut self, change: ValueChange) -> Result<()> {
@@ -468,54 +505,119 @@ impl<'name> BackendDispatcher<'name> {
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.volume_control().set(volume) instead")]
     pub fn set_volume(&mut self, volume: ValueChange) -> Result<()> {
-        self.backend_mut().set_volume(volume)
+        match volume {
+            ValueChange::Set(v) => api::Volume::set(self, v as u8),
+            ValueChange::Increase(delta) => {
+                let current = api::Volume::get(self)?;
+                let new_vol = current.saturating_add(delta as u8).min(100);
+                api::Volume::set(self, new_vol)
+            }
+            ValueChange::Decrease(delta) => {
+                let current = api::Volume::get(self)?;
+                let new_vol = current.saturating_sub(delta as u8);
+                api::Volume::set(self, new_vol)
+            }
+        }
     }
 
-    // ----- Playback options (use playback() instead) -----
+    // ----- Playback options (use queue() instead for repeat/shuffle) -----
+    // NOTE: These methods now delegate to api::Queue trait (not MusicBackend)
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().repeat(repeat) instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().set_repeat() instead")]
     pub fn repeat(&mut self, repeat: bool) -> Result<()> {
-        self.backend_mut().repeat(repeat)
+        let mode = if repeat { api::Repeat::All } else { api::Repeat::Off };
+        api::Queue::set_repeat(self, mode)
     }
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().random(random) instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().set_shuffle() instead")]
     pub fn random(&mut self, random: bool) -> Result<()> {
-        self.backend_mut().random(random)
+        api::Queue::set_shuffle(self, random)
     }
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().single(single) instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().set_single() instead")]
     pub fn single(&mut self, single: OnOffOneshot) -> Result<()> {
-        self.backend_mut().single(single)
+        let mode = onoff_to_toggle_mode(single);
+        api::Queue::set_single(self, mode)
     }
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().consume(consume) instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.queue().set_consume() instead")]
     pub fn consume(&mut self, consume: OnOffOneshot) -> Result<()> {
-        self.backend_mut().consume(consume)
+        let mode = onoff_to_toggle_mode(consume);
+        api::Queue::set_consume(self, mode)
     }
 
-    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().crossfade(seconds) instead")]
+    #[deprecated(since = "0.12.0", note = "Use dispatcher.playback().set_crossfade() instead")]
     pub fn crossfade(&mut self, seconds: u32) -> Result<()> {
-        self.backend_mut().crossfade(seconds)
+        api::Playback::set_crossfade(self, seconds)
     }
+
+    // ----- Library browsing (use library() instead) -----
+    // NOTE: lsinfo/list_all/search/find use api::Discovery for search,
+    // but some MPD-specific features remain as direct calls
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().browse(path) instead")]
     pub fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
-        self.backend_mut().lsinfo(path)
+        // api::Discovery::browse returns BrowseResult with Items
+        // For backward compat, we need to convert or use direct MPD call
+        // This is MPD-specific behavior, keep direct dispatch
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.lsinfo(path).map(|r| r.0).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().by_category(category) instead")]
     pub fn get_library(&mut self, category: crate::player::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
-        self.backend_mut().get_library(category)
+        // This is YouTube-specific, keep direct dispatch
+        match self {
+            BackendDispatcher::Mpd(_) => Ok(vec![]),
+            BackendDispatcher::YouTube(b) => {
+                // get_library is YouTube-only, call it directly
+                b.get_library_internal(category)
+            }
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().list_all(path) instead")]
     pub fn list_all(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>> {
-        self.backend_mut().list_all(path)
+        // MPD-specific recursive listing
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                use crate::mpd::commands::list_all::ListAllEntry;
+                let list_all = b.client.list_all(path)?;
+                Ok(list_all.0.into_iter().map(|entry| match entry {
+                    ListAllEntry::File(path) => {
+                        LsInfoEntry::File(crate::mpd::commands::Song { file: path, ..Default::default() }.into())
+                    }
+                    ListAllEntry::Dir(path) => LsInfoEntry::Dir(crate::mpd::commands::lsinfo::Dir {
+                        full_path: path.clone(),
+                        name: path.split('/').last().unwrap_or("").to_string(),
+                        ..Default::default()
+                    }),
+                    ListAllEntry::Playlist(path) => {
+                        LsInfoEntry::Playlist(crate::mpd::commands::lsinfo::Playlist {
+                            full_path: path.clone(),
+                            name: path.split('/').last().unwrap_or("").to_string(),
+                            ..Default::default()
+                        })
+                    }
+                }).collect())
+            }
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().search(filter) instead")]
     pub fn search(&mut self, filter: &[Filter]) -> Result<Vec<crate::domain::Song>> {
-        self.backend_mut().search(filter)
+        // Convert filter to SearchQuery and use api::Discovery
+        let query_text = filter.iter()
+            .find(|f| !f.value.is_empty())
+            .map(|f| f.value.as_ref())
+            .unwrap_or("");
+        
+        let results = api::Discovery::search(self, api::SearchQuery::new(query_text))?;
+        // Convert Items back to Songs for backward compat
+        Ok(results.items.into_iter().map(|item| item_to_song(&item)).collect())
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().find(filter, window) instead")]
@@ -524,19 +626,32 @@ impl<'name> BackendDispatcher<'name> {
         filter: &[Filter],
         window: Option<(u32, u32)>,
     ) -> Result<Vec<crate::domain::Song>> {
-        self.backend_mut().find(filter, window)
+        // MPD-specific exact match with window - keep direct call
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                let _ = window; // MPD client find doesn't support window in this wrapper
+                Ok(b.client.find(filter)?.into_iter().map(Into::into).collect())
+            }
+            BackendDispatcher::YouTube(_) => self.search(filter),
+        }
     }
 
     // ----- Saved Playlists (use saved_playlists() instead - MPD only) -----
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.list() instead")]
     pub fn list_playlists(&mut self) -> Result<Vec<Playlist>> {
-        self.backend_mut().list_playlists()
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.list_playlists().map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.get_songs(name) instead")]
     pub fn playlist_info_name(&mut self, name: &str) -> Result<Vec<crate::domain::Song>> {
-        self.backend_mut().playlist_info_name(name)
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.list_playlist_info(name, None)?.into_iter().map(Into::into).collect()),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     pub fn list_tag(
@@ -544,44 +659,85 @@ impl<'name> BackendDispatcher<'name> {
         tag: Tag,
         filter: Option<&[crate::mpd::mpd_client::Filter]>,
     ) -> Result<Vec<String>> {
-        self.backend_mut().list_tag(tag, filter)
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.list_tag(tag, filter)?.0),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     pub fn count(
         &mut self,
         filter: &[crate::mpd::mpd_client::Filter],
     ) -> Result<(usize, std::time::Duration)> {
-        self.backend_mut().count(filter)
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                let count = b.client.count(filter)?;
+                Ok((count.songs, count.playtime))
+            }
+            BackendDispatcher::YouTube(_) => Ok((0, std::time::Duration::ZERO)),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.load(name, position) instead")]
     pub fn load_playlist(&mut self, name: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
-        self.backend_mut().load_playlist(name, position)
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                let mpd_pos = position.map(|p| match p {
+                    crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
+                    crate::domain::QueuePosition::Relative(i) => if i >= 0 {
+                        crate::mpd::QueuePosition::RelativeAdd(i as usize)
+                    } else {
+                        crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+                    },
+                    crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX),
+                    crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1),
+                });
+                b.client.load_playlist(name, mpd_pos).map_err(Into::into)
+            }
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.save(name, mode) instead")]
     pub fn save_queue_as_playlist(&mut self, name: &str, mode: Option<SaveMode>) -> Result<()> {
-        self.backend_mut().save_queue_as_playlist(name, mode)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.save_queue_as_playlist(name, mode).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.delete(name) instead")]
     pub fn delete_playlist(&mut self, name: &str) -> Result<()> {
-        self.backend_mut().delete_playlist(name)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.delete_playlist(name).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.rename(old, new) instead")]
     pub fn rename_playlist(&mut self, old_name: &str, new_name: &str) -> Result<()> {
-        self.backend_mut().rename_playlist(old_name, new_name)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.rename_playlist(old_name, new_name).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.add_song(playlist, uri) instead")]
     pub fn add_to_playlist(&mut self, playlist: &str, uri: &str) -> Result<()> {
-        self.backend_mut().add_to_playlist(playlist, uri)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.add_to_playlist(playlist, uri, None).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.delete_song(playlist, position) instead")]
     pub fn delete_from_playlist(&mut self, playlist: &str, position: u32) -> Result<()> {
-        self.backend_mut().delete_from_playlist(playlist, position)
+        match self {
+            BackendDispatcher::Mpd(b) => {
+                b.client.delete_from_playlist(playlist, &SingleOrRange::single(position as usize)).map_err(Into::into)
+            }
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.saved_playlists()?.move_song(playlist, from, to) instead")]
@@ -596,17 +752,26 @@ impl<'name> BackendDispatcher<'name> {
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.stickers()?.list(uri) instead")]
     pub fn list_stickers(&mut self, uri: &str) -> Result<HashMap<String, String>> {
-        self.backend_mut().list_stickers(uri)
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.list_stickers(uri)?.into_iter().collect()),
+            BackendDispatcher::YouTube(_) => Ok(HashMap::new()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.stickers()?.set(uri, key, value) instead")]
     pub fn set_sticker(&mut self, uri: &str, key: &str, value: &str) -> Result<()> {
-        self.backend_mut().set_sticker(uri, key, value)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.set_sticker(uri, key, value).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.stickers()?.delete(uri, key) instead")]
     pub fn delete_sticker(&mut self, uri: &str, key: &str) -> Result<()> {
-        self.backend_mut().delete_sticker(uri, key)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.delete_sticker(uri, key).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()),
+        }
     }
 
     // ----- Database (use database() instead - MPD only) -----
@@ -628,22 +793,34 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     pub fn version(&self) -> crate::mpd::version::Version {
-        self.backend().version()
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.version,
+            BackendDispatcher::YouTube(_) => crate::mpd::version::Version::new(0, 0, 0),
+        }
     }
 
     // ----- Outputs (use outputs_control() instead - MPD only) -----
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.outputs_control()?.list() instead")]
     pub fn outputs(&mut self) -> Result<Vec<Output>> {
-        self.backend_mut().outputs()
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.outputs()?.0),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     pub fn decoders(&mut self) -> Result<Vec<Decoder>> {
-        self.backend_mut().decoders()
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.decoders()?.0),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     pub fn partitions(&mut self) -> Result<Vec<String>> {
-        self.backend_mut().partitions()
+        match self {
+            BackendDispatcher::Mpd(b) => Ok(b.client.list_partitions()?.0),
+            BackendDispatcher::YouTube(_) => Ok(vec![]),
+        }
     }
 
     /// Get supported commands (MPD only)
@@ -813,7 +990,10 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     pub fn shuffle(&mut self, range: Option<SingleOrRange>) -> Result<()> {
-        self.backend_mut().shuffle(range)
+        match self {
+            BackendDispatcher::Mpd(b) => b.client.shuffle(range).map_err(Into::into),
+            BackendDispatcher::YouTube(_) => Ok(()), // Not supported
+        }
     }
 
     /// Get sticker value (MPD only)
@@ -1121,7 +1301,7 @@ impl<'name> BackendDispatcher<'name> {
 // With only 2 backends, explicit code is clearer than macro magic.
 // If we add more backends, consider extracting to a dispatch macro.
 
-use crate::backends::api::{self, Item, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
+// Note: api types are imported at the top of the file
 
 impl api::Playback for BackendDispatcher<'_> {
     fn play(&mut self) -> Result<()> {
@@ -1300,10 +1480,33 @@ impl api::Backend for BackendDispatcher<'_> {
         }
     }
 
-    fn capabilities(&self) -> &[Capability] {
+    fn capabilities(&self) -> &'static [Capability] {
         match self {
             BackendDispatcher::Mpd(b) => api::Backend::capabilities(b),
             BackendDispatcher::YouTube(b) => api::Backend::capabilities(b),
+        }
+    }
+}
+
+impl api::StatusQuery for BackendDispatcher<'_> {
+    fn get_status(&mut self) -> Result<crate::domain::Status> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::StatusQuery::get_status(b),
+            BackendDispatcher::YouTube(b) => api::StatusQuery::get_status(b),
+        }
+    }
+
+    fn current_song(&mut self) -> Result<Option<crate::domain::Song>> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::StatusQuery::current_song(b),
+            BackendDispatcher::YouTube(b) => api::StatusQuery::current_song(b),
+        }
+    }
+
+    fn queue_songs(&mut self) -> Result<Vec<crate::domain::Song>> {
+        match self {
+            BackendDispatcher::Mpd(b) => api::StatusQuery::queue_songs(b),
+            BackendDispatcher::YouTube(b) => api::StatusQuery::queue_songs(b),
         }
     }
 }

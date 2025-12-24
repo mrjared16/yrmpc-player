@@ -37,7 +37,7 @@ pub const GLOBAL_STICKERS_UPDATE: &str = "global_stickers_update";
 
 /// A query to be executed by the backend thread
 #[derive(derive_more::Debug, Builder)]
-pub struct Query {
+pub(crate) struct Query {
     pub id: &'static str,
     pub replace_id: Option<&'static str>,
     pub target: Option<PaneType>,
@@ -47,7 +47,7 @@ pub struct Query {
 
 /// A synchronous query that blocks until the result is available
 #[derive(derive_more::Debug, Builder)]
-pub struct QuerySync {
+pub(crate) struct QuerySync {
     #[debug(skip)]
     pub callback: Box<dyn FnOnce(&mut BackendDispatcher<'_>) -> Result<QueryResult> + Send>,
     pub tx: Sender<QueryResult>,
@@ -55,7 +55,7 @@ pub struct QuerySync {
 
 /// A command to be executed by the backend (fire-and-forget)
 #[derive(derive_more::Debug)]
-pub struct PlayerCommand {
+pub(crate) struct PlayerCommand {
     #[debug(skip)]
     pub callback: Box<dyn FnOnce(&mut BackendDispatcher<'_>) -> Result<()> + Send>,
 }
@@ -77,7 +77,7 @@ impl Query {
 
 /// A group of preview items with optional header
 #[derive(Debug, Clone, Default)]
-pub struct PreviewGroup {
+pub(crate) struct PreviewGroup {
     pub name: Option<&'static str>,
     pub items: Vec<ListItem<'static>>,
     pub header_style: Option<Style>,
@@ -96,7 +96,7 @@ impl PreviewGroup {
 /// Result types for backend queries
 #[derive(Debug)]
 #[allow(unused, clippy::large_enum_variant)]
-pub enum QueryResult {
+pub(crate) enum QueryResult {
     SongsList { data: Vec<Song>, path: Option<Path> },
     LsInfo { data: Vec<String>, path: Option<Path> },
     DirOrSong { data: Vec<DirOrSong>, path: Option<Path> },
@@ -121,7 +121,7 @@ pub enum QueryResult {
 /// Unified request type for the backend channel
 #[derive(Debug)]
 #[allow(unused)]
-pub enum ClientRequest {
+pub(crate) enum ClientRequest {
     Query(Query),
     QuerySync(QuerySync),
     Command(PlayerCommand),
@@ -143,7 +143,7 @@ use crate::shared::events::AppEvent;
 
 /// Scheduled function to send periodic status updates
 #[allow(clippy::unnecessary_wraps)]
-pub fn run_status_update((_, client_tx): &(Sender<AppEvent>, Sender<ClientRequest>)) -> Result<()> {
+pub(crate) fn run_status_update((_, client_tx): &(Sender<AppEvent>, Sender<ClientRequest>)) -> Result<()> {
     try_skip!(
         client_tx.send(ClientRequest::Query(Query {
             id: GLOBAL_STATUS_UPDATE,

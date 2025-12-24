@@ -49,7 +49,7 @@ use crate::{
 
 static ON_RESIZE_SCHEDULE_ID: LazyLock<Id> = LazyLock::new(id::new);
 
-pub fn init<B: Backend + std::io::Write + Send + 'static>(
+pub(crate) fn init<B: Backend + std::io::Write + Send + 'static>(
     ctx: Ctx,
     event_rx: Receiver<AppEvent>,
     terminal: Terminal<B>,

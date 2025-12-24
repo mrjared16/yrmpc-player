@@ -22,7 +22,7 @@ pub enum ScriptEvent {
     },
 }
 
-pub fn run_script(path: PathBuf, tx: Sender<AppEvent>) -> Result<()> {
+pub(crate) fn run_script(path: PathBuf, tx: Sender<AppEvent>) -> Result<()> {
     let content = std::fs::read_to_string(&path).context("Failed to read script file")?;
     let events: Vec<ScriptEvent> = serde_json::from_str(&content).context("Failed to parse script file")?;
 

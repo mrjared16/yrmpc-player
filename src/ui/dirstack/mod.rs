@@ -11,11 +11,11 @@ mod path;
 mod stack;
 mod state;
 mod walk;
-pub use dir::Dir;
+pub(crate) use dir::Dir;
 pub use path::Path;
-pub use stack::DirStack;
-pub use state::DirState;
-pub use walk::WalkDirStackItem;
+pub(crate) use stack::DirStack;
+pub(crate) use state::DirState;
+pub(crate) use walk::WalkDirStackItem;
 
 use super::dir_or_song::DirOrSong;
 use crate::{
@@ -26,7 +26,7 @@ use crate::{
     ui::panes::browser::SongExt,
 };
 
-pub trait DirStackItem {
+pub(crate) trait DirStackItem {
     fn as_path(&self) -> &str;
     fn is_file(&self) -> bool;
     fn to_file_preview(&self, ctx: &Ctx) -> Vec<PreviewGroup>;

@@ -55,7 +55,6 @@
 
 pub mod api;
 pub mod audio_cache;
-pub mod backend;
 pub mod client;
 pub mod config;
 pub mod details;
@@ -76,7 +75,3 @@ pub use services::{ApiService, PlaybackService, QueueService};
 
 // Re-export MPV types for internal use
 pub use mpv::{MpvIpc, MpvEvent};
-
-// Re-export deprecated YouTubeBackend stub for backward compatibility
-#[allow(deprecated)]
-pub use backend::YouTubeBackend;

@@ -68,7 +68,7 @@ pub mod tag_browser;
 pub mod volume;
 
 #[derive(Debug, Display, strum::EnumDiscriminants)]
-pub enum Panes<'pane_ref, 'pane> {
+pub(crate) enum Panes<'pane_ref, 'pane> {
     Queue(&'pane_ref mut QueuePane),
     QueueV2(&'pane_ref mut QueuePaneV2),
     #[cfg(debug_assertions)]
@@ -95,12 +95,12 @@ pub enum Panes<'pane_ref, 'pane> {
     Cava(&'pane_ref mut CavaPane),
 }
 
-pub trait BoxedPane: Pane + std::fmt::Debug {}
+pub(crate) trait BoxedPane: Pane + std::fmt::Debug {}
 
 impl<P: Pane + std::fmt::Debug> BoxedPane for P {}
 
 #[derive(Debug)]
-pub struct PaneContainer<'panes> {
+pub(crate) struct PaneContainer<'panes> {
     pub queue: QueuePaneV2,
     pub queue_legacy: Option<QueuePane>,
     #[cfg(debug_assertions)]
@@ -1283,7 +1283,8 @@ impl StringExt for String {
     }
 }
 
-#[cfg(all(test, feature = "broken_tests"))]
+// Note: These tests are temporarily disabled pending refactoring
+#[cfg(all(test, feature = "format_tests"))]
 #[allow(clippy::unwrap_used)]
 mod format_tests {
     use std::{collections::HashMap, time::Duration};

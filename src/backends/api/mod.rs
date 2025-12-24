@@ -14,38 +14,25 @@
 //!
 //! # Module Structure
 //!
-//! - [`playback`] - Playback control (play, pause, seek) and volume
-//! - [`queue`] - Queue management (add, remove, reorder)
+//! - [`playback`] - Playback control (play, pause, seek) and audio effects
+//! - [`queue`] - Queue management (add, remove, reorder) and playback behaviors
 //! - [`discovery`] - Content discovery (search, browse)
 //! - [`content`] - Content types (Item, ContentType, Capability)
+//! - [`optional`] - Optional features (Playlists, Lyrics, Radio)
 //!
-//! # Adding a New Backend (e.g., Spotify)
+//! # Three-Layer Architecture
 //!
-//! 1. **Create backend module**: `src/backends/spotify/`
-//! 2. **Implement api traits**:
-//!    - [`Playback`] - play, pause, stop, seek, status (~8 methods)
-//!    - [`Queue`] - add, remove, clear, move_items (~8 methods)  
-//!    - [`Discovery`] - search, browse, suggestions (~4 methods)
-//!    - [`Volume`] - get, set (~2 methods)
-//!    - [`Backend`] - name, capabilities (~2 methods)
+//! ```text
+//! Layer 1: Universal (api::*) - ALL backends implement
+//!   • Playback, Queue, Discovery, Volume
 //!
-//! 3. **Add to BackendDispatcher** (`src/backends/client.rs`):
-//!    ```ignore
-//!    pub enum BackendDispatcher<'a> {
-//!        Mpd(MpdBackend<'a>),
-//!        YouTube(YouTubeProxy),
-//!        Spotify(SpotifyClient),  // Add new variant
-//!    }
-//!    ```
+//! Layer 2: Optional Common (api::optional::*) - Multiple backends COULD implement
+//!   • Playlists, Lyrics, Radio, UserPreferences
 //!
-//! 4. **Implement api:: trait impls** for BackendDispatcher (update match arms)
+//! Layer 3: Backend-Specific - Only ONE backend has
+//!   • mpd::Outputs, mpd::Database, mpd::Stickers
+//! ```
 //!
-//! 5. **Add Spotify-specific features** (optional):
-//!    - Add `pub fn spotify(&mut self) -> Option<&mut SpotifyClient>` to BackendDispatcher
-//!    - UI can use for Spotify-only features like recommendations
-//!
-//! Total: ~24 required methods, most are simple pass-throughs.
-//! 
 //! # For LLM Agents
 //!
 //! - YouTube: implement these traits, IGNORE mpd/
@@ -53,14 +40,20 @@
 
 mod content;
 mod discovery;
+pub mod optional;
 mod playback;
 mod queue;
+mod status_query;
 
 // Re-export all types at api:: level
 pub use content::{ContentType, Item, Capability};
 pub use discovery::{Discovery, SearchQuery, SearchResults, BrowseResult};
 pub use playback::{Playback, Volume, State, Status, Repeat};
-pub use queue::{Queue, InsertAt, AfterAdd};
+pub use queue::{Queue, InsertAt, AfterAdd, ToggleMode};
+pub use status_query::StatusQuery;
+
+// Re-export optional traits
+pub use optional::{Playlists, Lyrics, Radio, UserPreferences};
 
 // Re-export ContentDetails from domain for convenience
 pub use crate::domain::ContentDetails;
@@ -70,7 +63,7 @@ pub use crate::domain::ContentDetails;
 /// Combines all capability traits into one.
 pub trait Backend: Playback + Queue + Discovery + Volume {
     fn name(&self) -> &'static str;
-    fn capabilities(&self) -> &[Capability];
+    fn capabilities(&self) -> &'static [Capability];
 
     fn supports(&self, cap: Capability) -> bool {
         self.capabilities().contains(&cap)

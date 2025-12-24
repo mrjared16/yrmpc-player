@@ -1,6 +1,7 @@
 //! Queue management traits and types.
 //!
 //! Add, remove, reorder, and manage items in the playback queue.
+//! Also handles playback behavior modes (single, consume, repeat, shuffle).
 
 use anyhow::Result;
 use super::content::Item;
@@ -29,6 +30,27 @@ pub enum AfterAdd {
     PlayFirst,
     /// Start playing the Nth added item (0-indexed)
     PlayIndex(usize),
+}
+
+/// Toggle mode for single/consume behaviors.
+///
+/// MPD supports `oneshot` variants that apply once then revert to off.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum ToggleMode {
+    /// Disabled
+    #[default]
+    Off,
+    /// Enabled permanently
+    On,
+    /// Apply once then revert to Off (MPD feature)
+    Oneshot,
+}
+
+impl ToggleMode {
+    /// Returns true if mode is active (On or Oneshot)
+    pub fn is_active(&self) -> bool {
+        matches!(self, ToggleMode::On | ToggleMode::Oneshot)
+    }
 }
 
 /// Queue management trait
@@ -73,4 +95,28 @@ pub trait Queue: Send + Sync {
 
     /// Set shuffle on/off
     fn set_shuffle(&mut self, enabled: bool) -> Result<()>;
+    
+    // =========================================================================
+    // Queue Behavior Modes (optional - default no-op)
+    // =========================================================================
+    
+    /// Set single mode (stop after current track finishes).
+    ///
+    /// When enabled, playback stops after the current track completes.
+    /// With `Oneshot`, stops once then reverts to normal behavior.
+    /// Check `Capability::SingleMode` before using.
+    fn set_single(&mut self, mode: ToggleMode) -> Result<()> {
+        let _ = mode;
+        Ok(())
+    }
+    
+    /// Set consume mode (remove tracks from queue after playing).
+    ///
+    /// When enabled, tracks are removed from the queue after playing.
+    /// With `Oneshot`, removes once then reverts to normal behavior.
+    /// Check `Capability::ConsumeMode` before using.
+    fn set_consume(&mut self, mode: ToggleMode) -> Result<()> {
+        let _ = mode;
+        Ok(())
+    }
 }
