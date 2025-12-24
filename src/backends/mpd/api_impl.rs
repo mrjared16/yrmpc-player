@@ -268,9 +268,11 @@ impl api::Discovery for MpdBackend<'_> {
         Ok(vec![])
     }
 
-    fn details(&mut self, item: &Item) -> Result<crate::domain::ContentDetails> {
-        use crate::domain::{ContentDetails, AlbumDetails, ArtistDetails, PlaylistDetails};
-        use crate::domain::ArtistRef;
+    fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
+        use crate::domain::content::{
+            ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
+            ContentRef, Extensions, Stat, Action,
+        };
         
         match item.content_type {
             ContentType::Album => {
@@ -284,30 +286,38 @@ impl api::Discovery for MpdBackend<'_> {
                     })
                     .collect();
                 
-                Ok(ContentDetails::Album(AlbumDetails {
+                // Build minimal extensions - just actions
+                let extensions = Extensions::builder()
+                    .stats(vec![Stat::track_count(tracks.len())])
+                    .actions(vec![Action::play(), Action::add_to_queue()])
+                    .build();
+                
+                Ok(ContentDetails::Album(AlbumContent {
                     id: item.id.clone(),
                     title: item.title.clone(),
-                    artist: ArtistRef::new("", item.subtitle.clone().unwrap_or_default()),
-                    year: None,
-                    description: None,
-                    thumbnail: None,
+                    artist: ContentRef::artist("", item.subtitle.clone().unwrap_or_default()),
                     tracks,
-                    more_by_artist: vec![],
+                    thumbnail: None,
+                    year: None,
+                    release_type: None,
+                    description: None,
+                    extensions,
                 }))
             }
             ContentType::Artist => {
                 // MPD doesn't have a native artist concept with details
-                // Return minimal info
-                Ok(ContentDetails::Artist(ArtistDetails {
+                // Return minimal info with just actions
+                let extensions = Extensions::builder()
+                    .actions(vec![Action::play(), Action::add_to_queue()])
+                    .build();
+                
+                Ok(ContentDetails::Artist(ArtistContent {
                     id: item.id.clone(),
                     name: item.title.clone(),
-                    subscribers: None,
-                    description: None,
-                    thumbnail: None,
                     top_songs: vec![],
-                    albums: vec![],
-                    singles: vec![],
-                    related_artists: vec![],
+                    thumbnail: None,
+                    bio: None,
+                    extensions,
                 }))
             }
             ContentType::Playlist => {
@@ -317,18 +327,22 @@ impl api::Discovery for MpdBackend<'_> {
                     .map(Into::into)
                     .collect();
                 
-                Ok(ContentDetails::Playlist(PlaylistDetails {
+                // Build minimal extensions
+                let extensions = Extensions::builder()
+                    .stats(vec![Stat::track_count(tracks.len())])
+                    .actions(vec![Action::play(), Action::shuffle(), Action::add_to_queue()])
+                    .build();
+                
+                Ok(ContentDetails::Playlist(PlaylistContent {
                     id: item.id.clone(),
                     title: item.title.clone(),
-                    author: None,
-                    year: None,
-                    description: None,
-                    thumbnail: None,
-                    track_count: tracks.len(),
-                    duration_text: None,
                     tracks,
-                    featured_artists: vec![],
-                    related_playlists: vec![],
+                    author: None,
+                    thumbnail: None,
+                    description: None,
+                    track_count: None,
+                    duration_text: None,
+                    extensions,
                 }))
             }
             other => Err(anyhow::anyhow!("Cannot get details for content type: {:?}", other)),

@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 use super::content::{Item, ContentType};
-use crate::domain::ContentDetails;
+use crate::domain::content::ContentDetails;
 
 /// Search query
 #[derive(Debug, Clone, Default)]

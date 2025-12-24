@@ -834,84 +834,168 @@ impl api::Discovery for YouTubeProxy {
         }
     }
 
-    fn details(&mut self, item: &Item) -> Result<crate::domain::ContentDetails> {
-        use crate::domain::{ContentDetails, AlbumDetails, ArtistDetails, PlaylistDetails};
-        use crate::domain::{ArtistRef, AlbumRef, PlaylistRef};
+    fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
+        use crate::domain::content::{
+            ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
+            ContentRef, Extensions, Stat, Action,
+        };
         
         match item.content_type {
             api::ContentType::Album => {
                 let yt_album = self.browse_album_details(&item.id)?;
-                Ok(ContentDetails::Album(AlbumDetails {
+                
+                // Build extensions with stats and related content
+                let mut extensions = Extensions::builder();
+                
+                // Add stats
+                let mut stats = vec![];
+                if let Some(year) = &yt_album.year {
+                    if let Ok(y) = year.parse::<u16>() {
+                        stats.push(Stat::year(y));
+                    }
+                }
+                stats.push(Stat::track_count(yt_album.tracks.len()));
+                extensions = extensions.stats(stats);
+                
+                // Add actions
+                extensions = extensions.actions(vec![
+                    Action::play(),
+                    Action::shuffle(),
+                    Action::add_to_queue(),
+                ]);
+                
+                // Add "more by artist" section
+                if !yt_album.more_by_artist.is_empty() {
+                    let more_albums: Vec<ContentRef> = yt_album.more_by_artist.into_iter()
+                        .map(|a| ContentRef::album(a.id, a.title)
+                            .with_subtitle(a.year.unwrap_or_default()))
+                        .collect();
+                    extensions = extensions.more_by_artist(
+                        format!("More by {}", yt_album.artist.name),
+                        more_albums
+                    );
+                }
+                
+                Ok(ContentDetails::Album(AlbumContent {
                     id: yt_album.id,
                     title: yt_album.title,
-                    artist: ArtistRef {
-                        id: yt_album.artist.id,
-                        name: yt_album.artist.name,
-                        thumbnail: yt_album.artist.thumbnail,
-                    },
-                    year: yt_album.year,
-                    description: None, // YouTube albums may not have description in current impl
-                    thumbnail: yt_album.thumbnail,
+                    artist: ContentRef::artist(yt_album.artist.id, yt_album.artist.name)
+                        .with_thumbnail(yt_album.artist.thumbnail.unwrap_or_default()),
                     tracks: yt_album.tracks,
-                    more_by_artist: yt_album.more_by_artist.into_iter().map(|a| AlbumRef {
-                        id: a.id,
-                        title: a.title,
-                        year: a.year,
-                        thumbnail: a.thumbnail,
-                    }).collect(),
+                    thumbnail: yt_album.thumbnail,
+                    year: yt_album.year.and_then(|y| y.parse().ok()),
+                    release_type: None,
+                    description: None,
+                    extensions: extensions.build(),
                 }))
             }
             api::ContentType::Artist => {
                 let yt_artist = self.browse_artist_details(&item.id)?;
-                Ok(ContentDetails::Artist(ArtistDetails {
+                
+                // Build extensions
+                let mut extensions = Extensions::builder();
+                
+                // Add stats
+                let mut stats = vec![];
+                if let Some(subs) = &yt_artist.subscribers {
+                    stats.push(Stat::subscribers(subs.clone()));
+                }
+                extensions = extensions.stats(stats);
+                
+                // Add actions
+                extensions = extensions.actions(vec![
+                    Action::play(),
+                    Action::shuffle(),
+                    Action::radio(),
+                ]);
+                
+                // Add albums section
+                if !yt_artist.albums.is_empty() {
+                    let albums: Vec<ContentRef> = yt_artist.albums.into_iter()
+                        .map(|a| ContentRef::album(a.id, a.title)
+                            .with_subtitle(a.year.unwrap_or_default()))
+                        .collect();
+                    extensions = extensions.albums("Albums", albums);
+                }
+                
+                // Add singles section
+                if !yt_artist.singles.is_empty() {
+                    let singles: Vec<ContentRef> = yt_artist.singles.into_iter()
+                        .map(|a| ContentRef::album(a.id, a.title)
+                            .with_subtitle(a.year.unwrap_or_default()))
+                        .collect();
+                    extensions = extensions.singles("Singles", singles);
+                }
+                
+                // Add related artists section
+                if !yt_artist.related_artists.is_empty() {
+                    let related: Vec<ContentRef> = yt_artist.related_artists.into_iter()
+                        .map(|a| ContentRef::artist(a.id, a.name))
+                        .collect();
+                    extensions = extensions.related_artists("Fans also like", related);
+                }
+                
+                Ok(ContentDetails::Artist(ArtistContent {
                     id: yt_artist.id,
                     name: yt_artist.name,
-                    subscribers: yt_artist.subscribers,
-                    description: yt_artist.description,
-                    thumbnail: yt_artist.thumbnail,
                     top_songs: yt_artist.top_songs,
-                    albums: yt_artist.albums.into_iter().map(|a| AlbumRef {
-                        id: a.id,
-                        title: a.title,
-                        year: a.year,
-                        thumbnail: a.thumbnail,
-                    }).collect(),
-                    singles: yt_artist.singles.into_iter().map(|a| AlbumRef {
-                        id: a.id,
-                        title: a.title,
-                        year: a.year,
-                        thumbnail: a.thumbnail,
-                    }).collect(),
-                    related_artists: yt_artist.related_artists.into_iter().map(|a| ArtistRef {
-                        id: a.id,
-                        name: a.name,
-                        thumbnail: a.thumbnail,
-                    }).collect(),
+                    thumbnail: yt_artist.thumbnail,
+                    bio: yt_artist.description,
+                    extensions: extensions.build(),
                 }))
             }
             api::ContentType::Playlist => {
                 let yt_playlist = self.browse_playlist_details(&item.id)?;
-                Ok(ContentDetails::Playlist(PlaylistDetails {
+                
+                // Build extensions
+                let mut extensions = Extensions::builder();
+                
+                // Add stats
+                let mut stats = vec![];
+                stats.push(Stat::track_count(yt_playlist.track_count));
+                if let Some(duration) = &yt_playlist.duration_text {
+                    stats.push(Stat::text(
+                        crate::domain::content::StatKey::Duration,
+                        "Duration",
+                        duration.clone()
+                    ));
+                }
+                extensions = extensions.stats(stats);
+                
+                // Add actions
+                extensions = extensions.actions(vec![
+                    Action::play(),
+                    Action::shuffle(),
+                    Action::add_to_queue(),
+                ]);
+                
+                // Add featured artists section
+                if !yt_playlist.featured_artists.is_empty() {
+                    let artists: Vec<ContentRef> = yt_playlist.featured_artists.into_iter()
+                        .map(|a| ContentRef::artist(a.id, a.name))
+                        .collect();
+                    extensions = extensions.featured_artists("Featured artists", artists);
+                }
+                
+                // Add related playlists section
+                if !yt_playlist.related_playlists.is_empty() {
+                    let playlists: Vec<ContentRef> = yt_playlist.related_playlists.into_iter()
+                        .map(|p| ContentRef::playlist(p.id, p.title)
+                            .with_subtitle(p.subtitle.unwrap_or_default()))
+                        .collect();
+                    extensions = extensions.related_playlists("Similar playlists", playlists);
+                }
+                
+                Ok(ContentDetails::Playlist(PlaylistContent {
                     id: yt_playlist.id,
                     title: yt_playlist.title,
-                    author: yt_playlist.artist,
-                    year: yt_playlist.year,
-                    description: None, // Not currently fetched
-                    thumbnail: yt_playlist.thumbnail,
-                    track_count: yt_playlist.track_count,
-                    duration_text: yt_playlist.duration_text,
                     tracks: yt_playlist.tracks,
-                    featured_artists: yt_playlist.featured_artists.into_iter().map(|a| ArtistRef {
-                        id: a.id,
-                        name: a.name,
-                        thumbnail: a.thumbnail,
-                    }).collect(),
-                    related_playlists: yt_playlist.related_playlists.into_iter().map(|p| PlaylistRef {
-                        id: p.id,
-                        title: p.title,
-                        subtitle: p.subtitle,
-                        thumbnail: p.thumbnail,
-                    }).collect(),
+                    author: yt_playlist.artist.map(|name| ContentRef::new("", name)),
+                    thumbnail: yt_playlist.thumbnail,
+                    description: None,
+                    track_count: Some(yt_playlist.track_count),
+                    duration_text: yt_playlist.duration_text,
+                    extensions: extensions.build(),
                 }))
             }
             other => Err(anyhow!("Cannot get details for content type: {:?}", other)),

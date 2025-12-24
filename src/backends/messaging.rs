@@ -112,9 +112,9 @@ pub enum QueryResult {
     Decoders(Vec<Decoder>),
     ExternalCommand(Arc<Vec<String>>, Vec<Song>),
     SongStickers(HashMap<String, HashMap<String, String>>),
-    PlaylistDetail(crate::domain::PlaylistDetails),
-    AlbumDetail(crate::domain::AlbumDetails),
-    ArtistDetail(crate::domain::ArtistDetails),
+    PlaylistDetail(crate::domain::content::PlaylistContent),
+    AlbumDetail(crate::domain::content::AlbumContent),
+    ArtistDetail(crate::domain::content::ArtistContent),
     Any(Box<dyn Any + Send + Sync>),
 }
 

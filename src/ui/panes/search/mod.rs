@@ -94,9 +94,9 @@ enum LayoutMode {
 /// Detail view content for FullDetail mode
 #[derive(Debug, Clone)]
 enum DetailView {
-    Playlist(crate::domain::PlaylistDetails),
-    Album(crate::domain::AlbumDetails),
-    Artist(crate::domain::ArtistDetails),
+    Playlist(crate::domain::content::PlaylistContent),
+    Album(crate::domain::content::AlbumContent),
+    Artist(crate::domain::content::ArtistContent),
 }
 
 #[derive(Debug)]

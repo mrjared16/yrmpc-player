@@ -1268,7 +1268,7 @@ impl api::Discovery for BackendDispatcher<'_> {
         }
     }
 
-    fn details(&mut self, item: &Item) -> Result<crate::domain::ContentDetails> {
+    fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
         match self {
             BackendDispatcher::Mpd(b) => api::Discovery::details(b, item),
             BackendDispatcher::YouTube(b) => api::Discovery::details(b, item),

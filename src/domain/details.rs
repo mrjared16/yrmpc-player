@@ -1,7 +1,14 @@
 //! Content detail types for albums, artists, and playlists.
 //!
-//! These are backend-agnostic domain types representing detailed views
-//! of content. Backends fetch data and populate these types; UI renders them.
+//! **DEPRECATED**: This module is being replaced by `domain::content` module
+//! which uses the Type-Safe Hybrid architecture with Extensions.
+//!
+//! New code should use:
+//! - `domain::content::AlbumContent` instead of `AlbumDetails`
+//! - `domain::content::ArtistContent` instead of `ArtistDetails`
+//! - `domain::content::PlaylistContent` instead of `PlaylistDetails`
+//!
+//! These types remain for backward compatibility during migration.
 //!
 //! # Design Notes
 //!

@@ -153,3 +153,167 @@ impl From<ArtistDetails> for domain::ArtistDetails {
         }
     }
 }
+
+// =============================================================================
+// CONVERSIONS: YouTube types -> New Content types (domain/content.rs)
+// =============================================================================
+
+use crate::domain::content;
+
+impl From<PlaylistDetails> for content::PlaylistContent {
+    fn from(yt: PlaylistDetails) -> Self {
+        // Build extensions
+        let mut extensions = content::Extensions::builder();
+        
+        // Add stats
+        let mut stats = vec![content::Stat::track_count(yt.track_count)];
+        if let Some(duration) = &yt.duration_text {
+            stats.push(content::Stat::text(
+                content::StatKey::Duration,
+                "Duration",
+                duration.clone()
+            ));
+        }
+        extensions = extensions.stats(stats);
+        
+        // Add actions
+        extensions = extensions.actions(vec![
+            content::Action::play(),
+            content::Action::shuffle(),
+            content::Action::add_to_queue(),
+        ]);
+        
+        // Add featured artists section
+        if !yt.featured_artists.is_empty() {
+            let artists: Vec<content::ContentRef> = yt.featured_artists.into_iter()
+                .map(|a| content::ContentRef::artist(a.id, a.name))
+                .collect();
+            extensions = extensions.featured_artists("Featured artists", artists);
+        }
+        
+        // Add related playlists section
+        if !yt.related_playlists.is_empty() {
+            let playlists: Vec<content::ContentRef> = yt.related_playlists.into_iter()
+                .map(|p| content::ContentRef::playlist(p.id, p.title)
+                    .with_subtitle(p.subtitle.unwrap_or_default()))
+                .collect();
+            extensions = extensions.related_playlists("Similar playlists", playlists);
+        }
+        
+        content::PlaylistContent {
+            id: yt.id,
+            title: yt.title,
+            tracks: yt.tracks,
+            author: yt.artist.map(|name| content::ContentRef::new("", name)),
+            thumbnail: yt.thumbnail,
+            description: None,
+            track_count: Some(yt.track_count),
+            duration_text: yt.duration_text,
+            extensions: extensions.build(),
+        }
+    }
+}
+
+impl From<AlbumDetails> for content::AlbumContent {
+    fn from(yt: AlbumDetails) -> Self {
+        // Build extensions
+        let mut extensions = content::Extensions::builder();
+        
+        // Add stats
+        let mut stats = vec![content::Stat::track_count(yt.tracks.len())];
+        if let Some(year) = &yt.year {
+            if let Ok(y) = year.parse::<u16>() {
+                stats.insert(0, content::Stat::year(y));
+            }
+        }
+        extensions = extensions.stats(stats);
+        
+        // Add actions
+        extensions = extensions.actions(vec![
+            content::Action::play(),
+            content::Action::shuffle(),
+            content::Action::add_to_queue(),
+        ]);
+        
+        // Add "more by artist" section
+        if !yt.more_by_artist.is_empty() {
+            let more_albums: Vec<content::ContentRef> = yt.more_by_artist.into_iter()
+                .map(|a| content::ContentRef::album(a.id, a.title)
+                    .with_subtitle(a.year.unwrap_or_default()))
+                .collect();
+            extensions = extensions.more_by_artist(
+                format!("More by {}", yt.artist.name),
+                more_albums
+            );
+        }
+        
+        content::AlbumContent {
+            id: yt.id,
+            title: yt.title,
+            artist: content::ContentRef::artist(yt.artist.id, yt.artist.name)
+                .with_thumbnail(yt.artist.thumbnail.unwrap_or_default()),
+            tracks: yt.tracks,
+            thumbnail: yt.thumbnail,
+            year: yt.year.and_then(|y| y.parse().ok()),
+            release_type: None,
+            description: None,
+            extensions: extensions.build(),
+        }
+    }
+}
+
+impl From<ArtistDetails> for content::ArtistContent {
+    fn from(yt: ArtistDetails) -> Self {
+        // Build extensions
+        let mut extensions = content::Extensions::builder();
+        
+        // Add stats
+        let mut stats = vec![];
+        if let Some(subs) = &yt.subscribers {
+            stats.push(content::Stat::subscribers(subs.clone()));
+        }
+        extensions = extensions.stats(stats);
+        
+        // Add actions
+        extensions = extensions.actions(vec![
+            content::Action::play(),
+            content::Action::shuffle(),
+            content::Action::radio(),
+        ]);
+        
+        // Add albums section
+        if !yt.albums.is_empty() {
+            let albums: Vec<content::ContentRef> = yt.albums.into_iter()
+                .map(|a| content::ContentRef::album(a.id, a.title)
+                    .with_subtitle(a.year.unwrap_or_default()))
+                .collect();
+            extensions = extensions.albums("Albums", albums);
+        }
+        
+        // Add singles section
+        if !yt.singles.is_empty() {
+            let singles: Vec<content::ContentRef> = yt.singles.into_iter()
+                .map(|a| content::ContentRef::album(a.id, a.title)
+                    .with_subtitle(a.year.unwrap_or_default()))
+                .collect();
+            extensions = extensions.singles("Singles", singles);
+        }
+        
+        // Add related artists section
+        if !yt.related_artists.is_empty() {
+            let related: Vec<content::ContentRef> = yt.related_artists.into_iter()
+                .map(|a| content::ContentRef::artist(a.id, a.name))
+                .collect();
+            extensions = extensions.related_artists("Fans also like", related);
+        }
+        
+        content::ArtistContent {
+            id: yt.id,
+            name: yt.name,
+            top_songs: yt.top_songs,
+            thumbnail: yt.thumbnail,
+            bio: yt.description,
+            extensions: extensions.build(),
+        }
+    }
+}
