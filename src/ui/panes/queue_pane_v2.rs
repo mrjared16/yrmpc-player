@@ -13,15 +13,17 @@ use ratatui::{
 use crate::{
     config::keys::{CommonAction, QueueActions},
     ctx::Ctx,
-    domain::{QueueItemAction, QueueItemOps, Song, PlaybackState},
+    domain::{ContentType, QueueItemAction, QueueItemOps, Song, PlaybackState},
     mpd::commands::SeekPosition,
     shared::{
+        events::AppEvent,
         key_event::KeyEvent,
         macros::{modal, status_error, status_info},
         mouse_event::MouseEvent,
     },
     ui::{
         UiEvent,
+        UiAppEvent,
         list_ops::{self, MoveDirection, QueueListBehavior},
         modals::confirm_modal::{Action, ConfirmModal},
         widgets::interactive_list_view::{InteractiveListView, NavConfig},
@@ -75,6 +77,27 @@ impl QueuePaneV2 {
     /// Get the currently selected song (if any)
     fn selected_song<'a>(&self, ctx: &'a Ctx) -> Option<&'a Song> {
         self.list_view.selected().and_then(|idx| ctx.queue.get(idx))
+    }
+
+    /// Navigate to artist details for the selected queue item.
+    fn navigate_to_artist(&self, ctx: &Ctx) {
+        let Some(song) = self.selected_song(ctx) else {
+            return;
+        };
+
+        // Try to get artist browse ID from metadata
+        if let Some(artist_id) = song.metadata.get("artist_browse_id").and_then(|v| v.first()) {
+            log::info!("Navigating to artist ID: {}", artist_id);
+            let artist_name = song.artist().unwrap_or("Artist").to_string();
+            let _ = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::NavigateTo {
+                id: artist_id.clone(),
+                kind: ContentType::Artist,
+                title: Some(artist_name),
+            }));
+        } else if let Some(artist_name) = song.artist() {
+            log::warn!("No artist_browse_id for '{}', navigation not available", artist_name);
+            status_info!("Artist navigation not available for this track");
+        }
     }
 }
 
@@ -242,6 +265,10 @@ impl Pane for QueuePaneV2 {
                 CommonAction::MoveDown => {
                     QueueListBehavior::move_selected(self, MoveDirection::Down, ctx);
                     ctx.render()?;
+                }
+                CommonAction::Right => {
+                    // Navigate to artist details
+                    self.navigate_to_artist(ctx);
                 }
                 _ => {}
             }

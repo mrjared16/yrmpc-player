@@ -1018,6 +1018,39 @@ impl<'ui> Ui<'ui> {
                 }
                 ctx.render()?;
             }
+
+            UiAppEvent::NavigateTo { id, kind, title } => {
+                use crate::domain::ContentType;
+
+                // 1. Close any open modal
+                if !self.modals.is_empty() {
+                    self.modals.clear();
+                    self.on_event(UiEvent::ModalClosed, ctx)?;
+                }
+
+                // 2. Find the Search tab and switch to it
+                let search_tab_name = ctx.config.tabs.tabs.iter()
+                    .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Search))
+                    .map(|(name, _)| name.clone());
+
+                if let Some(tab_name) = search_tab_name {
+                    self.change_tab(tab_name, ctx)?;
+
+                    // 3. Tell SearchPaneV2 to navigate to this content
+                    if let Ok(Panes::SearchV2(search_pane)) = self.panes.get_mut(&PaneType::Search, ctx) {
+                        let title_hint = title.unwrap_or_else(|| {
+                            match kind {
+                                ContentType::Artist => "Artist".to_string(),
+                                ContentType::Album => "Album".to_string(),
+                                ContentType::Playlist => "Playlist".to_string(),
+                                _ => "Content".to_string(),
+                            }
+                        });
+                        search_pane.navigate_to(id, kind, title_hint, ctx);
+                    }
+                }
+                ctx.render()?;
+            }
         }
         Ok(())
     }
@@ -1211,9 +1244,18 @@ pub(crate) enum UiAppEvent {
     PopConfigErrorModal,
     ChangeTab(TabName),
     Redraw,
+    // Legacy events - kept for compatibility with MPD panes
     OpenAlbum(String),
     OpenArtist(String),
     OpenPlaylist(String),
+    /// Navigate to content from anywhere (queue modal, etc.)
+    /// Unified alternative to OpenAlbum/OpenArtist/OpenPlaylist for the new architecture.
+    NavigateTo {
+        id: String,
+        kind: crate::domain::ContentType,
+        /// Optional title hint for breadcrumb (avoids extra fetch if known)
+        title: Option<String>,
+    },
 }
 
 #[derive(Debug, Eq, Hash, PartialEq)]

@@ -35,6 +35,18 @@ use crate::{
 
 const SEARCH_ID: &'static str = "search_v2";
 
+/// Convert ContentType to string for logging
+fn kind_to_string(kind: ContentType) -> &'static str {
+    match kind {
+        ContentType::Artist => "artist",
+        ContentType::Album => "album",
+        ContentType::Playlist => "playlist",
+        ContentType::Track => "track",
+        ContentType::Directory => "directory",
+        ContentType::Video => "video",
+    }
+}
+
 /// Phase states for the search pane
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Phase {
@@ -490,6 +502,40 @@ impl SearchPaneV2 {
                     _ => anyhow::bail!("Expected artist details"),
                 }
             });
+    }
+
+    // ========== PUBLIC NAVIGATION API ==========
+
+    /// Navigate to content from external source (e.g., queue modal).
+    /// 
+    /// This allows other parts of the UI to trigger navigation into
+    /// artist/album/playlist details without going through search.
+    pub fn navigate_to(
+        &mut self,
+        id: String,
+        kind: ContentType,
+        title_hint: String,
+        ctx: &Ctx,
+    ) {
+        // Ensure we're in browse mode
+        self.phase = Phase::BrowseResults;
+
+        // If stack is empty, initialize with a placeholder root
+        if self.stack.is_empty() {
+            self.stack.set_root(Vec::new(), "Results");
+        }
+
+        // Trigger fetch based on content type
+        match kind {
+            ContentType::Artist => self.fetch_artist_detail(ctx, id),
+            ContentType::Album => self.fetch_album_detail(ctx, id),
+            ContentType::Playlist => self.fetch_playlist_detail(ctx, id),
+            _ => {
+                log::warn!("NavigateTo: unsupported content type {:?}", kind);
+            }
+        }
+
+        log::info!("NavigateTo: {} ({})", title_hint, kind_to_string(kind));
     }
 
     // ========== RENDERING ==========

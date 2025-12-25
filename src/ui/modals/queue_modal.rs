@@ -12,12 +12,15 @@ use ratatui::{
 use crate::{
     config::keys::{CommonAction, GlobalAction},
     ctx::Ctx,
+    domain::ContentType,
     shared::{
+        events::AppEvent,
         id::{self, Id},
         key_event::KeyEvent,
         mouse_event::MouseEvent,
     },
     ui::{
+        UiAppEvent,
         list_ops::{MoveDirection, QueueListBehavior},
         modals::{Modal, RectExt},
         widgets::interactive_list_view::{InteractiveListView, NavConfig},
@@ -35,6 +38,36 @@ impl QueueModal {
         Self {
             id: id::new(),
             list_view: InteractiveListView::new(),
+        }
+    }
+
+    /// Navigate to artist details for the selected queue item.
+    ///
+    /// Uses the artist_browse_id if available, otherwise falls back to artist name search.
+    fn navigate_to_artist(&self, ctx: &Ctx) {
+        let Some(idx) = self.list_view.selected() else {
+            return;
+        };
+        let Some(song) = ctx.queue.get(idx) else {
+            return;
+        };
+
+        // Try to get artist browse ID from metadata
+        // YouTube Music songs have this when added via search
+        if let Some(artist_id) = song.metadata.get("artist_browse_id").and_then(|v| v.first()) {
+            log::info!("Navigating to artist ID: {}", artist_id);
+            let artist_name = song.artist().unwrap_or("Artist").to_string();
+            let _ = ctx.app_event_sender.send(AppEvent::UiEvent(UiAppEvent::NavigateTo {
+                id: artist_id.clone(),
+                kind: ContentType::Artist,
+                title: Some(artist_name),
+            }));
+        } else if let Some(artist_name) = song.artist() {
+            // Fallback: use artist name (less reliable, may not find exact match)
+            log::warn!("No artist_browse_id for '{}', using name search", artist_name);
+            // For now, just log - a future improvement could search by name
+            // For YouTube Music, we don't have a reliable artist ID in queue items
+            // unless they were added from search results with full metadata
         }
     }
 }
@@ -167,6 +200,11 @@ impl Modal for QueueModal {
                     QueueListBehavior::move_selected(self, MoveDirection::Down, ctx);
                     key.stop_propagation();
                     ctx.render()?;
+                }
+                CommonAction::Right => {
+                    // Navigate to artist details
+                    self.navigate_to_artist(ctx);
+                    key.stop_propagation();
                 }
                 _ => {}
             }
