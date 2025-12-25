@@ -1,28 +1,35 @@
 //! DetailStack - Composable detail view component for ContentDetails navigation.
 //!
-//! Per ARCHITECTURE.md, DetailStack is a view-layer component that:
-//! - Holds a stack of DetailViews for drill-down navigation
-//! - Flattens ContentDetails into Vec<DetailItem> for display
-//! - Reuses InteractiveListView for vim-style controls
-//! - Manages breadcrumb path for display
+//! Per ARCHITECTURE.md, DetailStack uses a **sectioned design**:
+//! - `DetailView` holds `Vec<SectionView>` (structure preserved)
+//! - Navigation is flat (one `InteractiveListView`)
+//! - Rendering can vary per section (list now, grid future)
 //!
-//! # Usage
+//! ## Why Sectioned?
+//!
+//! The original `flatten_content()` approach lost structure, making it impossible
+//! to render different sections with different layouts (e.g., albums as grid).
+//!
+//! The sectioned design:
+//! - Preserves structure for flexible rendering
+//! - Keeps navigation simple (flat iteration)
+//! - Enables future presets/grid without redesign
+//!
+//! ## Usage
 //!
 //! ```ignore
-//! // In a pane
-//! let mut detail_stack = DetailStack::new();
+//! let view = DetailView::new(content_details);
+//! 
+//! // Navigation: flat iteration
+//! for item in view.items() { ... }
 //!
-//! // When user navigates to an artist
-//! detail_stack.push(content_details, "KIMLONG");
-//!
-//! // Render (if active)
-//! if detail_stack.is_active() {
-//!     detail_stack.render(frame, area, ctx);
-//! }
-//!
-//! // Back navigation
-//! if !detail_stack.pop() {
-//!     // Stack is empty, return to search results
+//! // Rendering: per-section layout
+//! for section in &view.sections {
+//!     render_header(&section.title);
+//!     match section.layout {
+//!         LayoutKind::List => render_list(&section.items),
+//!         LayoutKind::Grid { columns } => render_grid(&section.items, columns),
+//!     }
 //! }
 //! ```
 
@@ -47,18 +54,77 @@ pub enum LoadState {
 }
 
 // =============================================================================
+// LAYOUT KIND
+// =============================================================================
+
+/// Layout hint for section rendering.
+///
+/// Currently only List is rendered; Grid is defined for future use.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum LayoutKind {
+    #[default]
+    List,
+    /// Grid layout with specified column count (future)
+    Grid { columns: u8 },
+}
+
+// =============================================================================
+// SECTION VIEW
+// =============================================================================
+
+/// A section of content with layout hint.
+///
+/// Sections preserve the structure of `ContentDetails` while enabling
+/// per-section rendering (list vs grid) in the future.
+#[derive(Debug, Clone)]
+pub struct SectionView {
+    /// Section identifier for preset config lookup
+    pub key: SectionKey,
+    /// Header text (empty = no header)
+    pub title: String,
+    /// Layout hint for rendering
+    pub layout: LayoutKind,
+    /// Items in this section
+    pub items: Vec<DetailItem>,
+}
+
+impl SectionView {
+    /// Create a new section.
+    pub fn new(key: SectionKey, title: impl Into<String>, items: Vec<DetailItem>) -> Self {
+        Self {
+            key,
+            title: title.into(),
+            layout: LayoutKind::default(),
+            items,
+        }
+    }
+
+    /// Set layout hint.
+    pub fn with_layout(mut self, layout: LayoutKind) -> Self {
+        self.layout = layout;
+        self
+    }
+
+    /// Check if section is empty.
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+}
+
+// =============================================================================
 // DETAIL VIEW
 // =============================================================================
 
-/// A single detail view in the stack.
+/// A single detail view with sectioned structure.
 ///
-/// Contains the original ContentDetails plus the flattened items for display.
+/// Contains the original `ContentDetails` plus sections for rendering.
+/// Navigation uses flat iteration via `items()`.
 #[derive(Debug, Clone)]
 pub struct DetailView {
-    /// Original content (for reference/actions)
+    /// Original content (preserved for actions/refresh)
     pub content: ContentDetails,
-    /// Flattened items for list display
-    pub items: Vec<DetailItem>,
+    /// Sections for structured rendering
+    pub sections: Vec<SectionView>,
     /// View state (selection, marks, filter)
     pub view: InteractiveListView,
     /// Loading state
@@ -71,26 +137,47 @@ impl DetailView {
     /// Create a new DetailView from ContentDetails.
     pub fn new(content: ContentDetails) -> Self {
         let title = content.title().to_string();
-        let items = flatten_content(&content);
+        let sections = build_sections(&content);
         let mut view = InteractiveListView::new();
         
         // Select first focusable item
+        let items: Vec<_> = sections.iter().flat_map(|s| s.items.iter()).collect();
         if let Some(first_focusable) = items.iter().position(|item| item.is_focusable()) {
             view.select(Some(first_focusable));
         }
         
         Self {
             content,
-            items,
+            sections,
             view,
             load_state: LoadState::Loaded,
             title,
         }
     }
 
+    /// Iterate all items as flat list (for navigation).
+    pub fn items(&self) -> impl Iterator<Item = &DetailItem> {
+        self.sections.iter().flat_map(|s| s.items.iter())
+    }
+
+    /// Total item count across all sections.
+    pub fn item_count(&self) -> usize {
+        self.sections.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// Get item at global index.
+    pub fn item_at(&self, index: usize) -> Option<&DetailItem> {
+        self.items().nth(index)
+    }
+
     /// Get selected item reference.
     pub fn selected_item(&self) -> Option<&DetailItem> {
-        self.view.selected().and_then(|idx| self.items.get(idx))
+        self.view.selected().and_then(|idx| self.item_at(idx))
+    }
+
+    /// Check if sections is empty.
+    pub fn is_empty(&self) -> bool {
+        self.sections.iter().all(|s| s.is_empty())
     }
 }
 
@@ -166,88 +253,121 @@ impl DetailStack {
 }
 
 // =============================================================================
-// FLATTEN CONTENT
+// BUILD SECTIONS
 // =============================================================================
 
-/// Flatten ContentDetails into a Vec<DetailItem> for display.
+/// Build sections from ContentDetails, preserving structure.
 ///
-/// This converts the structured content (with sections) into a flat list
-/// that can be displayed in an InteractiveListView.
-///
-/// The order follows a consistent pattern:
-/// 1. Primary tracks/songs (with header if non-empty)
-/// 2. Extension sections in order (Albums, Singles, Related, etc.)
-pub fn flatten_content(content: &ContentDetails) -> Vec<DetailItem> {
-    let mut items = Vec::new();
+/// This replaces `flatten_content()`. Instead of losing structure,
+/// sections are kept separate for per-section layout in the future.
+pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
+    let mut sections = Vec::new();
 
     match content {
         ContentDetails::Album(album) => {
-            // Album: just tracks (no header needed - album title is in the pane title)
+            // Album: tracks section
             if !album.tracks.is_empty() {
-                items.push(DetailItem::header("Tracks"));
-                items.extend(album.tracks.iter().cloned().map(DetailItem::Song));
+                sections.push(SectionView::new(
+                    SectionKey::Stats, // Using Stats as placeholder for "Tracks"
+                    "Tracks",
+                    album.tracks.iter().cloned().map(DetailItem::Song).collect(),
+                ));
             }
-
             // Add extension sections
-            flatten_extensions(&album.extensions, &mut items);
+            build_extension_sections(&album.extensions, &mut sections);
         }
 
         ContentDetails::Artist(artist) => {
-            // Artist: top songs first
+            // Artist: top songs section
             if !artist.top_songs.is_empty() {
-                items.push(DetailItem::header("Top Songs"));
-                items.extend(artist.top_songs.iter().cloned().map(DetailItem::Song));
+                sections.push(SectionView::new(
+                    SectionKey::Stats, // Using Stats as placeholder for "Top Songs"
+                    "Top Songs",
+                    artist.top_songs.iter().cloned().map(DetailItem::Song).collect(),
+                ));
             }
-
-            // Add extension sections (albums, singles, related artists, etc.)
-            flatten_extensions(&artist.extensions, &mut items);
+            // Add extension sections (albums, singles, related)
+            build_extension_sections(&artist.extensions, &mut sections);
         }
 
         ContentDetails::Playlist(playlist) => {
-            // Playlist: just tracks
+            // Playlist: tracks section
             if !playlist.tracks.is_empty() {
-                items.push(DetailItem::header("Tracks"));
-                items.extend(playlist.tracks.iter().cloned().map(DetailItem::Song));
+                sections.push(SectionView::new(
+                    SectionKey::Stats, // Using Stats as placeholder for "Tracks"
+                    "Tracks",
+                    playlist.tracks.iter().cloned().map(DetailItem::Song).collect(),
+                ));
             }
-
             // Add extension sections
-            flatten_extensions(&playlist.extensions, &mut items);
+            build_extension_sections(&playlist.extensions, &mut sections);
         }
     }
 
-    items
+    sections
 }
 
-/// Flatten extension sections into the item list.
-fn flatten_extensions(extensions: &Extensions, items: &mut Vec<DetailItem>) {
+/// Build sections from Extensions container.
+fn build_extension_sections(extensions: &Extensions, sections: &mut Vec<SectionView>) {
     for section in extensions.iter() {
-        // Skip stats and actions - they're rendered separately
+        // Skip stats and actions - they're rendered separately (not in list)
         if matches!(section.key, SectionKey::Stats | SectionKey::Actions) {
             continue;
         }
 
-        match &section.content {
+        let items: Vec<DetailItem> = match &section.content {
             SectionData::Items(refs) if !refs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(refs.iter().cloned().map(DetailItem::Ref));
+                refs.iter().cloned().map(DetailItem::Ref).collect()
             }
             SectionData::Tracks(songs) if !songs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(songs.iter().cloned().map(DetailItem::Song));
+                songs.iter().cloned().map(DetailItem::Song).collect()
             }
             SectionData::Paginated { items: refs, .. } if !refs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(refs.iter().cloned().map(DetailItem::Ref));
+                refs.iter().cloned().map(DetailItem::Ref).collect()
             }
-            _ => {} // Skip empty or other section types
-        }
+            _ => continue, // Skip empty sections
+        };
+
+        // Determine default layout based on section type
+        let layout = match section.key {
+            // Albums/artists could be grid in the future
+            SectionKey::Albums | SectionKey::Singles | SectionKey::RelatedArtists => {
+                LayoutKind::List // For now, will be Grid { columns: 3 } in future
+            }
+            _ => LayoutKind::List,
+        };
+
+        sections.push(
+            SectionView::new(section.key, &section.title, items)
+                .with_layout(layout)
+        );
     }
+}
+
+// =============================================================================
+// COMPATIBILITY HELPERS
+// =============================================================================
+
+/// Convert sections to flat items with headers (for NavStack compatibility).
+///
+/// This is a bridge function for SearchPaneV2 which still uses NavStack<DetailItem>.
+/// In the future, SearchPaneV2 should use DetailStack directly.
+pub fn sections_to_items(sections: &[SectionView]) -> Vec<DetailItem> {
+    let mut items = Vec::new();
+    for section in sections {
+        if !section.title.is_empty() && !section.items.is_empty() {
+            items.push(DetailItem::header(&section.title));
+        }
+        items.extend(section.items.iter().cloned());
+    }
+    items
+}
+
+/// Build sections and flatten to items (convenience function).
+///
+/// Equivalent to: `sections_to_items(&build_sections(content))`
+pub fn flatten_content(content: &ContentDetails) -> Vec<DetailItem> {
+    sections_to_items(&build_sections(content))
 }
 
 // =============================================================================
@@ -301,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn test_flatten_empty_content() {
+    fn test_build_sections_empty_content() {
         let album = ContentDetails::Album(AlbumContent {
             id: "test".into(),
             title: "Test Album".into(),
@@ -310,12 +430,12 @@ mod tests {
             ..Default::default()
         });
 
-        let items = flatten_content(&album);
-        assert!(items.is_empty());
+        let sections = build_sections(&album);
+        assert!(sections.is_empty());
     }
 
     #[test]
-    fn test_flatten_with_extensions() {
+    fn test_build_sections_with_extensions() {
         let album = ContentDetails::Album(AlbumContent {
             id: "test".into(),
             title: "Test Album".into(),
@@ -330,11 +450,37 @@ mod tests {
             ..Default::default()
         });
 
-        let items = flatten_content(&album);
-        // Should have: Header("More by Artist"), Ref(Album 2), Ref(Album 3)
-        assert_eq!(items.len(), 3);
-        assert!(items[0].is_header());
-        assert!(items[1].is_navigable());
-        assert!(items[2].is_navigable());
+        let sections = build_sections(&album);
+        assert_eq!(sections.len(), 1);
+        assert_eq!(sections[0].title, "More by Artist");
+        assert_eq!(sections[0].items.len(), 2);
+    }
+
+    #[test]
+    fn test_detail_view_flat_iteration() {
+        let artist = ContentDetails::Artist(ArtistContent {
+            id: "a1".into(),
+            name: "Test Artist".into(),
+            top_songs: vec![],
+            extensions: Extensions::builder()
+                .albums("Albums", vec![
+                    ContentRef::album("alb1", "Album 1"),
+                    ContentRef::album("alb2", "Album 2"),
+                ])
+                .singles("Singles", vec![
+                    ContentRef::album("sin1", "Single 1"),
+                ])
+                .build(),
+            ..Default::default()
+        });
+
+        let view = DetailView::new(artist);
+        
+        // Should have 2 sections
+        assert_eq!(view.sections.len(), 2);
+        
+        // Flat iteration should yield 3 items total
+        assert_eq!(view.item_count(), 3);
+        assert_eq!(view.items().count(), 3);
     }
 }
