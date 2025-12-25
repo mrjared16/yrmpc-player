@@ -14,13 +14,18 @@
 //! 2. **Single stack type**: `NavStack<DetailItem>` works for search results AND detail views
 //! 3. **Clean ListItemDisplay impl**: Each variant renders appropriately
 //! 4. **Extensible**: Easy to add Video, Podcast, etc. in the future
+//!
+//! # Note on flatten_content
+//!
+//! The `flatten_content()` function that converts `ContentDetails` → `Vec<DetailItem>`
+//! lives in `ui/widgets/detail_stack.rs` as it's a view-layer concern.
 
 use std::borrow::Cow;
 use ratatui::style::{Color, Style};
 
 use super::display::ListItemDisplay;
 use super::song::Song;
-use super::content::{ContentRef, ContentType, ContentDetails, SectionData, SectionKey};
+use super::content::{ContentRef, ContentType};
 
 /// A unified item type for navigation lists.
 ///
@@ -98,6 +103,11 @@ impl DetailItem {
     /// Check if this item is playable.
     pub fn is_playable(&self) -> bool {
         matches!(self, Self::Song(_))
+    }
+
+    /// Check if this item can receive focus during navigation.
+    pub fn is_focusable(&self) -> bool {
+        !self.is_header()
     }
 
     /// Get the ID for navigation (if applicable).
@@ -213,92 +223,7 @@ impl ListItemDisplay for DetailItem {
     }
 
     fn is_focusable(&self) -> bool {
-        !self.is_header()
-    }
-}
-
-// =============================================================================
-// FLATTEN CONTENT DETAILS
-// =============================================================================
-
-/// Flatten ContentDetails into a Vec<DetailItem> for display.
-///
-/// This converts the structured content (with sections) into a flat list
-/// that can be displayed in an InteractiveListView.
-///
-/// The order follows a consistent pattern:
-/// 1. Primary tracks/songs (with header if non-empty)
-/// 2. Extension sections in order (Albums, Singles, Related, etc.)
-pub fn flatten_content(content: &ContentDetails) -> Vec<DetailItem> {
-    let mut items = Vec::new();
-
-    match content {
-        ContentDetails::Album(album) => {
-            // Album: just tracks (no header needed - album title is in the pane title)
-            if !album.tracks.is_empty() {
-                items.push(DetailItem::header("Tracks"));
-                items.extend(album.tracks.iter().cloned().map(DetailItem::Song));
-            }
-
-            // Add extension sections
-            flatten_extensions(&album.extensions, &mut items);
-        }
-
-        ContentDetails::Artist(artist) => {
-            // Artist: top songs first
-            if !artist.top_songs.is_empty() {
-                items.push(DetailItem::header("Top Songs"));
-                items.extend(artist.top_songs.iter().cloned().map(DetailItem::Song));
-            }
-
-            // Add extension sections (albums, singles, related artists, etc.)
-            flatten_extensions(&artist.extensions, &mut items);
-        }
-
-        ContentDetails::Playlist(playlist) => {
-            // Playlist: just tracks
-            if !playlist.tracks.is_empty() {
-                items.push(DetailItem::header("Tracks"));
-                items.extend(playlist.tracks.iter().cloned().map(DetailItem::Song));
-            }
-
-            // Add extension sections
-            flatten_extensions(&playlist.extensions, &mut items);
-        }
-    }
-
-    items
-}
-
-/// Flatten extension sections into the item list.
-fn flatten_extensions(extensions: &super::content::Extensions, items: &mut Vec<DetailItem>) {
-    for section in extensions.iter() {
-        // Skip stats and actions - they're rendered separately
-        if matches!(section.key, SectionKey::Stats | SectionKey::Actions) {
-            continue;
-        }
-
-        match &section.content {
-            SectionData::Items(refs) if !refs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(refs.iter().cloned().map(DetailItem::Ref));
-            }
-            SectionData::Tracks(songs) if !songs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(songs.iter().cloned().map(DetailItem::Song));
-            }
-            SectionData::Paginated { items: refs, .. } if !refs.is_empty() => {
-                if !section.title.is_empty() {
-                    items.push(DetailItem::header(&section.title));
-                }
-                items.extend(refs.iter().cloned().map(DetailItem::Ref));
-            }
-            _ => {} // Skip empty or other section types
-        }
+        !ListItemDisplay::is_header(self)
     }
 }
 
@@ -413,21 +338,5 @@ mod tests {
         assert_eq!(artist.type_icon(), " ");
         assert_eq!(album.type_icon(), " ");
         assert_eq!(playlist.type_icon(), " ");
-    }
-
-    #[test]
-    fn test_flatten_empty_content() {
-        use super::super::content::{AlbumContent, ContentRef as CR};
-        
-        let album = ContentDetails::Album(AlbumContent {
-            id: "test".into(),
-            title: "Test Album".into(),
-            artist: CR::artist("a1", "Artist"),
-            tracks: vec![],
-            ..Default::default()
-        });
-
-        let items = flatten_content(&album);
-        assert!(items.is_empty());
     }
 }

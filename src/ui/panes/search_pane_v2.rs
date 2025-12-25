@@ -8,7 +8,7 @@ use itertools::Itertools;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
-    style::Stylize,
+    style::{Color, Style, Stylize},
     text::Span,
     widgets::{Block, Borders, List, ListItem},
 };
@@ -18,7 +18,7 @@ use crate::{
     QueryResult,
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
-    domain::{Song, DetailItem, ContentType, flatten_content},
+    domain::{Song, DetailItem, ContentType},
     mpd::mpd_client::Filter,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
@@ -28,6 +28,7 @@ use crate::{
         widgets::{
             nav_stack::NavStack,
             interactive_list_view::NavConfig,
+            detail_stack::flatten_content,
         },
     },
 };
@@ -532,22 +533,46 @@ impl SearchPaneV2 {
         let config = &ctx.config;
         
         // Get selected item from NavStack
-        if let Some(song) = self.stack.selected_item() {
-            let preview = song.to_preview(
-                config.theme.preview_label_style,
-                config.theme.preview_metadata_group_style,
-                ctx,
-            );
-            let mut result = Vec::new();
-            for group in preview {
-                if let Some(name) = group.name {
-                    result.push(ListItem::new(name).yellow().bold());
+        if let Some(item) = self.stack.selected_item() {
+            // Only show preview for songs
+            if let Some(song) = item.as_song() {
+                let preview = song.to_preview(
+                    config.theme.preview_label_style,
+                    config.theme.preview_metadata_group_style,
+                    ctx,
+                );
+                let mut result = Vec::new();
+                for group in preview {
+                    if let Some(name) = group.name {
+                        result.push(ListItem::new(name).yellow().bold());
+                    }
+                    result.extend(group.items.clone());
+                    result.push(ListItem::new(Span::raw("")));
                 }
-                result.extend(group.items.clone());
-                result.push(ListItem::new(Span::raw("")));
+                let preview_widget = List::new(result).style(config.as_text_style());
+                frame.render_widget(preview_widget, area);
+            } else if let Some(content_ref) = item.as_content_ref() {
+                // Show basic info for content refs
+                let mut lines = vec![
+                    ListItem::new(Span::styled(content_ref.name.clone(), config.theme.highlighted_item_style)),
+                ];
+                if let Some(subtitle) = &content_ref.subtitle {
+                    lines.push(ListItem::new(Span::raw(subtitle.clone())));
+                }
+                let content_type_str = match content_ref.content_type {
+                    ContentType::Artist => "Artist",
+                    ContentType::Album => "Album",
+                    ContentType::Playlist => "Playlist",
+                    ContentType::Video => "Video",
+                    _ => "Content",
+                };
+                lines.push(ListItem::new(Span::styled(
+                    format!("Type: {}", content_type_str),
+                    Style::default().fg(Color::DarkGray),
+                )));
+                let preview_widget = List::new(lines).style(config.as_text_style());
+                frame.render_widget(preview_widget, area);
             }
-            let preview_widget = List::new(result).style(config.as_text_style());
-            frame.render_widget(preview_widget, area);
         }
     }
 }
@@ -669,20 +694,30 @@ impl Pane for SearchPaneV2 {
         match (id, data) {
             ("search_v2", QueryResult::SearchResult { data }) => {
                 log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
-                self.stack.set_root(data, "Results");
+                // Convert Songs to DetailItems (handles type conversion via From impl)
+                let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
+                self.stack.set_root(items, "Results");
                 self.phase = Phase::BrowseResults;
             }
             ("fetch_playlist_v2", QueryResult::PlaylistDetail(details)) => {
-                let songs: Vec<Song> = details.tracks.into_iter().map(|t| t.into()).collect();
-                self.stack.enter(songs, &details.title);
+                // Use flatten_content to get sections + tracks as DetailItems
+                let items = flatten_content(&crate::domain::ContentDetails::Playlist(details));
+                let title = self.stack.current()
+                    .and_then(|l| l.selected_item())
+                    .and_then(|item| item.as_content_ref())
+                    .map(|r| r.name.clone())
+                    .unwrap_or_else(|| "Playlist".to_string());
+                self.stack.enter(items, title);
             }
             ("fetch_album_v2", QueryResult::AlbumDetail(details)) => {
-                let songs: Vec<Song> = details.tracks.into_iter().map(|t| t.into()).collect();
-                self.stack.enter(songs, &details.title);
+                let title = details.title.clone();
+                let items = flatten_content(&crate::domain::ContentDetails::Album(details));
+                self.stack.enter(items, title);
             }
             ("fetch_artist_v2", QueryResult::ArtistDetail(details)) => {
-                let songs: Vec<Song> = details.top_songs.into_iter().map(|t| t.into()).collect();
-                self.stack.enter(songs, &details.name);
+                let title = details.name.clone();
+                let items = flatten_content(&crate::domain::ContentDetails::Artist(details));
+                self.stack.enter(items, title);
             }
             _ => {}
         }

@@ -18,6 +18,7 @@ pub mod interactive_list_view;
 pub mod list_view_state;
 pub mod filter_state;
 pub mod nav_stack;
+pub mod detail_stack;
 
 fn get_line_offset(line_width: u16, text_area_width: u16, alignment: Alignment) -> u16 {
     match alignment {

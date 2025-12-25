@@ -28,4 +28,4 @@ pub use content::{
 };
 
 // DetailItem - unified item type for navigation stacks
-pub use detail_item::{DetailItem, flatten_content};
+pub use detail_item::DetailItem;
