@@ -66,6 +66,12 @@ pub mod search_pane_v2;
 pub mod tabs;
 pub mod tag_browser;
 pub mod volume;
+pub mod navigator;
+pub mod navigator_types;
+pub mod album_detail;
+pub mod artist_detail;
+pub mod playlist_detail;
+pub mod library_tab;
 
 #[derive(Debug, Display, strum::EnumDiscriminants)]
 pub(crate) enum Panes<'pane_ref, 'pane> {
@@ -128,11 +134,11 @@ pub(crate) struct PaneContainer<'panes> {
 impl<'panes> PaneContainer<'panes> {
     pub fn new(ctx: &Ctx) -> Result<Self> {
         // Check legacy config to decide which pane to use
-        let use_legacy_queue = ctx.config.legacy_panes.queue;
+        let use_legacy = ctx.config.legacy_panes.enabled;
         
         Ok(Self {
             queue: QueuePaneV2::new(ctx),
-            queue_legacy: if use_legacy_queue { Some(QueuePane::new(ctx)) } else { None },
+            queue_legacy: if use_legacy { Some(QueuePane::new(ctx)) } else { None },
             #[cfg(debug_assertions)]
             logs: LogsPane::new(),
             directories: DirectoriesPane::new(ctx),
@@ -143,7 +149,7 @@ impl<'panes> PaneContainer<'panes> {
             playlists: PlaylistsPane::new(ctx),
             library: LibraryPane::new(ctx),
             search: SearchPane::new(ctx),
-            search_v2: if !ctx.config.legacy_panes.search { Some(SearchPaneV2::new(ctx)) } else { None },
+            search_v2: if !use_legacy { Some(SearchPaneV2::new(ctx)) } else { None },
             album_art: AlbumArtPane::new(ctx),
             lyrics: LyricsPane::new(ctx),
             progress_bar: ProgressBarPane::new(),

@@ -11,7 +11,7 @@ use modals::{
     menu::modal::MenuModal,
     outputs::OutputsModal,
 };
-use panes::{PaneContainer, Panes, pane_call};
+use panes::{PaneContainer, Panes, pane_call, navigator::Navigator};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -81,6 +81,8 @@ pub struct Ui<'ui> {
     tabs: HashMap<TabName, TabScreen>,
     layout: SizedPaneOrSplit,
     area: Rect,
+    /// New Navigator system (enabled when legacy_panes.enabled = false)
+    navigator: Option<Navigator>,
 }
 
 const OPEN_DECODERS_MODAL: &str = "open_decoders_modal";
@@ -97,12 +99,20 @@ macro_rules! active_tab_call {
 
 impl<'ui> Ui<'ui> {
     pub fn new(ctx: &Ctx) -> Result<Ui<'ui>> {
+        // Initialize Navigator when new architecture is enabled (legacy disabled)
+        let navigator = if !ctx.config.legacy_panes.enabled {
+            Some(Navigator::new(ctx))
+        } else {
+            None
+        };
+
         Ok(Self {
             panes: PaneContainer::new(ctx)?,
             layout: ctx.config.theme.layout.clone(),
             modals: Vec::default(),
             area: Rect::default(),
             tabs: Self::init_tabs(ctx)?,
+            navigator,
         })
     }
 
@@ -188,7 +198,13 @@ impl<'ui> Ui<'ui> {
             &mut |pane, pane_area, block, block_area, frame| {
                 match self.panes.get_mut(&pane.pane, ctx)? {
                     Panes::TabContent => {
-                        active_tab_call!(self, ctx, render(frame, pane_area, ctx))?;
+                        // Route through Navigator when enabled
+                        if let Some(ref mut navigator) = self.navigator {
+                            navigator.render(frame, pane_area, ctx)?;
+                        } else {
+                            // Legacy path
+                            active_tab_call!(self, ctx, render(frame, pane_area, ctx))?;
+                        }
                     }
                     mut pane_instance => {
                         pane_call!(pane_instance, render(frame, pane_area, ctx))?;
@@ -266,7 +282,14 @@ impl<'ui> Ui<'ui> {
             return Ok(KeyHandleResult::None);
         }
 
-        active_tab_call!(self, ctx, handle_action(key, ctx))?;
+        // Route through Navigator when enabled (new architecture)
+        if let Some(ref mut navigator) = self.navigator {
+            navigator.handle_key(key, ctx)?;
+            // Navigator handles its own key events; fall through to check global actions
+        } else {
+            // Legacy path: use tab-based pane system
+            active_tab_call!(self, ctx, handle_action(key, ctx))?;
+        }
 
         if let Some(action) = key.as_global_action(ctx) {
             match action {
@@ -1160,6 +1183,11 @@ impl<'ui> Ui<'ui> {
 
         for modal in &mut self.modals {
             modal.on_event(&mut event, ctx)?;
+        }
+
+        // Route to Navigator when enabled
+        if let Some(ref mut navigator) = self.navigator {
+            navigator.on_event(&mut event, ctx)?;
         }
 
         Ok(())

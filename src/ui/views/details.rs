@@ -32,11 +32,11 @@
 //! ```
 
 use crate::domain::{
-    ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
+    ContentDetails, AlbumContent, ArtistContent, PlaylistContent, SearchResultsContent,
     Song, ContentRef, ContentType,
     Section as DomainSection, SectionKey, SectionData,
     Stat as DomainStat, StatValue, Action as DomainAction, ActionKind,
-    Extensions,
+    Extensions, QueueContent,
 };
 
 /// Visual identity for the content.
@@ -110,9 +110,11 @@ pub enum Action {
 /// Content type for the details page.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PageKind {
+    Search,
     Album,
     Artist,
     Playlist,
+    Queue,
 }
 
 /// View model for rendering detail pages.
@@ -185,9 +187,32 @@ impl DetailsPage {
 impl From<ContentDetails> for DetailsPage {
     fn from(details: ContentDetails) -> Self {
         match details {
+            ContentDetails::Search(search) => search.into(),
             ContentDetails::Album(album) => album.into(),
             ContentDetails::Artist(artist) => artist.into(),
             ContentDetails::Playlist(playlist) => playlist.into(),
+            ContentDetails::Queue(queue) => queue.into(),
+        }
+    }
+}
+
+impl From<SearchResultsContent> for DetailsPage {
+    fn from(search: SearchResultsContent) -> Self {
+        // Search results don't fit the DetailsPage model well,
+        // but we provide a minimal conversion for compatibility.
+        // In practice, search results should be handled separately
+        // via BrowseStack which preserves the DetailItem structure.
+        DetailsPage {
+            id: search.query.clone(),
+            kind: PageKind::Search,
+            title: search.title,
+            subtitle: None,
+            artwork: Artwork::default(),
+            stats: vec![],
+            description: None,
+            tracks: vec![], // Search items are DetailItems, not Songs
+            sections: vec![],
+            actions: vec![],
         }
     }
 }
@@ -275,6 +300,26 @@ impl From<PlaylistContent> for DetailsPage {
             tracks: playlist.tracks,
             sections,
             actions,
+        }
+    }
+}
+
+impl From<QueueContent> for DetailsPage {
+    fn from(queue: QueueContent) -> Self {
+        DetailsPage {
+            id: "queue".to_string(),
+            kind: PageKind::Queue,
+            title: queue.title,
+            subtitle: None,
+            artwork: Artwork::default(),
+            stats: vec![Stat {
+                label: "Items".to_string(),
+                value: queue.songs.len().to_string(),
+            }],
+            description: None,
+            tracks: queue.songs,
+            sections: vec![],
+            actions: vec![],
         }
     }
 }

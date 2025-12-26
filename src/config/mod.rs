@@ -98,22 +98,18 @@ pub struct YouTubeConfig {
 }
 
 /// Configuration for legacy pane implementations
-/// Default is true (use legacy) for backward compatibility
+/// When enabled=true, uses legacy panes. When false (default), uses new Navigator architecture.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LegacyPanes {
-    /// Use legacy QueuePane instead of QueuePaneV2
+    /// Enable legacy pane system (default: false = use new Navigator architecture)
     #[serde(default = "defaults::bool::<false>")]
-    pub queue: bool,
-    /// Use legacy SearchPane instead of new BrowseStack-based SearchPane
-    #[serde(default = "defaults::bool::<true>")]
-    pub search: bool,
+    pub enabled: bool,
 }
 
 impl Default for LegacyPanes {
     fn default() -> Self {
         Self {
-            queue: false,  // QueuePaneV2 is stable
-            search: true,  // SearchPane migration not complete
+            enabled: false,  // New Navigator architecture by default
         }
     }
 }

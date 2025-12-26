@@ -40,6 +40,7 @@
 
 use std::time::Duration;
 use super::Song;
+use super::DetailItem;
 
 // =============================================================================
 // CONTENT DETAILS ENUM
@@ -51,55 +52,76 @@ use super::Song;
 /// UI code can pattern match for type-specific rendering.
 #[derive(Debug, Clone)]
 pub enum ContentDetails {
+    /// Search results with configurable section ordering.
+    Search(SearchResultsContent),
     Album(AlbumContent),
     Artist(ArtistContent),
     Playlist(PlaylistContent),
+    /// Play queue (flat list of songs).
+    Queue(QueueContent),
 }
 
 impl ContentDetails {
     /// Get the content ID regardless of type.
     pub fn id(&self) -> &str {
         match self {
+            Self::Search(s) => &s.query,
             Self::Album(a) => &a.id,
             Self::Artist(a) => &a.id,
             Self::Playlist(p) => &p.id,
+            Self::Queue(_) => "queue",
         }
     }
 
     /// Get the title regardless of type.
     pub fn title(&self) -> &str {
         match self {
+            Self::Search(s) => &s.title,
             Self::Album(a) => &a.title,
             Self::Artist(a) => &a.name,
             Self::Playlist(p) => &p.title,
+            Self::Queue(q) => &q.title,
         }
     }
 
     /// Get the thumbnail URL if available.
     pub fn thumbnail(&self) -> Option<&str> {
         match self {
+            Self::Search(_) => None,
             Self::Album(a) => a.thumbnail.as_deref(),
             Self::Artist(a) => a.thumbnail.as_deref(),
             Self::Playlist(p) => p.thumbnail.as_deref(),
+            Self::Queue(_) => None,
         }
     }
 
     /// Get the primary tracks/songs.
     pub fn tracks(&self) -> &[Song] {
         match self {
+            Self::Search(_) => &[], // Search results are DetailItems, not Songs
             Self::Album(a) => &a.tracks,
             Self::Artist(a) => &a.top_songs,
             Self::Playlist(p) => &p.tracks,
+            Self::Queue(q) => &q.songs,
         }
     }
 
     /// Get the extensions container.
     pub fn extensions(&self) -> &Extensions {
+        static EMPTY_EXTENSIONS: std::sync::LazyLock<Extensions> = 
+            std::sync::LazyLock::new(Extensions::new);
         match self {
+            Self::Search(_) => &EMPTY_EXTENSIONS,
             Self::Album(a) => &a.extensions,
             Self::Artist(a) => &a.extensions,
             Self::Playlist(p) => &p.extensions,
+            Self::Queue(_) => &EMPTY_EXTENSIONS,
         }
+    }
+
+    /// Check if this is search results.
+    pub fn is_search(&self) -> bool {
+        matches!(self, Self::Search(_))
     }
 
     /// Check if this is an album.
@@ -115,6 +137,19 @@ impl ContentDetails {
     /// Check if this is a playlist.
     pub fn is_playlist(&self) -> bool {
         matches!(self, Self::Playlist(_))
+    }
+
+    /// Check if this is a queue.
+    pub fn is_queue(&self) -> bool {
+        matches!(self, Self::Queue(_))
+    }
+
+    /// Try to get as search results.
+    pub fn as_search(&self) -> Option<&SearchResultsContent> {
+        match self {
+            Self::Search(s) => Some(s),
+            _ => None,
+        }
     }
 
     /// Try to get as album content.
@@ -137,6 +172,14 @@ impl ContentDetails {
     pub fn as_playlist(&self) -> Option<&PlaylistContent> {
         match self {
             Self::Playlist(p) => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Try to get as queue content.
+    pub fn as_queue(&self) -> Option<&QueueContent> {
+        match self {
+            Self::Queue(q) => Some(q),
             _ => None,
         }
     }
@@ -227,6 +270,108 @@ pub struct PlaylistContent {
     pub extensions: Extensions,
 }
 
+/// Search results content with items grouped by type.
+/// 
+/// Unlike other content types, search results are already `DetailItem`s
+/// (songs, albums, artists, playlists mixed together with headers).
+/// Section ordering is controlled by `config.search.sections`.
+#[derive(Debug, Clone, Default)]
+pub struct SearchResultsContent {
+    /// The search query that produced these results
+    pub query: String,
+    /// Display title (usually "Results" or the query)
+    pub title: String,
+    /// All search result items (songs, albums, artists, playlists with headers)
+    pub items: Vec<DetailItem>,
+}
+
+/// Queue content for displaying the play queue in a ContentView.
+///
+/// Provides a ContentViewable wrapper around a song list for unified
+/// handling by ContentView. Queue is a flat list (no sections).
+#[derive(Debug, Clone, Default)]
+pub struct QueueContent {
+    /// Songs in the queue
+    pub songs: Vec<Song>,
+    /// Display title
+    pub title: String,
+}
+
+impl SearchResultsContent {
+    /// Create new search results.
+    pub fn new(query: impl Into<String>, items: Vec<DetailItem>) -> Self {
+        let query = query.into();
+        let title = if query.is_empty() { 
+            "Results".to_string() 
+        } else { 
+            format!("\"{}\"", query)
+        };
+        Self { query, title, items }
+    }
+}
+
+impl QueueContent {
+    /// Create new queue content.
+    pub fn new(songs: Vec<Song>) -> Self {
+        let count = songs.len();
+        Self {
+            songs,
+            title: format!("Queue ({} items)", count),
+        }
+    }
+
+    /// Create with a custom title.
+    pub fn with_title(songs: Vec<Song>, title: impl Into<String>) -> Self {
+        Self {
+            songs,
+            title: title.into(),
+        }
+    }
+}
+
+// =============================================================================
+// SEARCHABLE CONTENT (for SearchPane heterogeneous stacking)
+// =============================================================================
+
+/// Content types that can appear in SearchPane's navigation stack.
+///
+/// This enum wraps all content types that SearchPane can display,
+/// allowing ContentView<SearchableContent> to handle heterogeneous
+/// content while maintaining type safety.
+#[derive(Debug, Clone)]
+pub enum SearchableContent {
+    /// Initial search results
+    Results(SearchResultsContent),
+    /// Album detail view
+    Album(AlbumContent),
+    /// Artist detail view
+    Artist(ArtistContent),
+    /// Playlist detail view
+    Playlist(PlaylistContent),
+}
+
+impl SearchableContent {
+    /// Create from search results.
+    pub fn results(query: impl Into<String>, items: Vec<DetailItem>) -> Self {
+        Self::Results(SearchResultsContent::new(query, items))
+    }
+
+    /// Create from album content.
+    pub fn album(content: AlbumContent) -> Self {
+        Self::Album(content)
+    }
+
+    /// Create from artist content.
+    pub fn artist(content: ArtistContent) -> Self {
+        Self::Artist(content)
+    }
+
+    /// Create from playlist content.
+    pub fn playlist(content: PlaylistContent) -> Self {
+        Self::Playlist(content)
+    }
+}
+
 // =============================================================================
 // CONTENT REFERENCE
 // =============================================================================
@@ -303,6 +448,36 @@ impl ContentRef {
     pub fn with_subtitle(mut self, text: impl Into<String>) -> Self {
         self.subtitle = Some(text.into());
         self
+    }
+}
+
+// ListItemDisplay implementation for ContentRef
+impl super::display::ListItemDisplay for ContentRef {
+    fn primary_text(&self) -> std::borrow::Cow<'_, str> {
+        std::borrow::Cow::Borrowed(&self.name)
+    }
+
+    fn secondary_text(&self) -> Option<std::borrow::Cow<'_, str>> {
+        self.subtitle.as_ref().map(|s| std::borrow::Cow::Borrowed(s.as_str()))
+    }
+
+    fn thumbnail_url(&self) -> Option<&str> {
+        self.thumbnail.as_deref()
+    }
+
+    fn type_icon(&self) -> &str {
+        match self.content_type {
+            ContentType::Artist => " ",  // Nerd Font artist icon
+            ContentType::Album => " ",   // Nerd Font disc icon
+            ContentType::Playlist => " ", // Nerd Font list icon
+            ContentType::Directory => " ", // Nerd Font folder icon
+            ContentType::Video => " ",   // Nerd Font video icon
+            ContentType::Track => " ",   // Nerd Font music icon
+        }
+    }
+
+    fn is_focusable(&self) -> bool {
+        true
     }
 }
 
@@ -760,6 +935,131 @@ pub enum ActionKind {
     AddToQueue,
     AddToLibrary,
     Share,
+}
+
+// =============================================================================
+// TESTS
+// =============================================================================
+
+// =============================================================================
+// CONTENT TRAIT (For ContentView<C>)
+// =============================================================================
+
+/// Trait for content that can be displayed in a ContentView.
+///
+/// Implement this trait for each content type (Artist, Album, Playlist, etc.)
+/// to enable unified handling by ContentView.
+///
+/// This trait lives in domain to avoid circular dependencies between
+/// domain::content and ui::widgets::content_view.
+pub trait ContentViewable: Clone + std::fmt::Debug + Send + 'static {
+    /// Get the title for display (breadcrumb, header)
+    fn title(&self) -> &str;
+
+    /// Get unique identifier
+    fn content_id(&self) -> &str;
+
+    /// Convert to ContentDetails for section building
+    fn to_content_details(&self) -> ContentDetails;
+}
+
+impl ContentViewable for AlbumContent {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn content_id(&self) -> &str {
+        &self.id
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        ContentDetails::Album(self.clone())
+    }
+}
+
+impl ContentViewable for ArtistContent {
+    fn title(&self) -> &str {
+        &self.name
+    }
+
+    fn content_id(&self) -> &str {
+        &self.id
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        ContentDetails::Artist(self.clone())
+    }
+}
+
+impl ContentViewable for PlaylistContent {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn content_id(&self) -> &str {
+        &self.id
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        ContentDetails::Playlist(self.clone())
+    }
+}
+
+impl ContentViewable for SearchResultsContent {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn content_id(&self) -> &str {
+        &self.query
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        ContentDetails::Search(self.clone())
+    }
+}
+
+impl ContentViewable for QueueContent {
+    fn title(&self) -> &str {
+        &self.title
+    }
+
+    fn content_id(&self) -> &str {
+        "queue"
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        ContentDetails::Queue(self.clone())
+    }
+}
+
+impl ContentViewable for SearchableContent {
+    fn title(&self) -> &str {
+        match self {
+            Self::Results(c) => c.title(),
+            Self::Album(c) => c.title(),
+            Self::Artist(c) => c.title(),
+            Self::Playlist(c) => c.title(),
+        }
+    }
+
+    fn content_id(&self) -> &str {
+        match self {
+            Self::Results(c) => c.content_id(),
+            Self::Album(c) => c.content_id(),
+            Self::Artist(c) => c.content_id(),
+            Self::Playlist(c) => c.content_id(),
+        }
+    }
+
+    fn to_content_details(&self) -> ContentDetails {
+        match self {
+            Self::Results(c) => c.to_content_details(),
+            Self::Album(c) => c.to_content_details(),
+            Self::Artist(c) => c.to_content_details(),
+            Self::Playlist(c) => c.to_content_details(),
+        }
+    }
 }
 
 // =============================================================================

@@ -20,11 +20,12 @@ pub use actions::{QueueItemAction, QueueItemOps, ItemContext};
 // Type-Safe Hybrid content types for detail views
 pub use content::{
     ContentDetails,
-    AlbumContent, ArtistContent, PlaylistContent,
+    AlbumContent, ArtistContent, PlaylistContent, SearchResultsContent, QueueContent, SearchableContent,
     ContentRef, ContentType, ReleaseType,
     Extensions, ExtensionsBuilder, Section, SectionKey, SectionData,
     Stat, StatKey, StatValue,
     Action, ActionKind,
+    ContentViewable,
 };
 
 // DetailItem - unified item type for navigation stacks

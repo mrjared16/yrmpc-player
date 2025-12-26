@@ -264,6 +264,19 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
     let mut sections = Vec::new();
 
     match content {
+        ContentDetails::Search(search) => {
+            // Search results: items are already DetailItems with embedded headers
+            // For now, put all items in a single section
+            // TODO: Parse headers to create proper sections, respect config.search.sections order
+            if !search.items.is_empty() {
+                sections.push(SectionView::new(
+                    SectionKey::Stats, // Placeholder
+                    "", // No section title, headers are inline
+                    search.items.clone(),
+                ));
+            }
+        }
+
         ContentDetails::Album(album) => {
             // Album: tracks section
             if !album.tracks.is_empty() {
@@ -301,6 +314,17 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
             }
             // Add extension sections
             build_extension_sections(&playlist.extensions, &mut sections);
+        }
+
+        ContentDetails::Queue(queue) => {
+            // Queue: single flat section of songs (no header needed)
+            if !queue.songs.is_empty() {
+                sections.push(SectionView::new(
+                    SectionKey::Stats, // Placeholder
+                    "", // No section title for queue
+                    queue.songs.iter().cloned().map(DetailItem::Song).collect(),
+                ));
+            }
         }
     }
 

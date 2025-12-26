@@ -1,10 +1,23 @@
-//! SearchPaneV2 - New search pane using NavStack + InteractiveListView
+//! SearchPaneV2 - New search pane using ContentView + InteractiveListView
 //!
-//! This implementation uses NavStack for hierarchical navigation and
-//! reuses InputGroups from the legacy search pane for search inputs.
+//! This implementation uses ContentView<SearchableContent> for hierarchical navigation
+//! and reuses InputGroups from the legacy search pane for search inputs.
+//!
+//! ## Architecture (per ADR-unified-view-architecture)
+//!
+//! - ContentView<SearchableContent> for content stacking
+//! - InputGroups wrapped in SearchInputZone for input handling  
+//! - Phase management for input vs browse focus
+//!
+//! ## Traits Implemented
+//!
+//! - Legacy `Pane` trait (for current UI system)
+//! - New `NavigatorPane` + `TabPane` traits (for Navigator system)
 
 use anyhow::Result;
+use crossterm::event::KeyCode;
 use itertools::Itertools;
+use crate::backends::BackendActions;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -18,15 +31,19 @@ use crate::{
     QueryResult,
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
-    domain::{Song, DetailItem, ContentType},
+    domain::{Song, DetailItem, ContentType, SearchableContent, SearchResultsContent},
     mpd::mpd_client::Filter,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         Enqueue,
         UiEvent,
         panes::search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
+        panes::navigator_types::{
+            BackspaceResult, DetailId, EntityRef, EscResult, InputMode,
+            NavigatorPane, PaneAction, PaneId, TabId, TabPane,
+        },
         widgets::{
-            nav_stack::NavStack,
+            content_view::ContentView,
             interactive_list_view::NavConfig,
             detail_stack::flatten_content,
         },
@@ -56,15 +73,15 @@ enum Phase {
     BrowseResults,
 }
 
-/// SearchPaneV2 using NavStack architecture
+/// SearchPaneV2 using ContentView architecture
 #[derive(Debug)]
 pub struct SearchPaneV2 {
     /// Search input groups (reused from legacy)
     inputs: InputGroups,
     /// Current phase
     phase: Phase,
-    /// NavStack for hierarchical navigation (now uses DetailItem for type safety)
-    stack: NavStack<DetailItem>,
+    /// ContentView for hierarchical navigation with SearchableContent
+    view: ContentView<SearchableContent>,
     /// Navigation config
     nav_config: NavConfig,
 }
@@ -87,10 +104,14 @@ impl SearchPaneV2 {
             .strip_diacritics_supported(false) // Simplified
             .build();
 
+        let mut view = ContentView::new();
+        // Initialize with empty search results
+        view.push(SearchableContent::results("Results", Vec::new()));
+
         Self {
             inputs,
             phase: Phase::Search,
-            stack: NavStack::with_root(Vec::new(), "Results"),
+            view,
             nav_config: NavConfig {
                 scrolloff: config.scrolloff,
                 wrap: config.wrap_navigation,
@@ -156,12 +177,13 @@ impl SearchPaneV2 {
 
     /// Get items for enqueue operations
     fn get_enqueue_items(&self, all: bool) -> Vec<Enqueue> {
-        let Some(level) = self.stack.current() else {
+        let Some(level) = self.view.current() else {
             return Vec::new();
         };
 
         if all {
-            level.items.iter()
+            level.section_list.items()
+                .iter()
                 .filter_map(|item| match item {
                     DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
                     _ => None,
@@ -169,23 +191,19 @@ impl SearchPaneV2 {
                 .collect()
         } else {
             // Get marked items or selected item
-            let marked = level.view.marked();
+            let marked = level.section_list.marked_items();
             if !marked.is_empty() {
                 marked.iter()
-                    .filter_map(|&idx| level.items.get(idx))
                     .filter_map(|item| match item {
                         DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
                         _ => None,
                     })
                     .collect()
-            } else if let Some(idx) = level.view.selected() {
-                level.items.get(idx)
-                    .and_then(|item| match item {
-                        DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
-                        _ => None,
-                    })
-                    .into_iter()
-                    .collect()
+            } else if let Some(item) = level.section_list.selected_item() {
+                match item {
+                    DetailItem::Song(song) => vec![Enqueue::Song { song: song.clone() }],
+                    _ => Vec::new(),
+                }
             } else {
                 Vec::new()
             }
@@ -270,7 +288,7 @@ impl SearchPaneV2 {
                     }
                     ctx.render()?;
                 }
-                CommonAction::Right if !self.stack.current_items().is_empty() => {
+                CommonAction::Right if self.view.has_content() => {
                     self.phase = Phase::BrowseResults;
                     ctx.render()?;
                 }
@@ -300,117 +318,94 @@ impl SearchPaneV2 {
 
     /// Handle browse results phase key events  
     fn handle_browse_phase(&mut self, event: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
-        let cfg = self.nav_config;
+        use crate::ui::widgets::content_view::ContentAction;
+
+        // Use unified ContentView key handling
+        match self.view.handle_key(event, ctx) {
+            ContentAction::Handled => {
+                ctx.render()?;
+            }
+            ContentAction::BackPane => {
+                // If at root of content stack, return to Search phase
+                if self.view.stack_depth() <= 1 {
+                    self.phase = Phase::Search;
+                } else {
+                    // This shouldn't happen if ContentView handles popping properly,
+                    // but just in case, go back to Search
+                    self.phase = Phase::Search;
+                }
+                ctx.render()?;
+            }
+            ContentAction::BackStage => {
+                // Not used in SearchPaneV2
+            }
+            ContentAction::NavigateTo(entity) => {
+                // Handle internal navigation (drill down)
+                // In a full migration, Navigator would handle this.
+                // For now, we manually fetch and push to stack.
+                match entity.entity_type {
+                    DetailId::Artist => self.fetch_artist_detail(ctx, entity.id),
+                    DetailId::Album => self.fetch_album_detail(ctx, entity.id),
+                    DetailId::Playlist => self.fetch_playlist_detail(ctx, entity.id),
+                }
+            }
+            ContentAction::Play(song) => {
+                // Play single song
+                self.play_song(ctx, song);
+                ctx.render()?;
+            }
+            ContentAction::PlayAll { songs, start_index } => {
+                // Play all songs (from markers or list)
+                if !songs.is_empty() {
+                    let queue_items: Vec<_> = songs.into_iter()
+                        .map(|s| Enqueue::Song { song: s })
+                        .collect();
+                    
+                    let current_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
+                    
+                    crate::backends::BackendDispatcher::resolve_and_enqueue(
+                        ctx,
+                        queue_items,
+                        crate::config::keys::actions::Position::Replace,
+                        crate::config::keys::actions::AutoplayKind::First,
+                        current_idx,
+                        Some(start_index),
+                    );
+                    ctx.render()?;
+                }
+            }
+            ContentAction::Enqueue(songs) => {
+                let queue_items: Vec<_> = songs.into_iter()
+                    .map(|s| Enqueue::Song { song: s })
+                    .collect();
+                self.add_to_queue(ctx, queue_items, false);
+                ctx.render()?;
+            }
+        }
         
+        // Handle additional actions not covered by ContentView (e.g., 'a' for enqueue)
         if let Some(action) = event.as_common_action(ctx) {
             match action {
-                CommonAction::Down => {
-                    if let Some(level) = self.stack.current_mut() {
-                        level.view.select_next(&level.items, cfg);
-                    }
-                    ctx.render()?;
-                }
-                CommonAction::Up => {
-                    if let Some(level) = self.stack.current_mut() {
-                        level.view.select_prev(&level.items, cfg);
-                    }
-                    ctx.render()?;
-                }
-                CommonAction::Top => {
-                    if let Some(level) = self.stack.current_mut() {
-                        level.view.select_first(&level.items);
-                    }
-                    ctx.render()?;
-                }
-                CommonAction::Bottom => {
-                    if let Some(level) = self.stack.current_mut() {
-                        level.view.select_last(&level.items);
-                    }
-                    ctx.render()?;
-                }
-                CommonAction::Left | CommonAction::Close => {
-                    if self.stack.depth() > 1 {
-                        self.stack.leave();
+                CommonAction::Left => {
+                    // Force back navigation if handled by CommonAction
+                    if self.view.can_pop() {
+                        self.view.pop();
                     } else {
                         self.phase = Phase::Search;
                     }
                     ctx.render()?;
                 }
-                CommonAction::Select => {
-                    if let Some(level) = self.stack.current_mut() {
-                        level.view.toggle_mark();
-                    }
-                    ctx.render()?;
-                }
-                CommonAction::Confirm => {
-                    // Enter selected item or add to queue and play
-                    self.handle_confirm(ctx)?;
-                }
                 CommonAction::AddOptions { .. } => {
                     // 'a' key: Add to queue without playing
                     let enqueue = self.get_enqueue_items(false);
                     if !enqueue.is_empty() {
-                        self.add_to_queue(ctx, enqueue, false);  // play=false
+                        self.add_to_queue(ctx, enqueue, false);
                     }
                 }
                 _ => {}
             }
         }
-        Ok(())
-    }
-
-    /// Handle confirm action - enter album/artist/playlist or play song (YouTube Music-like)
-    ///
-    /// For songs/videos:
-    /// - If song is already playing → toggle play/pause
-    /// - Otherwise → clear queue, add song, play it
-    fn handle_confirm(&mut self, ctx: &mut Ctx) -> Result<()> {
-        let Some(level) = self.stack.current() else {
-            return Ok(());
-        };
-        let Some(idx) = level.view.selected() else {
-            return Ok(());
-        };
-        let Some(item) = level.items.get(idx) else {
-            return Ok(());
-        };
-
-        match item {
-            DetailItem::Header { .. } => {
-                // Headers are not interactive
-            }
-            DetailItem::Ref(content_ref) => {
-                // Navigate into album/artist/playlist
-                let id = content_ref.id.clone();
-                match content_ref.content_type {
-                    ContentType::Playlist => self.fetch_playlist_detail(ctx, id),
-                    ContentType::Album => self.fetch_album_detail(ctx, id),
-                    ContentType::Artist => self.fetch_artist_detail(ctx, id),
-                    _ => {}
-                }
-            }
-            DetailItem::Song(song) => {
-                // YouTube Music-like behavior for songs/videos:
-                // Check if this exact song is currently playing
-                let selected_uri = &song.uri;
-
-                if let Some((_, current_song)) = ctx.find_current_song_in_queue() {
-                    if &current_song.uri == selected_uri {
-                        // Same song → toggle play/pause (don't restart or add duplicate)
-                        ctx.command(|client| {
-                            client.pause_toggle()?;
-                            Ok(())
-                        });
-                        ctx.render()?;
-                        return Ok(());
-                    }
-                }
-
-                // Different song or nothing playing → clear, add, play
-                self.play_song(ctx, song.clone());
-            }
-        }
-        ctx.render()?;
+        
         Ok(())
     }
 
@@ -520,9 +515,9 @@ impl SearchPaneV2 {
         // Ensure we're in browse mode
         self.phase = Phase::BrowseResults;
 
-        // If stack is empty, initialize with a placeholder root
-        if self.stack.is_empty() {
-            self.stack.set_root(Vec::new(), "Results");
+        // If stack is empty, clear any existing content
+        if !self.view.has_content() {
+            self.view.clear();
         }
 
         // Trigger fetch based on content type
@@ -550,20 +545,9 @@ impl SearchPaneV2 {
     fn render_results(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
         
-        // Compute path before borrowing current_mut
-        let path = self.stack.path();
-        
-        // Get current level for both items and view
-        if let Some(level) = self.stack.current_mut() {
-            let title = format!("{} ({} items)", path, level.items.len());
-            level.view.render(
-                frame,
-                area,
-                ctx,
-                &level.items,
-                Some(&title),
-                |_song, _ctx| false,
-            );
+        if self.view.has_content() {
+            // Render the current content view
+            self.view.render(frame, area, ctx);
         } else {
             // Empty state
             let block = Block::default()
@@ -578,46 +562,48 @@ impl SearchPaneV2 {
     fn render_preview(&self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
         
-        // Get selected item from NavStack
-        if let Some(item) = self.stack.selected_item() {
-            // Only show preview for songs
-            if let Some(song) = item.as_song() {
-                let preview = song.to_preview(
-                    config.theme.preview_label_style,
-                    config.theme.preview_metadata_group_style,
-                    ctx,
-                );
-                let mut result = Vec::new();
-                for group in preview {
-                    if let Some(name) = group.name {
-                        result.push(ListItem::new(name).yellow().bold());
+        // Get selected item from ContentView
+        if let Some(level) = self.view.current() {
+            if let Some(item) = level.section_list.selected_item() {
+                // Only show preview for songs
+                if let Some(song) = item.as_song() {
+                    let preview = song.to_preview(
+                        config.theme.preview_label_style,
+                        config.theme.preview_metadata_group_style,
+                        ctx,
+                    );
+                    let mut result = Vec::new();
+                    for group in preview {
+                        if let Some(name) = group.name {
+                            result.push(ListItem::new(name).yellow().bold());
+                        }
+                        result.extend(group.items.clone());
+                        result.push(ListItem::new(Span::raw("")));
                     }
-                    result.extend(group.items.clone());
-                    result.push(ListItem::new(Span::raw("")));
+                    let preview_widget = List::new(result).style(config.as_text_style());
+                    frame.render_widget(preview_widget, area);
+                } else if let Some(content_ref) = item.as_content_ref() {
+                    // Show basic info for content refs
+                    let mut lines = vec![
+                        ListItem::new(Span::styled(content_ref.name.clone(), config.theme.highlighted_item_style)),
+                    ];
+                    if let Some(subtitle) = &content_ref.subtitle {
+                        lines.push(ListItem::new(Span::raw(subtitle.clone())));
+                    }
+                    let content_type_str = match content_ref.content_type {
+                        ContentType::Artist => "Artist",
+                        ContentType::Album => "Album",
+                        ContentType::Playlist => "Playlist",
+                        ContentType::Video => "Video",
+                        _ => "Content",
+                    };
+                    lines.push(ListItem::new(Span::styled(
+                        format!("Type: {}", content_type_str),
+                        Style::default().fg(Color::DarkGray),
+                    )));
+                    let preview_widget = List::new(lines).style(config.as_text_style());
+                    frame.render_widget(preview_widget, area);
                 }
-                let preview_widget = List::new(result).style(config.as_text_style());
-                frame.render_widget(preview_widget, area);
-            } else if let Some(content_ref) = item.as_content_ref() {
-                // Show basic info for content refs
-                let mut lines = vec![
-                    ListItem::new(Span::styled(content_ref.name.clone(), config.theme.highlighted_item_style)),
-                ];
-                if let Some(subtitle) = &content_ref.subtitle {
-                    lines.push(ListItem::new(Span::raw(subtitle.clone())));
-                }
-                let content_type_str = match content_ref.content_type {
-                    ContentType::Artist => "Artist",
-                    ContentType::Album => "Album",
-                    ContentType::Playlist => "Playlist",
-                    ContentType::Video => "Video",
-                    _ => "Content",
-                };
-                lines.push(ListItem::new(Span::styled(
-                    format!("Type: {}", content_type_str),
-                    Style::default().fg(Color::DarkGray),
-                )));
-                let preview_widget = List::new(lines).style(config.as_text_style());
-                frame.render_widget(preview_widget, area);
             }
         }
     }
@@ -742,28 +728,24 @@ impl Pane for SearchPaneV2 {
                 log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
                 // Convert Songs to DetailItems (handles type conversion via From impl)
                 let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
-                self.stack.set_root(items, "Results");
+                
+                // Clear stack and set new root
+                self.view.clear();
+                self.view.push(SearchableContent::results("Results", items));
+                
                 self.phase = Phase::BrowseResults;
             }
             ("fetch_playlist_v2", QueryResult::PlaylistDetail(details)) => {
-                // Use flatten_content to get sections + tracks as DetailItems
-                let items = flatten_content(&crate::domain::ContentDetails::Playlist(details));
-                let title = self.stack.current()
-                    .and_then(|l| l.selected_item())
-                    .and_then(|item| item.as_content_ref())
-                    .map(|r| r.name.clone())
-                    .unwrap_or_else(|| "Playlist".to_string());
-                self.stack.enter(items, title);
+                // Push playlist content to stack
+                self.view.push(SearchableContent::Playlist(details));
             }
             ("fetch_album_v2", QueryResult::AlbumDetail(details)) => {
-                let title = details.title.clone();
-                let items = flatten_content(&crate::domain::ContentDetails::Album(details));
-                self.stack.enter(items, title);
+                // Push album content to stack
+                self.view.push(SearchableContent::Album(details));
             }
             ("fetch_artist_v2", QueryResult::ArtistDetail(details)) => {
-                let title = details.name.clone();
-                let items = flatten_content(&crate::domain::ContentDetails::Artist(details));
-                self.stack.enter(items, title);
+                // Push artist content to stack
+                self.view.push(SearchableContent::Artist(details));
             }
             _ => {}
         }
@@ -777,5 +759,225 @@ impl Pane for SearchPaneV2 {
 
     fn on_hide(&mut self, _ctx: &Ctx) -> Result<()> {
         Ok(())
+    }
+}
+
+// =============================================================================
+// NEW ARCHITECTURE: NavigatorPane + TabPane Implementation
+// =============================================================================
+//
+// These implementations allow SearchPaneV2 to work with the new Navigator system
+// while preserving ALL existing functionality from the legacy Pane trait.
+
+impl NavigatorPane for SearchPaneV2 {
+    fn id(&self) -> PaneId {
+        PaneId::Tab(TabId::Search)
+    }
+
+    fn mode(&self) -> InputMode {
+        // Derive mode from current state
+        if self.phase == Phase::Search && self.inputs.insert_mode {
+            InputMode::Edit
+        } else if self.phase == Phase::BrowseResults {
+            return self.view.mode();
+        } else {
+            InputMode::Normal
+        }
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {
+        // Delegate to existing Pane::render implementation
+        Pane::render(self, frame, area, ctx)
+    }
+
+    fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<PaneAction> {
+        let mode = self.mode();
+
+        match mode {
+            InputMode::Edit => {
+                // In text input mode - delegate to legacy handler
+                Pane::handle_action(self, key, ctx)?;
+                return Ok(PaneAction::Handled);
+            }
+
+            InputMode::Find => {
+                // Find mode is handled by ContentView
+                use crate::ui::widgets::content_view::ContentAction;
+                match self.view.handle_key(key, ctx) {
+                    ContentAction::Handled => {
+                        ctx.render()?;
+                        return Ok(PaneAction::Handled);
+                    }
+                    _ => {
+                        // Shouldn't happen in find mode
+                        return Ok(PaneAction::Handled);
+                    }
+                }
+            }
+
+            InputMode::Normal => {
+                match self.phase {
+                    Phase::Search => {
+                        // In search input phase - most keys go to legacy handler
+                        // But we handle Esc specially for Navigator integration
+                        if matches!(key.code(), KeyCode::Esc) {
+                            // In search phase, Esc might mean "go back to previous pane"
+                            // if there's nothing to cancel
+                            key.stop_propagation();
+                            return Ok(PaneAction::BackPane);
+                        }
+
+                        // Delegate to legacy for navigation, confirm, etc.
+                        Pane::handle_action(self, key, ctx)?;
+                        return Ok(PaneAction::Handled);
+                    }
+
+                    Phase::BrowseResults => {
+                        // Use unified ContentView key handling
+                        use crate::ui::widgets::content_view::ContentAction;
+                        
+                        // Handle Esc specifically for phase transition
+                        if matches!(key.code(), KeyCode::Esc) {
+                            // Try to let ContentView handle it first (clear filter)
+                            match self.view.handle_key(key, ctx) {
+                                ContentAction::Handled => {
+                                    ctx.render()?;
+                                    return Ok(PaneAction::Handled);
+                                }
+                                ContentAction::BackPane => {
+                                    // At root of content stack - return to Search phase
+                                    if self.view.stack_depth() <= 1 {
+                                        self.phase = Phase::Search;
+                                        key.stop_propagation();
+                                        ctx.render()?;
+                                        return Ok(PaneAction::Handled);
+                                    } else {
+                                        // Should have popped stack internally
+                                        ctx.render()?;
+                                        return Ok(PaneAction::Handled);
+                                    }
+                                }
+                                _ => {}
+                            }
+                        }
+
+                        // Handle other keys
+                        match self.view.handle_key(key, ctx) {
+                            ContentAction::Handled => {
+                                ctx.render()?;
+                                return Ok(PaneAction::Handled);
+                            }
+                            ContentAction::BackPane => {
+                                // If at root of content stack, return to Search phase
+                                if self.view.stack_depth() <= 1 {
+                                    self.phase = Phase::Search;
+                                    key.stop_propagation();
+                                    ctx.render()?;
+                                    return Ok(PaneAction::Handled);
+                                } else {
+                                    // Should have popped stack internally
+                                    ctx.render()?;
+                                    return Ok(PaneAction::Handled);
+                                }
+                            }
+                            ContentAction::BackStage => {
+                                // Go back to search phase
+                                self.phase = Phase::Search;
+                                ctx.render()?;
+                                return Ok(PaneAction::Handled);
+                            }
+                            ContentAction::NavigateTo(entity) => {
+                                // Return NavigateTo action for Navigator to handle
+                                return Ok(PaneAction::NavigateTo(entity));
+                            }
+                            ContentAction::Play(song) => {
+                                return Ok(PaneAction::Play(song));
+                            }
+                            ContentAction::PlayAll { songs, start_index } => {
+                                return Ok(PaneAction::PlayAll { songs, start_index });
+                            }
+                            ContentAction::Enqueue(songs) => {
+                                return Ok(PaneAction::Enqueue(songs));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn on_query_finished(
+        &mut self,
+        id: &'static str,
+        data: crate::QueryResult,
+        _ctx: &Ctx,
+    ) -> Result<()> {
+        // Delegate to the Pane implementation's logic
+        match (id, data) {
+            ("search_v2", crate::QueryResult::SearchResult { data }) => {
+                log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
+                let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
+                self.view.clear();
+                self.view.push(SearchableContent::results("Results", items));
+                self.phase = Phase::BrowseResults;
+            }
+            ("fetch_playlist_v2", crate::QueryResult::PlaylistDetail(details)) => {
+                self.view.push(SearchableContent::Playlist(details));
+            }
+            ("fetch_album_v2", crate::QueryResult::AlbumDetail(details)) => {
+                self.view.push(SearchableContent::Album(details));
+            }
+            ("fetch_artist_v2", crate::QueryResult::ArtistDetail(details)) => {
+                self.view.push(SearchableContent::Artist(details));
+            }
+            _ => {}
+        }
+        Ok(())
+    }
+}
+
+impl TabPane for SearchPaneV2 {
+    fn tab_id(&self) -> TabId {
+        TabId::Search
+    }
+
+    fn current_stage(&self) -> &str {
+        match self.phase {
+            Phase::Search => "Input",
+            Phase::BrowseResults => {
+                // Show stack path as stage indicator
+                if self.view.stack_depth() > 1 {
+                    "Browse" // Deep in stack
+                } else {
+                    "Results" // At root results
+                }
+            }
+        }
+    }
+
+    fn can_go_back_stage(&self) -> bool {
+        match self.phase {
+            Phase::Search => false,
+            Phase::BrowseResults => {
+                // Can go back if in stack or if at results (can go to Input)
+                self.view.stack_depth() > 1 || self.phase == Phase::BrowseResults
+            }
+        }
+    }
+
+    fn go_back_stage(&mut self) -> bool {
+        match self.phase {
+            Phase::Search => false,
+            Phase::BrowseResults => {
+                if self.view.can_pop() {
+                    self.view.pop();
+                    true
+                } else {
+                    // At root results, go back to input phase
+                    self.phase = Phase::Search;
+                    true
+                }
+            }
+        }
     }
 }

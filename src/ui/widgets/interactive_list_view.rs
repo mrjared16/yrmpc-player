@@ -9,6 +9,16 @@
 //! - Core navigation/selection logic is in ListViewState
 //! - Item types implement ListItemDisplay + ItemOps for type-specific behavior
 //! - BrowseStack can compose this for hierarchical navigation
+//!
+//! ## Mode-Aware Key Handling
+//!
+//! This component supports three input modes (from navigator_types::InputMode):
+//! - Normal: Standard navigation (j/k, G/gg, etc.)
+//! - Find: Vim-style "/" search with n/N navigation
+//! - Edit: Passthrough to pane (e.g., search input)
+//!
+//! Esc priority: exit mode → clear find → return BackPane
+//! Backspace priority: delete char (in Find) → NoEffect (pane handles stack)
 
 use std::borrow::Cow;
 
@@ -20,9 +30,13 @@ use ratatui::{
 
 use crate::ctx::Ctx;
 use crate::domain::display::ListItemDisplay;
+use crate::ui::panes::navigator_types::{InputMode, EscResult, BackspaceResult, ListAction};
 use crate::ui::widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode};
 use crate::ui::widgets::list_view_state::ListViewState;
-use crate::ui::widgets::filter_state::FilterState;
+use crate::ui::widgets::find_state::FindState;
+use crate::config::keys::CommonAction;
+use crate::shared::key_event::KeyEvent;
+use crossterm::event::KeyCode;
 
 /// Wrapper that adds highlight state to any ListItemDisplay item
 struct HighlightedItem<'a, T> {
@@ -82,15 +96,22 @@ impl Default for NavConfig {
 /// Generic interactive list view for any ListItemDisplay items
 ///
 /// Uses ListViewState for state management. Does NOT own items.
-/// Optionally supports filtering via FilterState.
+/// Optionally supports vim-style find (/) via FindState.
+/// 
+/// ## Mode Support
+/// 
+/// The view tracks its own InputMode for Find mode, but Edit mode is
+/// managed by the containing pane (for text inputs like search).
 #[derive(Debug, Clone)]
 pub struct InteractiveListView {
     /// State (selection, marks, viewport tracking)
     state: ListViewState,
     /// ListState for ratatui widget rendering
     list_state: ListState,
-    /// Optional filter state (composable)
-    filter: Option<FilterState>,
+    /// Current input mode (Normal or Find - Edit is pane-managed)
+    mode: InputMode,
+    /// Optional find state (composable, vim-style / search)
+    filter: Option<FindState>,
 }
 
 impl Default for InteractiveListView {
@@ -98,6 +119,7 @@ impl Default for InteractiveListView {
         Self {
             state: ListViewState::new(),
             list_state: ListState::default(),
+            mode: InputMode::Normal,
             filter: None,
         }
     }
@@ -276,6 +298,312 @@ impl InteractiveListView {
         );
     }
 
+    // ========== MODE HANDLING ==========
+
+    /// Get current input mode
+    pub fn mode(&self) -> InputMode {
+        self.mode
+    }
+
+    /// Set input mode (typically called by pane)
+    pub fn set_mode(&mut self, mode: InputMode) {
+        self.mode = mode;
+    }
+
+    /// Check if in Find mode
+    pub fn is_find_mode(&self) -> bool {
+        self.mode == InputMode::Find
+    }
+
+    /// Enter Find mode with optional initial text
+    pub fn enter_find_mode<T: ListItemDisplay>(&mut self, items: &[T], initial: &str) {
+        self.mode = InputMode::Find;
+        self.start_filter(items, initial);
+    }
+
+    /// Exit Find mode, optionally keeping the highlights
+    pub fn exit_find_mode(&mut self, keep_highlights: bool) {
+        self.mode = InputMode::Normal;
+        if !keep_highlights {
+            self.filter = None;
+        }
+    }
+
+    /// Handle Esc key with proper priority
+    ///
+    /// Priority:
+    /// 1. Exit Find mode (if in Find mode) → Handled
+    /// 2. Clear active filter/highlights (if present) → Handled
+    /// 3. Return BackPane (let navigator handle pane history)
+    pub fn handle_esc(&mut self) -> EscResult {
+        // Priority 1: Exit Find mode
+        if self.mode == InputMode::Find {
+            self.mode = InputMode::Normal;
+            self.filter = None;
+            return EscResult::Handled;
+        }
+
+        // Priority 2: Clear active filter highlights
+        if self.filter.is_some() {
+            self.filter = None;
+            return EscResult::Handled;
+        }
+
+        // Priority 3: Signal to go back pane
+        EscResult::BackPane
+    }
+
+    /// Handle Backspace key with proper priority
+    ///
+    /// Priority:
+    /// 1. In Find mode: delete char from filter text → Handled
+    /// 2. Otherwise: NoEffect (pane handles stack/stage navigation)
+    pub fn handle_backspace<T: ListItemDisplay>(&mut self, items: &[T]) -> BackspaceResult {
+        // In Find mode, delete character
+        if self.mode == InputMode::Find {
+            if let Some(ref mut filter) = self.filter {
+                if !filter.text().is_empty() {
+                    filter.pop_char();
+                    filter.apply(items);
+                    
+                    // Jump to first match if any
+                    if let Some(idx) = filter.current_match_idx() {
+                        self.state.select(Some(idx), 0);
+                        self.list_state.select(Some(idx));
+                    }
+                    return BackspaceResult::Handled;
+                }
+            }
+            // Empty filter in Find mode - exit find mode
+            self.mode = InputMode::Normal;
+            self.filter = None;
+            return BackspaceResult::Handled;
+        }
+
+        // Not in Find mode - pane handles this
+        BackspaceResult::NoEffect
+    }
+
+    /// Handle character input in Find mode
+    /// 
+    /// Returns true if character was consumed (in Find mode)
+    pub fn handle_find_char<T: ListItemDisplay>(&mut self, items: &[T], ch: char) -> bool {
+        if self.mode != InputMode::Find {
+            return false;
+        }
+        
+        self.filter_push_char(items, ch);
+        true
+    }
+
+    // ========== UNIFIED KEY HANDLING ==========
+
+    /// Unified key handler that returns ListAction.
+    ///
+    /// This is the main entry point for key handling. It processes all keys
+    /// and returns an action for the layer above to handle.
+    ///
+    /// Keys handled:
+    /// - j/k/G/gg/Ctrl-d/u: Navigation
+    /// - Space: Mark
+    /// - Enter: Activate
+    /// - /: Enter find mode
+    /// - n/N: Find navigation
+    /// - d: Delete (queue)
+    /// - J/K (shift): Move up/down (queue)
+    /// - Esc: Exit mode or bubble Back
+    /// - Backspace: Delete char in Find mode or bubble Back
+    pub fn handle_key<T: ListItemDisplay>(
+        &mut self,
+        key: &mut KeyEvent,
+        items: &[T],
+        ctx: &Ctx,
+    ) -> ListAction {
+        let cfg = NavConfig {
+            scrolloff: ctx.config.scrolloff,
+            wrap: ctx.config.wrap_navigation,
+        };
+
+        // Handle Find mode
+        if self.mode == InputMode::Find {
+            match key.code() {
+                KeyCode::Esc => {
+                    self.exit_find_mode(false);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                KeyCode::Enter => {
+                    self.exit_find_mode(true);
+                    key.stop_propagation();
+                    // Return activate on the current selection
+                    if let Some(idx) = self.selected() {
+                        return ListAction::Activate(idx);
+                    }
+                    return ListAction::Handled;
+                }
+                KeyCode::Backspace => {
+                    self.handle_backspace(items);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                KeyCode::Char('n') => {
+                    self.filter_next_match();
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                KeyCode::Char('N') => {
+                    self.filter_prev_match();
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                KeyCode::Char(ch) => {
+                    self.filter_push_char(items, ch);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                _ => {}
+            }
+        }
+
+        // Handle Normal mode with CommonAction
+        if let Some(action) = key.as_common_action(ctx) {
+            match action {
+                CommonAction::Down => {
+                    self.select_next(items, cfg);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::Up => {
+                    self.select_prev(items, cfg);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::Top => {
+                    self.select_first(items);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::Bottom => {
+                    self.select_last(items);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::DownHalf => {
+                    self.next_half_viewport(items, cfg);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::UpHalf => {
+                    self.prev_half_viewport(items, cfg);
+                    key.stop_propagation();
+                    return ListAction::Handled;
+                }
+                CommonAction::Select => {
+                    self.toggle_mark();
+                    key.stop_propagation();
+                    let marked: Vec<usize> = self.marked_indices().collect();
+                    return ListAction::Mark(marked);
+                }
+                CommonAction::Confirm => {
+                    key.stop_propagation();
+                    if let Some(idx) = self.selected() {
+                        return ListAction::Activate(idx);
+                    }
+                    return ListAction::Handled;
+                }
+                CommonAction::Close => {
+                    // Esc in Normal mode
+                    match self.handle_esc() {
+                        EscResult::Handled => {
+                            key.stop_propagation();
+                            return ListAction::Handled;
+                        }
+                        EscResult::BackPane => {
+                            key.stop_propagation();
+                            return ListAction::Back;
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // Handle specific keys not covered by CommonAction
+        match key.code() {
+            // Find navigation in Normal mode (vim: n/N work after search is confirmed)
+            KeyCode::Char('n') if self.filter.is_some() && self.mode == InputMode::Normal => {
+                self.filter_next_match();
+                key.stop_propagation();
+                return ListAction::Handled;
+            }
+            KeyCode::Char('N') if self.filter.is_some() && self.mode == InputMode::Normal => {
+                self.filter_prev_match();
+                key.stop_propagation();
+                return ListAction::Handled;
+            }
+            // Find mode entry
+            KeyCode::Char('/') => {
+                self.enter_find_mode(items, "");
+                key.stop_propagation();
+                return ListAction::Handled;
+            }
+            // Delete
+            KeyCode::Char('d') => {
+                key.stop_propagation();
+                let indices = self.get_marked_or_selected();
+                if !indices.is_empty() {
+                    return ListAction::Delete(indices);
+                }
+                return ListAction::Handled;
+            }
+            // Move up (Shift+K)
+            KeyCode::Char('K') => {
+                key.stop_propagation();
+                let indices = self.get_marked_or_selected();
+                if !indices.is_empty() {
+                    return ListAction::MoveUp(indices);
+                }
+                return ListAction::Handled;
+            }
+            // Move down (Shift+J)
+            KeyCode::Char('J') => {
+                key.stop_propagation();
+                let indices = self.get_marked_or_selected();
+                if !indices.is_empty() {
+                    return ListAction::MoveDown(indices);
+                }
+                return ListAction::Handled;
+            }
+            // Backspace
+            KeyCode::Backspace => {
+                match self.handle_backspace(items) {
+                    BackspaceResult::Handled => {
+                        key.stop_propagation();
+                        return ListAction::Handled;
+                    }
+                    BackspaceResult::NoEffect => {
+                        key.stop_propagation();
+                        return ListAction::Back;
+                    }
+                }
+            }
+            _ => {}
+        }
+
+        ListAction::Passthrough
+    }
+
+    /// Get marked indices, or selected index if none marked
+    pub fn get_marked_or_selected(&self) -> Vec<usize> {
+        if self.has_marked() {
+            self.marked_indices().collect()
+        } else if let Some(idx) = self.selected() {
+            vec![idx]
+        } else {
+            vec![]
+        }
+    }
+
     // ========== MULTI-SELECTION ==========
 
     /// Toggle mark on currently selected item
@@ -338,7 +666,7 @@ impl InteractiveListView {
 
     /// Start filtering with initial text
     pub fn start_filter<T: ListItemDisplay>(&mut self, items: &[T], initial: &str) {
-        let mut filter = FilterState::with_text(initial);
+        let mut filter = FindState::with_text(initial);
         filter.apply(items);
         
         // Jump to first match if any
@@ -413,8 +741,8 @@ impl InteractiveListView {
         self.filter = None;
     }
 
-    /// Get filter state reference (for advanced use)
-    pub fn filter_state(&self) -> Option<&FilterState> {
+    /// Get find state reference (for advanced use)
+    pub fn filter_state(&self) -> Option<&FindState> {
         self.filter.as_ref()
     }
 

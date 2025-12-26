@@ -2,8 +2,17 @@
 //!
 //! Uses the generic InteractiveListView for navigation/rendering and
 //! handles Queue-specific actions directly in the pane.
+//!
+//! ## New Architecture Integration
+//!
+//! This pane implements both:
+//! - Legacy `Pane` trait (for current UI system)
+//! - New `NavigatorPane` + `TabPane` traits (for Navigator system)
+//!
+//! The new traits delegate to existing methods, ensuring no functionality loss.
 
 use anyhow::Result;
+use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -26,6 +35,10 @@ use crate::{
         UiAppEvent,
         list_ops::{self, MoveDirection, QueueListBehavior},
         modals::confirm_modal::{Action, ConfirmModal},
+        panes::navigator_types::{
+            DetailId, EntityRef, InputMode, ListAction,
+            NavigatorPane, PaneAction, PaneId, TabId, TabPane,
+        },
         widgets::interactive_list_view::{InteractiveListView, NavConfig},
     },
 };
@@ -329,5 +342,175 @@ impl QueuePaneV2 {
 
             frame.render_widget(info, info_area);
         }
+    }
+}
+
+// =============================================================================
+// NEW ARCHITECTURE: NavigatorPane + TabPane Implementation
+// =============================================================================
+//
+// These implementations allow QueuePaneV2 to work with the new Navigator system
+// while preserving ALL existing functionality from the legacy Pane trait.
+
+impl NavigatorPane for QueuePaneV2 {
+    fn id(&self) -> PaneId {
+        PaneId::Tab(TabId::Queue)
+    }
+
+    fn mode(&self) -> InputMode {
+        // Derive mode from list_view state
+        if self.list_view.is_find_mode() {
+            InputMode::Find
+        } else {
+            InputMode::Normal
+        }
+    }
+
+    fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {
+        // Delegate to existing Pane::render implementation
+        Pane::render(self, frame, area, ctx)
+    }
+
+    fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<PaneAction> {
+        let queue = &ctx.queue;
+
+        // Use unified handle_key from InteractiveListView
+        let list_action = self.list_view.handle_key(key, queue, ctx);
+
+        // Translate ListAction to PaneAction
+        match list_action {
+            ListAction::Handled => {
+                ctx.render()?;
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::Activate(idx) => {
+                // Play the selected song
+                if let Some(song) = ctx.queue.get(idx).cloned() {
+                    QueueListBehavior::play_selected(self, ctx);
+                    ctx.render()?;
+                    return Ok(PaneAction::Play(song));
+                }
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::Mark(_) => {
+                ctx.render()?;
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::Delete(indices) => {
+                // Convert indices to queue IDs and delete
+                let ids: Vec<u32> = indices
+                    .iter()
+                    .filter_map(|&idx| ctx.queue.get(idx))
+                    .filter_map(|s| s.id)
+                    .collect();
+                if !ids.is_empty() {
+                    ctx.render()?;
+                    return Ok(PaneAction::QueueDelete(ids));
+                }
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::MoveUp(indices) => {
+                // Convert indices to queue IDs and move up
+                let ids: Vec<u32> = indices
+                    .iter()
+                    .filter_map(|&idx| ctx.queue.get(idx))
+                    .filter_map(|s| s.id)
+                    .collect();
+                if !ids.is_empty() {
+                    ctx.render()?;
+                    return Ok(PaneAction::QueueMoveUp(ids));
+                }
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::MoveDown(indices) => {
+                // Convert indices to queue IDs and move down
+                let ids: Vec<u32> = indices
+                    .iter()
+                    .filter_map(|&idx| ctx.queue.get(idx))
+                    .filter_map(|s| s.id)
+                    .collect();
+                if !ids.is_empty() {
+                    ctx.render()?;
+                    return Ok(PaneAction::QueueMoveDown(ids));
+                }
+                return Ok(PaneAction::Handled);
+            }
+
+            ListAction::Back => {
+                // Clear marks first if any
+                if self.list_view.has_marked() {
+                    self.list_view.clear_marks();
+                    ctx.render()?;
+                    return Ok(PaneAction::Handled);
+                }
+                return Ok(PaneAction::BackPane);
+            }
+
+            ListAction::Passthrough => {
+                // Handle queue-specific keys not covered by InteractiveListView
+            }
+        }
+
+        // Handle Right arrow - navigate to artist
+        if matches!(key.code(), KeyCode::Right) {
+            if let Some(song) = self.selected_song(ctx) {
+                if let Some(artist_id) = song.metadata.get("artist_browse_id").and_then(|v| v.first()) {
+                    let artist_name = song.artist().unwrap_or("Artist").to_string();
+                    key.stop_propagation();
+                    return Ok(PaneAction::NavigateTo(EntityRef {
+                        entity_type: DetailId::Artist,
+                        id: artist_id.clone(),
+                        name: artist_name,
+                    }));
+                }
+            }
+        }
+
+        // Delegate remaining keys to legacy handle_action for full functionality
+        // This preserves: QueueActions (DeleteAll, Shuffle, JumpToCurrent), etc.
+        Pane::handle_action(self, key, ctx)?;
+
+        Ok(PaneAction::Handled)
+    }
+
+    fn on_event(&mut self, event: &mut UiEvent, ctx: &Ctx) -> Result<()> {
+        // Handle queue changes - validate selection
+        if let UiEvent::Player = event {
+            let len = ctx.queue.len();
+            if let Some(idx) = self.list_view.selected() {
+                if idx >= len {
+                    self.list_view.select(if len > 0 { Some(len - 1) } else { None });
+                }
+            }
+        }
+        
+        // Sync to current playing song
+        if let Some((idx, _)) = ctx.find_current_song_in_queue() {
+            self.list_view.sync_to(Some(idx));
+        }
+        Ok(())
+    }
+}
+
+impl TabPane for QueuePaneV2 {
+    fn tab_id(&self) -> TabId {
+        TabId::Queue
+    }
+
+    fn current_stage(&self) -> &str {
+        "List" // Queue has single stage
+    }
+
+    fn can_go_back_stage(&self) -> bool {
+        false // No internal stages
+    }
+
+    fn go_back_stage(&mut self) -> bool {
+        false // Nothing to go back to
     }
 }
