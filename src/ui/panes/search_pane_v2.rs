@@ -316,16 +316,18 @@ impl SearchPaneV2 {
 
     // ========== BROWSE PHASE ==========
 
-    /// Handle browse results phase key events  
+    /// Handle browse results phase key events
     fn handle_browse_phase(&mut self, event: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
         use crate::ui::widgets::content_view::ContentAction;
+        use crate::domain::DetailItem;
+        use crate::domain::content::ContentType;
 
         // Use unified ContentView key handling
         match self.view.handle_key(event, ctx) {
             ContentAction::Handled => {
                 ctx.render()?;
             }
-            ContentAction::BackPane => {
+            ContentAction::Back => {
                 // If at root of content stack, return to Search phase
                 if self.view.stack_depth() <= 1 {
                     self.phase = Phase::Search;
@@ -336,53 +338,19 @@ impl SearchPaneV2 {
                 }
                 ctx.render()?;
             }
-            ContentAction::BackStage => {
-                // Not used in SearchPaneV2
+            ContentAction::Activate(item) => {
+                // PANE INTERPRETS: What does activation mean for this item?
+                self.interpret_activation(ctx, item)?;
             }
-            ContentAction::NavigateTo(entity) => {
-                // Handle internal navigation (drill down)
-                // In a full migration, Navigator would handle this.
-                // For now, we manually fetch and push to stack.
-                match entity.entity_type {
-                    DetailId::Artist => self.fetch_artist_detail(ctx, entity.id),
-                    DetailId::Album => self.fetch_album_detail(ctx, entity.id),
-                    DetailId::Playlist => self.fetch_playlist_detail(ctx, entity.id),
-                }
-            }
-            ContentAction::Play(song) => {
-                // Play single song
-                self.play_song(ctx, song);
+            ContentAction::Mark(items) => {
+                // Marks are handled internally by SectionList, nothing to do
                 ctx.render()?;
             }
-            ContentAction::PlayAll { songs, start_index } => {
-                // Play all songs (from markers or list)
-                if !songs.is_empty() {
-                    let queue_items: Vec<_> = songs.into_iter()
-                        .map(|s| Enqueue::Song { song: s })
-                        .collect();
-                    
-                    let current_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
-                    
-                    crate::backends::BackendDispatcher::resolve_and_enqueue(
-                        ctx,
-                        queue_items,
-                        crate::config::keys::actions::Position::Replace,
-                        crate::config::keys::actions::AutoplayKind::First,
-                        current_idx,
-                        Some(start_index),
-                    );
-                    ctx.render()?;
-                }
-            }
-            ContentAction::Enqueue(songs) => {
-                let queue_items: Vec<_> = songs.into_iter()
-                    .map(|s| Enqueue::Song { song: s })
-                    .collect();
-                self.add_to_queue(ctx, queue_items, false);
-                ctx.render()?;
+            ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
+                // Move/Delete not applicable in SearchPane - search results are read-only
             }
         }
-        
+
         // Handle additional actions not covered by ContentView (e.g., 'a' for enqueue)
         if let Some(action) = event.as_common_action(ctx) {
             match action {
@@ -405,8 +373,121 @@ impl SearchPaneV2 {
                 _ => {}
             }
         }
-        
+
         Ok(())
+    }
+
+    /// Interpret what activation means for a DetailItem in SearchPane.
+    ///
+    /// - Song: Play it (with marked songs if any)
+    /// - Ref (Artist/Album/Playlist): Navigate to detail view
+    /// - Header: Do nothing
+    fn interpret_activation(&mut self, ctx: &mut Ctx, item: DetailItem) -> Result<()> {
+        use crate::domain::content::ContentType;
+
+        match item {
+            DetailItem::Song(song) => {
+                // Check for marked items first
+                if let Some(level) = self.view.current() {
+                    if level.section_list.has_marked() {
+                        let songs: Vec<_> = level
+                            .section_list
+                            .marked_items()
+                            .iter()
+                            .filter_map(|item| item.as_song().cloned())
+                            .collect();
+                        if !songs.is_empty() {
+                            let start_index = songs
+                                .iter()
+                                .position(|s| s.uri == song.uri)
+                                .unwrap_or(0);
+                            self.play_all_songs(ctx, songs, start_index);
+                            ctx.render()?;
+                            return Ok(());
+                        }
+                    }
+                }
+                // Single song play
+                self.play_song(ctx, song);
+                ctx.render()?;
+            }
+            DetailItem::Ref(content_ref) => {
+                // Navigate to entity detail
+                match content_ref.content_type {
+                    ContentType::Artist => self.fetch_artist_detail(ctx, content_ref.id),
+                    ContentType::Album => self.fetch_album_detail(ctx, content_ref.id),
+                    ContentType::Playlist => self.fetch_playlist_detail(ctx, content_ref.id),
+                    _ => {} // Not navigable
+                }
+            }
+            DetailItem::Header { .. } => {
+                // Headers are not activatable
+            }
+        }
+        Ok(())
+    }
+
+    /// Play all songs starting from index
+    fn play_all_songs(&self, ctx: &Ctx, songs: Vec<Song>, start_index: usize) {
+        if !songs.is_empty() {
+            let queue_items: Vec<_> = songs.into_iter()
+                .map(|s| Enqueue::Song { song: s })
+                .collect();
+
+            let current_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
+
+            crate::backends::BackendDispatcher::resolve_and_enqueue(
+                ctx,
+                queue_items,
+                crate::config::keys::actions::Position::Replace,
+                crate::config::keys::actions::AutoplayKind::First,
+                current_idx,
+                Some(start_index),
+            );
+        }
+    }
+
+    /// Convert a DetailItem to a PaneAction based on SearchPane context.
+    fn action_for_item(&self, item: DetailItem) -> PaneAction {
+        use crate::domain::content::ContentType;
+
+        match item {
+            DetailItem::Song(song) => {
+                // Check for marked items
+                if let Some(level) = self.view.current() {
+                    if level.section_list.has_marked() {
+                        let songs: Vec<_> = level
+                            .section_list
+                            .marked_items()
+                            .iter()
+                            .filter_map(|i| i.as_song().cloned())
+                            .collect();
+                        if !songs.is_empty() {
+                            let start_index = songs
+                                .iter()
+                                .position(|s| s.uri == song.uri)
+                                .unwrap_or(0);
+                            return PaneAction::PlayAll { songs, start_index };
+                        }
+                    }
+                }
+                PaneAction::Play(song)
+            }
+            DetailItem::Ref(content_ref) => {
+                let entity_type = match content_ref.content_type {
+                    ContentType::Artist => DetailId::Artist,
+                    ContentType::Album => DetailId::Album,
+                    ContentType::Playlist => DetailId::Playlist,
+                    _ => return PaneAction::Handled,
+                };
+                PaneAction::NavigateTo(EntityRef {
+                    entity_type,
+                    id: content_ref.id,
+                    name: content_ref.name,
+                })
+            }
+            DetailItem::Header { .. } => PaneAction::Handled,
+        }
     }
 
     /// Clear queue, add single song, and play it (YouTube Music-like behavior)
@@ -835,7 +916,9 @@ impl NavigatorPane for SearchPaneV2 {
                     Phase::BrowseResults => {
                         // Use unified ContentView key handling
                         use crate::ui::widgets::content_view::ContentAction;
-                        
+                        use crate::domain::DetailItem;
+                        use crate::domain::content::ContentType;
+
                         // Handle Esc specifically for phase transition
                         if matches!(key.code(), KeyCode::Esc) {
                             // Try to let ContentView handle it first (clear filter)
@@ -844,7 +927,7 @@ impl NavigatorPane for SearchPaneV2 {
                                     ctx.render()?;
                                     return Ok(PaneAction::Handled);
                                 }
-                                ContentAction::BackPane => {
+                                ContentAction::Back => {
                                     // At root of content stack - return to Search phase
                                     if self.view.stack_depth() <= 1 {
                                         self.phase = Phase::Search;
@@ -867,7 +950,7 @@ impl NavigatorPane for SearchPaneV2 {
                                 ctx.render()?;
                                 return Ok(PaneAction::Handled);
                             }
-                            ContentAction::BackPane => {
+                            ContentAction::Back => {
                                 // If at root of content stack, return to Search phase
                                 if self.view.stack_depth() <= 1 {
                                     self.phase = Phase::Search;
@@ -880,24 +963,17 @@ impl NavigatorPane for SearchPaneV2 {
                                     return Ok(PaneAction::Handled);
                                 }
                             }
-                            ContentAction::BackStage => {
-                                // Go back to search phase
-                                self.phase = Phase::Search;
+                            ContentAction::Activate(item) => {
+                                // Interpret activation in pane context
+                                return Ok(self.action_for_item(item));
+                            }
+                            ContentAction::Mark(_) => {
                                 ctx.render()?;
                                 return Ok(PaneAction::Handled);
                             }
-                            ContentAction::NavigateTo(entity) => {
-                                // Return NavigateTo action for Navigator to handle
-                                return Ok(PaneAction::NavigateTo(entity));
-                            }
-                            ContentAction::Play(song) => {
-                                return Ok(PaneAction::Play(song));
-                            }
-                            ContentAction::PlayAll { songs, start_index } => {
-                                return Ok(PaneAction::PlayAll { songs, start_index });
-                            }
-                            ContentAction::Enqueue(songs) => {
-                                return Ok(PaneAction::Enqueue(songs));
+                            ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
+                                // Not applicable in SearchPane
+                                return Ok(PaneAction::Handled);
                             }
                         }
                     }

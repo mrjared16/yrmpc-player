@@ -13,10 +13,11 @@ use ratatui::{Frame, prelude::Rect};
 
 use crate::{
     ctx::Ctx,
-    domain::ArtistContent,
+    domain::{ArtistContent, DetailItem, Song},
+    domain::content::ContentType,
     shared::key_event::KeyEvent,
     ui::panes::navigator_types::{
-        DetailId, DetailPane, EntityContent, InputMode, NavigatorPane, PaneAction, PaneId,
+        ContentAction, DetailId, DetailPane, EntityContent, EntityRef, InputMode, NavigatorPane, PaneAction, PaneId,
     },
     ui::widgets::content_view::ContentView,
 };
@@ -61,9 +62,56 @@ impl NavigatorPane for ArtistDetailPane {
     }
 
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<PaneAction> {
-        // Delegate entirely to ContentView - it handles all key processing
-        // and returns ContentAction which converts to PaneAction
-        Ok(self.view.handle_key(key, ctx).into())
+        Ok(match self.view.handle_key(key, ctx) {
+            ContentAction::Handled => PaneAction::Handled,
+            ContentAction::Back => PaneAction::BackPane,
+            ContentAction::Activate(item) => self.interpret_activation(item),
+            ContentAction::Mark(_) => PaneAction::Handled,
+            ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
+                PaneAction::Handled
+            }
+        })
+    }
+}
+
+impl ArtistDetailPane {
+    fn interpret_activation(&self, item: DetailItem) -> PaneAction {
+        match item {
+            DetailItem::Song(song) => {
+                if let Some(level) = self.view.current() {
+                    if level.section_list.has_marked() {
+                        let songs: Vec<Song> = level
+                            .section_list
+                            .marked_items()
+                            .iter()
+                            .filter_map(|i| i.as_song().cloned())
+                            .collect();
+                        if !songs.is_empty() {
+                            let start_index = songs
+                                .iter()
+                                .position(|s| s.uri == song.uri)
+                                .unwrap_or(0);
+                            return PaneAction::PlayAll { songs, start_index };
+                        }
+                    }
+                }
+                PaneAction::Play(song)
+            }
+            DetailItem::Ref(content_ref) => {
+                let entity_type = match content_ref.content_type {
+                    ContentType::Artist => DetailId::Artist,
+                    ContentType::Album => DetailId::Album,
+                    ContentType::Playlist => DetailId::Playlist,
+                    _ => return PaneAction::Handled,
+                };
+                PaneAction::NavigateTo(EntityRef {
+                    entity_type,
+                    id: content_ref.id,
+                    name: content_ref.name,
+                })
+            }
+            DetailItem::Header { .. } => PaneAction::Handled,
+        }
     }
 }
 

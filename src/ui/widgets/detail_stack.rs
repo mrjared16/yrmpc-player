@@ -317,13 +317,40 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
         }
 
         ContentDetails::Queue(queue) => {
-            // Queue: single flat section of songs (no header needed)
+            // Queue: optionally split into "Now Playing" and "Up Next" sections
             if !queue.songs.is_empty() {
-                sections.push(SectionView::new(
-                    SectionKey::Stats, // Placeholder
-                    "", // No section title for queue
-                    queue.songs.iter().cloned().map(DetailItem::Song).collect(),
-                ));
+                if let Some(current_idx) = queue.current_index {
+                    if current_idx < queue.songs.len() {
+                        // Now Playing: single current song
+                        sections.push(SectionView::new(
+                            SectionKey::Stats, // Placeholder for NowPlaying
+                            "Now Playing",
+                            vec![DetailItem::Song(queue.songs[current_idx].clone())],
+                        ));
+
+                        // Up Next: songs after current
+                        let up_next: Vec<DetailItem> = queue.songs
+                            .iter()
+                            .skip(current_idx + 1)
+                            .cloned()
+                            .map(DetailItem::Song)
+                            .collect();
+                        if !up_next.is_empty() {
+                            sections.push(SectionView::new(
+                                SectionKey::Actions, // Placeholder for UpNext
+                                "Up Next",
+                                up_next,
+                            ));
+                        }
+                    }
+                } else {
+                    // No current song, show all as flat list
+                    sections.push(SectionView::new(
+                        SectionKey::Stats,
+                        "",
+                        queue.songs.iter().cloned().map(DetailItem::Song).collect(),
+                    ));
+                }
             }
         }
     }

@@ -26,16 +26,16 @@
 //! }
 //! ```
 
-use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
 use crate::ctx::Ctx;
-use crate::domain::{DetailItem, Song, ContentViewable};
-use crate::domain::content::ContentType;
+use crate::domain::ContentViewable;
 use crate::shared::key_event::KeyEvent;
-use crate::ui::panes::navigator_types::{DetailId, EntityRef, InputMode, PaneAction, SectionAction};
-use crate::ui::widgets::detail_stack::{build_sections, SectionView};
+use crate::ui::widgets::detail_stack::build_sections;
 use crate::ui::widgets::section_list::SectionList;
+
+// Re-export ContentAction from navigator_types for backwards compatibility
+pub use crate::ui::panes::navigator_types::{ContentAction, InputMode, SectionAction};
 
 // =============================================================================
 // CONTENT LEVEL
@@ -63,47 +63,6 @@ impl<C: ContentViewable> ContentLevel<C> {
         Self {
             content,
             section_list,
-        }
-    }
-}
-
-// =============================================================================
-// CONTENT ACTION
-// =============================================================================
-
-/// Action returned from ContentView key handling.
-///
-/// These are translated from SectionAction and then to PaneAction by the pane.
-#[derive(Debug, Clone)]
-pub enum ContentAction {
-    /// Key was handled internally
-    Handled,
-    /// Navigate to an entity (artist, album, playlist)
-    NavigateTo(EntityRef),
-    /// Go back to previous pane (Esc with nothing to clear, stack at bottom)
-    BackPane,
-    /// Go back to previous stage (for TabPanes with stages)
-    BackStage,
-    /// Play a single song
-    Play(Song),
-    /// Play all songs starting from index
-    PlayAll { songs: Vec<Song>, start_index: usize },
-    /// Add songs to queue
-    Enqueue(Vec<Song>),
-}
-
-impl From<ContentAction> for PaneAction {
-    fn from(action: ContentAction) -> Self {
-        match action {
-            ContentAction::Handled => PaneAction::Handled,
-            ContentAction::NavigateTo(entity) => PaneAction::NavigateTo(entity),
-            ContentAction::BackPane => PaneAction::BackPane,
-            ContentAction::BackStage => PaneAction::Handled, // Pane handles stage transition
-            ContentAction::Play(song) => PaneAction::Play(song),
-            ContentAction::PlayAll { songs, start_index } => {
-                PaneAction::PlayAll { songs, start_index }
-            }
-            ContentAction::Enqueue(songs) => PaneAction::Enqueue(songs),
         }
     }
 }
@@ -213,79 +172,37 @@ impl<C: ContentViewable> ContentView<C> {
 
     /// Handle a key event.
     ///
-    /// Delegates to SectionList and translates the result to ContentAction.
+    /// Delegates to SectionList and BUBBLES the result to pane.
+    /// Per ADR: ContentView does NOT interpret actions - pane decides what Activate means.
     pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &Ctx) -> ContentAction {
         let Some(level) = self.current_mut() else {
-            return ContentAction::BackPane;
+            return ContentAction::Back;
         };
 
         match level.section_list.handle_key(key, ctx) {
             SectionAction::Handled => ContentAction::Handled,
 
-            SectionAction::Activate(item) => self.translate_activate(item),
+            // BUBBLE: Let pane decide what activation means
+            SectionAction::Activate(item) => ContentAction::Activate(item),
 
             SectionAction::Back => {
                 // Try to pop stack first
                 if self.pop() {
                     ContentAction::Handled
                 } else {
-                    ContentAction::BackPane
+                    ContentAction::Back
                 }
             }
 
-            SectionAction::Mark(_) => ContentAction::Handled,
+            // BUBBLE: Let pane handle marked items
+            SectionAction::Mark(items) => ContentAction::Mark(items),
 
-            SectionAction::MoveUp(_) => ContentAction::Handled, // Not used in DetailPanes
-
-            SectionAction::MoveDown(_) => ContentAction::Handled, // Not used in DetailPanes
-
-            SectionAction::Delete(_) => ContentAction::Handled, // Not used in DetailPanes
+            // BUBBLE: Let pane handle move/delete (Queue, Library, etc.)
+            SectionAction::MoveUp(items) => ContentAction::MoveUp(items),
+            SectionAction::MoveDown(items) => ContentAction::MoveDown(items),
+            SectionAction::Delete(items) => ContentAction::Delete(items),
 
             SectionAction::Passthrough => ContentAction::Handled,
-        }
-    }
-
-    /// Translate a selected item to a ContentAction.
-    fn translate_activate(&self, item: DetailItem) -> ContentAction {
-        match item {
-            DetailItem::Song(song) => {
-                // Check for marked items
-                if let Some(level) = self.current() {
-                    if level.section_list.has_marked() {
-                        let songs: Vec<_> = level
-                            .section_list
-                            .marked_items()
-                            .iter()
-                            .filter_map(|item| item.as_song().cloned())
-                            .collect();
-                        if !songs.is_empty() {
-                            let start_index = songs
-                                .iter()
-                                .position(|s| s.uri == song.uri)
-                                .unwrap_or(0);
-                            return ContentAction::PlayAll { songs, start_index };
-                        }
-                    }
-                }
-                ContentAction::Play(song)
-            }
-
-            DetailItem::Ref(content_ref) => {
-                let entity_type = match content_ref.content_type {
-                    ContentType::Artist => DetailId::Artist,
-                    ContentType::Album => DetailId::Album,
-                    ContentType::Playlist => DetailId::Playlist,
-                    _ => return ContentAction::Handled, // Not navigable
-                };
-
-                ContentAction::NavigateTo(EntityRef {
-                    entity_type,
-                    id: content_ref.id,
-                    name: content_ref.name,
-                })
-            }
-
-            DetailItem::Header { .. } => ContentAction::Handled,
         }
     }
 

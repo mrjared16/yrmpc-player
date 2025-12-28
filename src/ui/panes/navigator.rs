@@ -34,7 +34,7 @@ use super::UiEvent;
 
 use super::navigator_types::{
     DetailId, DetailPane, EntityContent, EntityRef, InputMode,
-    NavigatorPane, PaneAction, PaneId, TabId, TabPane,
+    MoveDirection, NavigatorPane, PaneAction, PaneId, TabId, TabPane,
 };
 use super::artist_detail::ArtistDetailPane;
 use super::album_detail::AlbumDetailPane;
@@ -321,11 +321,16 @@ impl Navigator {
             PaneAction::QueueDelete(ids) => {
                 self.execute_queue_delete(ctx, ids)?;
             }
+            #[allow(deprecated)]
             PaneAction::QueueMoveUp(ids) => {
-                self.execute_queue_move(ctx, ids, -1)?;
+                self.execute_queue_move(ctx, ids, MoveDirection::Up)?;
             }
+            #[allow(deprecated)]
             PaneAction::QueueMoveDown(ids) => {
-                self.execute_queue_move(ctx, ids, 1)?;
+                self.execute_queue_move(ctx, ids, MoveDirection::Down)?;
+            }
+            PaneAction::QueueMove { ids, direction } => {
+                self.execute_queue_move(ctx, ids, direction)?;
             }
             PaneAction::ShowModal(_kind) => {
                 // TODO: Implement modal display
@@ -401,55 +406,85 @@ impl Navigator {
         Ok(())
     }
 
-    /// Execute queue move action.
-    /// direction: -1 for up, 1 for down
-    fn execute_queue_move(&mut self, ctx: &mut Ctx, ids: Vec<u32>, direction: i32) -> Result<()> {
-        log::info!("Navigator: Moving {} queue items by {}", ids.len(), direction);
-        
-        // We need to look up the current position of each ID in the queue
-        // The queue is accessible via ctx.queue
+    /// Execute queue move action with unified direction.
+    ///
+    /// Optimized for the common case where selected items are neighbors (contiguous block).
+    /// Instead of moving each item individually, we move the block as a unit by:
+    /// - Moving up: move the item above block to after block
+    /// - Moving down: move the item below block to before block
+    fn execute_queue_move(&mut self, ctx: &mut Ctx, ids: Vec<u32>, direction: MoveDirection) -> Result<()> {
+        if ids.is_empty() {
+            return Ok(());
+        }
+
+        log::info!("Navigator: Moving {} queue items {:?}", ids.len(), direction);
+
         let queue = &ctx.queue;
-        
-        // Build a list of (id, current_position) pairs
-        let mut id_positions: Vec<(u32, usize)> = ids
+        let queue_len = queue.len();
+
+        // Find positions of all selected items
+        let mut positions: Vec<usize> = ids
             .iter()
             .filter_map(|&id| {
                 queue.iter()
                     .position(|song| song.id == Some(id))
-                    .map(|pos| (id, pos))
             })
             .collect();
-        
-        // Sort by position for proper move ordering
-        // When moving up, process from lowest position first
-        // When moving down, process from highest position first
-        if direction < 0 {
-            id_positions.sort_by_key(|(_id, pos)| *pos);
-        } else {
-            id_positions.sort_by_key(|(_id, pos)| std::cmp::Reverse(*pos));
+
+        if positions.is_empty() {
+            log::warn!("Navigator: No valid positions found for move");
+            return Ok(());
         }
-        
-        // Execute moves
-        for (id, current_pos) in id_positions {
-            // Calculate new position
-            let new_pos = if direction < 0 {
-                current_pos.saturating_sub(1)
+
+        // Sort to find the block boundaries
+        positions.sort();
+
+        let first_pos = positions[0];
+        let last_pos = positions[positions.len() - 1];
+
+        // Check if at boundary
+        if direction == MoveDirection::Up && first_pos == 0 {
+            log::debug!("Navigator: Already at top, cannot move up");
+            return Ok(());
+        }
+        if direction == MoveDirection::Down && last_pos >= queue_len.saturating_sub(1) {
+            log::debug!("Navigator: Already at bottom, cannot move down");
+            return Ok(());
+        }
+
+        // Get the ID and target position for the single move command
+        // For neighbors, moving the block requires just one operation:
+        // - Move up: move item above the block to after the block
+        // - Move down: move item below the block to before the block
+        let (move_id, target_pos) = if direction == MoveDirection::Up {
+            // Moving up: take the item ABOVE the block and move it BELOW the block
+            let above_pos = first_pos - 1;
+            let above_id = queue.get(above_pos).and_then(|s| s.id);
+            if let Some(id) = above_id {
+                (id, last_pos as u32)  // Move to last position of block
             } else {
-                (current_pos + 1).min(queue.len().saturating_sub(1))
-            };
-            
-            // Skip if already at boundary
-            if new_pos == current_pos {
-                continue;
+                return Ok(());
             }
-            
-            ctx.command(move |client| {
-                #[allow(deprecated)]
-                client.move_id(id, new_pos as u32)?;
-                Ok(())
-            });
-        }
-        
+        } else {
+            // Moving down: take the item BELOW the block and move it ABOVE the block
+            let below_pos = last_pos + 1;
+            let below_id = queue.get(below_pos).and_then(|s| s.id);
+            if let Some(id) = below_id {
+                (id, first_pos as u32)  // Move to first position of block
+            } else {
+                return Ok(());
+            }
+        };
+
+        log::debug!("Navigator: Block move - moving id {} to position {}", move_id, target_pos);
+
+        // Single command for the entire block move
+        ctx.command(move |client| {
+            #[allow(deprecated)]
+            client.move_id(move_id, target_pos)?;
+            Ok(())
+        });
+
         ctx.render()?;
         Ok(())
     }

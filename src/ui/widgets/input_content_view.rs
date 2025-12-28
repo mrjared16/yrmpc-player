@@ -265,15 +265,10 @@ impl<I: InputZone, C: ContentViewable> InputContentView<I, C> {
 
         // Delegate to content view
         let action = self.content.handle_key(key, ctx);
-        
+
         match &action {
-            ContentAction::BackPane => {
+            ContentAction::Back => {
                 // Go back to input zone first
-                self.focus = FocusZone::Input;
-                InputContentAction::Handled
-            }
-            ContentAction::BackStage => {
-                // Go back to input zone
                 self.focus = FocusZone::Input;
                 InputContentAction::Handled
             }

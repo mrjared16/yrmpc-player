@@ -19,6 +19,9 @@
 use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
+// Re-export MoveDirection for unified queue move operations
+pub use crate::ui::list_ops::MoveDirection;
+
 use crate::{
     ctx::Ctx,
     domain::Song,
@@ -189,11 +192,16 @@ pub enum PaneAction {
     /// Queue: Delete items by queue ID
     QueueDelete(Vec<u32>),
     
-    /// Queue: Move items up by one position
+    /// Queue: Move items up by one position (deprecated, use QueueMove)
+    #[deprecated(note = "Use QueueMove with MoveDirection::Up")]
     QueueMoveUp(Vec<u32>),
     
-    /// Queue: Move items down by one position
+    /// Queue: Move items down by one position (deprecated, use QueueMove)
+    #[deprecated(note = "Use QueueMove with MoveDirection::Down")]
     QueueMoveDown(Vec<u32>),
+    
+    /// Queue: Move items in specified direction (unified facade)
+    QueueMove { ids: Vec<u32>, direction: MoveDirection },
     
     /// Show a modal
     ShowModal(ModalKind),

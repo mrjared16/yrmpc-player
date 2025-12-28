@@ -288,13 +288,15 @@ pub struct SearchResultsContent {
 /// Queue content for displaying the play queue in a ContentView.
 ///
 /// Provides a ContentViewable wrapper around a song list for unified
-/// handling by ContentView. Queue is a flat list (no sections).
+/// handling by ContentView. Includes current_index for "Now Playing" section.
 #[derive(Debug, Clone, Default)]
 pub struct QueueContent {
     /// Songs in the queue
     pub songs: Vec<Song>,
     /// Display title
     pub title: String,
+    /// Index of currently playing song (if any)
+    pub current_index: Option<usize>,
 }
 
 impl SearchResultsContent {
@@ -312,19 +314,21 @@ impl SearchResultsContent {
 
 impl QueueContent {
     /// Create new queue content.
-    pub fn new(songs: Vec<Song>) -> Self {
+    pub fn new(songs: Vec<Song>, current_index: Option<usize>) -> Self {
         let count = songs.len();
         Self {
             songs,
             title: format!("Queue ({} items)", count),
+            current_index,
         }
     }
 
     /// Create with a custom title.
-    pub fn with_title(songs: Vec<Song>, title: impl Into<String>) -> Self {
+    pub fn with_title(songs: Vec<Song>, title: impl Into<String>, current_index: Option<usize>) -> Self {
         Self {
             songs,
             title: title.into(),
+            current_index,
         }
     }
 }
