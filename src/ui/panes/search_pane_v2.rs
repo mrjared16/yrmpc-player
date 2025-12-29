@@ -44,7 +44,7 @@ use crate::{
         },
         widgets::{
             content_view::ContentView,
-            interactive_list_view::NavConfig,
+            selectable_list::NavConfig,
             detail_stack::flatten_content,
         },
     },
@@ -340,7 +340,7 @@ impl SearchPaneV2 {
             }
             ContentAction::Activate(item) => {
                 // PANE INTERPRETS: What does activation mean for this item?
-                self.interpret_activation(ctx, item)?;
+                self.resolve_action(ctx, item)?;
             }
             ContentAction::Mark(items) => {
                 // Marks are handled internally by SectionList, nothing to do
@@ -382,7 +382,7 @@ impl SearchPaneV2 {
     /// - Song: Play it (with marked songs if any)
     /// - Ref (Artist/Album/Playlist): Navigate to detail view
     /// - Header: Do nothing
-    fn interpret_activation(&mut self, ctx: &mut Ctx, item: DetailItem) -> Result<()> {
+    fn resolve_action(&mut self, ctx: &mut Ctx, item: DetailItem) -> Result<()> {
         use crate::domain::content::ContentType;
 
         match item {

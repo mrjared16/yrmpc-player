@@ -142,7 +142,7 @@ impl QueuePaneV2 {
     }
 
     /// Interpret what activation means for a DetailItem in QueuePane
-    fn interpret_activation(&self, item: DetailItem, ctx: &Ctx) -> PaneAction {
+    fn resolve_action(&self, item: DetailItem, ctx: &Ctx) -> PaneAction {
         match item {
             DetailItem::Song(song) => {
                 // Check for marked items
@@ -213,7 +213,7 @@ impl QueuePaneV2 {
             QueueActions::Play => {
                 if let Some(level) = self.view.current() {
                     if let Some(item) = level.section_list.selected_item() {
-                        return Ok(self.interpret_activation(item.clone(), ctx));
+                        return Ok(self.resolve_action(item.clone(), ctx));
                     }
                 }
                 Ok(PaneAction::Handled)
@@ -368,7 +368,7 @@ impl Pane for QueuePaneV2 {
         let action = self.view.handle_key(event, ctx);
         match action {
             ContentAction::Activate(item) => {
-                let pane_action = self.interpret_activation(item, ctx);
+                let pane_action = self.resolve_action(item, ctx);
                 // For legacy Pane, we just trigger the action directly
                 if let PaneAction::Play(song) = pane_action {
                     if let Some(id) = song.id {
@@ -455,7 +455,7 @@ impl NavigatorPane for QueuePaneV2 {
                 Ok(PaneAction::BackPane)
             }
             ContentAction::Activate(item) => {
-                let pane_action = self.interpret_activation(item, ctx);
+                let pane_action = self.resolve_action(item, ctx);
                 ctx.render()?;
                 Ok(pane_action)
             }

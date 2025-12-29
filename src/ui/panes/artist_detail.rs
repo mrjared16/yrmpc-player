@@ -13,7 +13,7 @@ use ratatui::{Frame, prelude::Rect};
 
 use crate::{
     ctx::Ctx,
-    domain::{ArtistContent, DetailItem, Song},
+    domain::{ArtistContent, DetailItem},
     domain::content::ContentType,
     shared::key_event::KeyEvent,
     ui::panes::navigator_types::{
@@ -65,7 +65,7 @@ impl NavigatorPane for ArtistDetailPane {
         Ok(match self.view.handle_key(key, ctx) {
             ContentAction::Handled => PaneAction::Handled,
             ContentAction::Back => PaneAction::BackPane,
-            ContentAction::Activate(item) => self.interpret_activation(item),
+            ContentAction::Activate(item) => self.resolve_action(item),
             ContentAction::Mark(_) => PaneAction::Handled,
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 PaneAction::Handled
@@ -75,27 +75,26 @@ impl NavigatorPane for ArtistDetailPane {
 }
 
 impl ArtistDetailPane {
-    fn interpret_activation(&self, item: DetailItem) -> PaneAction {
+    /// Interpret what activation means for a DetailItem in ArtistDetailPane.
+    ///
+    /// Uses Selection to handle marked-items-vs-current logic uniformly.
+    fn resolve_action(&self, item: DetailItem) -> PaneAction {
         match item {
             DetailItem::Song(song) => {
-                if let Some(level) = self.view.current() {
-                    if level.section_list.has_marked() {
-                        let songs: Vec<Song> = level
-                            .section_list
-                            .marked_items()
-                            .iter()
-                            .filter_map(|i| i.as_song().cloned())
-                            .collect();
-                        if !songs.is_empty() {
-                            let start_index = songs
-                                .iter()
-                                .position(|s| s.uri == song.uri)
-                                .unwrap_or(0);
-                            return PaneAction::PlayAll { songs, start_index };
-                        }
-                    }
+                // Use Selection to get marked items or fall back to current
+                let selection = self.view.get_selection();
+                let songs = selection.songs_cloned();
+
+                if songs.len() > 1 {
+                    // Multiple songs selected - play all starting from activated song
+                    let start_index = selection
+                        .find_song_index(&song.uri)
+                        .unwrap_or(0);
+                    PaneAction::PlayAll { songs, start_index }
+                } else {
+                    // Single song - play it
+                    PaneAction::Play(song)
                 }
-                PaneAction::Play(song)
             }
             DetailItem::Ref(content_ref) => {
                 let entity_type = match content_ref.content_type {
@@ -110,6 +109,7 @@ impl ArtistDetailPane {
                     name: content_ref.name,
                 })
             }
+            #[allow(deprecated)]
             DetailItem::Header { .. } => PaneAction::Handled,
         }
     }

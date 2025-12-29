@@ -12,7 +12,7 @@
 //! - Preserved selection when leaving and re-entering
 //! - Breadcrumb path display
 
-use super::interactive_list_view::InteractiveListView;
+use super::selectable_list::SelectableList;
 
 /// A single level in the navigation stack
 #[derive(Debug, Clone)]
@@ -20,7 +20,7 @@ pub struct NavLevel<T> {
     /// Items at this level
     pub items: Vec<T>,
     /// View state (selection, marks, filter, etc.)
-    pub view: InteractiveListView,
+    pub view: SelectableList,
     /// Path segment for breadcrumb display (e.g., "Albums", "Artist Name")
     pub path_segment: String,
 }
@@ -28,7 +28,7 @@ pub struct NavLevel<T> {
 impl<T> NavLevel<T> {
     /// Create a new navigation level
     pub fn new(items: Vec<T>, path_segment: String) -> Self {
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         // Select first item if available
         if !items.is_empty() {
             view.select(Some(0));
@@ -148,12 +148,12 @@ impl<T> NavStack<T> {
     }
 
     /// Get current view reference
-    pub fn current_view(&self) -> Option<&InteractiveListView> {
+    pub fn current_view(&self) -> Option<&SelectableList> {
         self.current().map(|l| &l.view)
     }
 
     /// Get current view mutable reference
-    pub fn current_view_mut(&mut self) -> Option<&mut InteractiveListView> {
+    pub fn current_view_mut(&mut self) -> Option<&mut SelectableList> {
         self.current_mut().map(|l| &mut l.view)
     }
 

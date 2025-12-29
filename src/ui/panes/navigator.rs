@@ -26,7 +26,9 @@ use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
 use crate::{
+    actions::{Intent, Selection},
     ctx::Ctx,
+    domain::DetailItem,
     shared::key_event::KeyEvent,
 };
 
@@ -67,6 +69,9 @@ pub struct Navigator {
 
     /// Maximum history depth
     max_history: usize,
+
+    /// Action router for Intent dispatch (reused, not recreated)
+    action_dispatcher: crate::actions::ActionDispatcher,
 }
 
 impl std::fmt::Debug for Navigator {
@@ -92,7 +97,22 @@ impl Navigator {
             active: PaneId::Tab(TabId::Search),
             history: Vec::new(),
             max_history: 10,
+            action_dispatcher: Self::create_action_dispatcher(),
         }
+    }
+
+    /// Create the action dispatcher with default handlers.
+    fn create_action_dispatcher() -> crate::actions::ActionDispatcher {
+        use crate::actions::{
+            ActionDispatcher,
+            PlayHandler, QueueHandler, SaveHandler, TogglePlaybackHandler,
+        };
+
+        ActionDispatcher::new()
+            .with_handler(Box::new(TogglePlaybackHandler::new()))  // Higher priority
+            .with_handler(Box::new(PlayHandler::new()))
+            .with_handler(Box::new(QueueHandler::new()))
+            .with_handler(Box::new(SaveHandler::new()))
     }
 
     // =========================================================================
@@ -309,14 +329,22 @@ impl Navigator {
                 ctx.render()?;
             }
             PaneAction::Play(song) => {
-                // Execute play action via context
-                self.execute_play(ctx, vec![song], 0)?;
+                // Convert to Intent and route through dispatcher
+                let items = vec![DetailItem::Song(song)];
+                let intent = Intent::play(items);
+                self.execute_intent(ctx, intent)?;
             }
-            PaneAction::PlayAll { songs, start_index } => {
-                self.execute_play(ctx, songs, start_index)?;
+            PaneAction::PlayAll { songs, start_index: _ } => {
+                // Convert songs to DetailItems and route through Intent
+                let items: Vec<DetailItem> = songs.into_iter().map(DetailItem::Song).collect();
+                let intent = Intent::play(items);
+                self.execute_intent(ctx, intent)?;
             }
             PaneAction::Enqueue(songs) => {
-                self.execute_enqueue(ctx, songs)?;
+                // Convert to Intent and route through dispatcher
+                let items: Vec<DetailItem> = songs.into_iter().map(DetailItem::Song).collect();
+                let intent = Intent::add_to_queue(items);
+                self.execute_intent(ctx, intent)?;
             }
             PaneAction::QueueDelete(ids) => {
                 self.execute_queue_delete(ctx, ids)?;
@@ -340,53 +368,11 @@ impl Navigator {
                 // TODO: Implement search action
                 log::info!("Navigator: Search requested: {}", query);
             }
+            PaneAction::Execute(intent) => {
+                self.execute_intent(ctx, intent)?;
+            }
         }
 
-        Ok(())
-    }
-
-    /// Execute play action - replace queue and start playback.
-    fn execute_play(&mut self, ctx: &mut Ctx, songs: Vec<crate::domain::Song>, start_index: usize) -> Result<()> {
-        log::info!("Navigator: Playing {} songs starting at index {}", songs.len(), start_index);
-        
-        // Use ctx.command to execute synchronously on the backend
-        ctx.command(move |client| {
-            // Clear existing queue
-            #[allow(deprecated)]
-            client.clear()?;
-            
-            // Add all songs
-            for song in &songs {
-                #[allow(deprecated)]
-                client.add_song(song, None)?;
-            }
-            
-            // Start playback at start_index
-            if !songs.is_empty() {
-                #[allow(deprecated)]
-                client.play_pos(start_index)?;
-            }
-            
-            Ok(())
-        });
-        
-        ctx.render()?;
-        Ok(())
-    }
-
-    /// Execute enqueue action - add songs to queue without clearing.
-    fn execute_enqueue(&mut self, ctx: &mut Ctx, songs: Vec<crate::domain::Song>) -> Result<()> {
-        log::info!("Navigator: Enqueueing {} songs", songs.len());
-        
-        ctx.command(move |client| {
-            for song in &songs {
-                #[allow(deprecated)]
-                client.add_song(song, None)?;
-            }
-            Ok(())
-        });
-        
-        ctx.render()?;
         Ok(())
     }
 
@@ -484,6 +470,29 @@ impl Navigator {
             client.move_id(move_id, target_pos)?;
             Ok(())
         });
+
+        ctx.render()?;
+        Ok(())
+    }
+
+    /// Execute an intent through the action system.
+    fn execute_intent(&mut self, ctx: &mut Ctx, intent: crate::actions::intent::Intent) -> Result<()> {
+        use crate::actions::HandleResult;
+
+        log::info!("Navigator: Executing intent {:?}", intent.action);
+
+        // Dispatch to stored dispatcher (reused, not recreated)
+        match self.action_dispatcher.dispatch(&intent, ctx)? {
+            HandleResult::Done => {
+                log::debug!("Navigator: Intent executed successfully");
+            }
+            HandleResult::NotApplicable(reason) => {
+                log::warn!("Navigator: Intent not applicable: {}", reason);
+            }
+            HandleResult::Skip => {
+                log::debug!("Navigator: No strategy handled the intent");
+            }
+        }
 
         ctx.render()?;
         Ok(())

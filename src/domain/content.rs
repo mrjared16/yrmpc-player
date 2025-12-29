@@ -183,6 +183,107 @@ impl ContentDetails {
             _ => None,
         }
     }
+
+    /// Convert content details into domain sections.
+    /// This is the domain-side of the adapter pattern.
+    pub fn into_sections(&self) -> Vec<Section> {
+        let mut sections = Vec::new();
+
+        match self {
+            Self::Search(search) => {
+                // Search: all items in one section (headers are inline)
+                if !search.items.is_empty() {
+                    sections.push(Section {
+                        key: SectionKey::SearchResults,
+                        title: String::new(),
+                        content: SectionData::Items(
+                            search.items.iter()
+                                .filter_map(|item| item.as_content_ref().cloned())
+                                .collect()
+                        ),
+                    });
+                }
+            }
+
+            Self::Album(album) => {
+                // Album: tracks section
+                if !album.tracks.is_empty() {
+                    sections.push(Section {
+                        key: SectionKey::Tracks,
+                        title: "Tracks".to_string(),
+                        content: SectionData::Tracks(album.tracks.clone()),
+                    });
+                }
+                // Add extension sections
+                sections.extend(album.extensions.sections.clone());
+            }
+
+            Self::Artist(artist) => {
+                // Artist: top songs section
+                if !artist.top_songs.is_empty() {
+                    sections.push(Section {
+                        key: SectionKey::TopSongs,
+                        title: "Top Songs".to_string(),
+                        content: SectionData::Tracks(artist.top_songs.clone()),
+                    });
+                }
+                // Add extension sections
+                sections.extend(artist.extensions.sections.clone());
+            }
+
+            Self::Playlist(playlist) => {
+                // Playlist: tracks section
+                if !playlist.tracks.is_empty() {
+                    sections.push(Section {
+                        key: SectionKey::Tracks,
+                        title: "Tracks".to_string(),
+                        content: SectionData::Tracks(playlist.tracks.clone()),
+                    });
+                }
+                // Add extension sections
+                sections.extend(playlist.extensions.sections.clone());
+            }
+
+            Self::Queue(queue) => {
+                // Queue: optionally split into Now Playing and Up Next
+                if !queue.songs.is_empty() {
+                    if let Some(current_idx) = queue.current_index {
+                        if current_idx < queue.songs.len() {
+                            // Now Playing
+                            sections.push(Section {
+                                key: SectionKey::NowPlaying,
+                                title: "Now Playing".to_string(),
+                                content: SectionData::Tracks(vec![queue.songs[current_idx].clone()]),
+                            });
+
+                            // Up Next
+                            let up_next: Vec<Song> = queue.songs
+                                .iter()
+                                .skip(current_idx + 1)
+                                .cloned()
+                                .collect();
+                            if !up_next.is_empty() {
+                                sections.push(Section {
+                                    key: SectionKey::UpNext,
+                                    title: "Up Next".to_string(),
+                                    content: SectionData::Tracks(up_next),
+                                });
+                            }
+                        }
+                    } else {
+                        // No current song, flat list
+                        sections.push(Section {
+                            key: SectionKey::Tracks,
+                            title: String::new(),
+                            content: SectionData::Tracks(queue.songs.clone()),
+                        });
+                    }
+                }
+            }
+        }
+
+        sections
+    }
 }
 
 // =============================================================================
@@ -739,6 +840,13 @@ pub enum SectionKey {
     Stats,
     Actions,
 
+    // Content sections
+    Tracks,         // Album/playlist tracks
+    TopSongs,       // Artist top songs
+    SearchResults,  // Search result items
+    NowPlaying,     // Queue current track
+    UpNext,         // Queue upcoming tracks
+
     // Related content
     RelatedAlbums,
     RelatedArtists,
@@ -965,6 +1073,14 @@ pub trait ContentViewable: Clone + std::fmt::Debug + Send + 'static {
 
     /// Convert to ContentDetails for section building
     fn to_content_details(&self) -> ContentDetails;
+
+    /// Get content as sections (adapter pattern).
+    /// Domain provides structured sections, UI converts to SectionView.
+    fn sections(&self) -> Vec<Section> {
+        // Default implementation converts to ContentDetails and extracts sections
+        // Override for custom section layouts
+        self.to_content_details().into_sections()
+    }
 }
 
 impl ContentViewable for AlbumContent {

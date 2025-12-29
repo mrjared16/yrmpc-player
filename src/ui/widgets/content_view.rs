@@ -28,6 +28,7 @@
 
 use ratatui::{Frame, prelude::Rect};
 
+use crate::actions::Selection;
 use crate::ctx::Ctx;
 use crate::domain::ContentViewable;
 use crate::shared::key_event::KeyEvent;
@@ -153,6 +154,16 @@ impl<C: ContentViewable> ContentView<C> {
             .map(|l| l.content.title())
             .collect::<Vec<_>>()
             .join(" > ")
+    }
+
+    /// Get the current selection for Intent creation.
+    ///
+    /// Returns marked items if any are marked, otherwise the current item.
+    /// Delegates to SectionList for selection logic.
+    pub fn get_selection(&self) -> Selection {
+        self.current()
+            .map(|l| l.section_list.get_selection())
+            .unwrap_or_else(Selection::empty)
     }
 
     // =========================================================================

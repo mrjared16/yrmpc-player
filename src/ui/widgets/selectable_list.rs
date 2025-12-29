@@ -103,7 +103,7 @@ impl Default for NavConfig {
 /// The view tracks its own InputMode for Find mode, but Edit mode is
 /// managed by the containing pane (for text inputs like search).
 #[derive(Debug, Clone)]
-pub struct InteractiveListView {
+pub struct SelectableList {
     /// State (selection, marks, viewport tracking)
     state: ListViewState,
     /// ListState for ratatui widget rendering
@@ -114,7 +114,7 @@ pub struct InteractiveListView {
     filter: Option<FindState>,
 }
 
-impl Default for InteractiveListView {
+impl Default for SelectableList {
     fn default() -> Self {
         Self {
             state: ListViewState::new(),
@@ -125,7 +125,7 @@ impl Default for InteractiveListView {
     }
 }
 
-impl InteractiveListView {
+impl SelectableList {
     pub fn new() -> Self {
         Self::default()
     }
@@ -855,7 +855,7 @@ mod tests {
             TestItem { name: "Header".into(), focusable: false },
             TestItem { name: "B".into(), focusable: true },
         ];
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         view.select(Some(0));
 
         view.select_next(&items, NavConfig::default());
@@ -871,7 +871,7 @@ mod tests {
             TestItem { name: "Header".into(), focusable: false },
             TestItem { name: "B".into(), focusable: true },
         ];
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         view.select(Some(2));
 
         view.select_prev(&items, NavConfig::default());
@@ -882,7 +882,7 @@ mod tests {
 
     #[test]
     fn toggle_mark_works() {
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         view.select(Some(5));
 
         view.toggle_mark();
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn marked_indices_returns_all_marked() {
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         view.state.marked.insert(1);
         view.state.marked.insert(3);
         view.state.marked.insert(5);

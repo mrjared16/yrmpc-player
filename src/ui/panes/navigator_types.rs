@@ -23,6 +23,7 @@ use ratatui::{Frame, prelude::Rect};
 pub use crate::ui::list_ops::MoveDirection;
 
 use crate::{
+    actions::intent::Intent,
     ctx::Ctx,
     domain::Song,
     shared::key_event::KeyEvent,
@@ -208,6 +209,9 @@ pub enum PaneAction {
     
     /// Search with query
     Search(String),
+    
+    /// Execute an intent through the action system
+    Execute(Intent),
 }
 
 /// Types of modals that can be shown

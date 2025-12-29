@@ -35,9 +35,9 @@
 
 use crate::domain::{
     ContentDetails, DetailItem, Song,
-    content::{Extensions, SectionData, SectionKey},
+    content::{Extensions, Section, SectionData, SectionKey},
 };
-use super::interactive_list_view::InteractiveListView;
+use super::selectable_list::SelectableList;
 
 // =============================================================================
 // LOAD STATE
@@ -111,6 +111,38 @@ impl SectionView {
     }
 }
 
+
+/// Adapter: Convert domain Section to UI SectionView.
+/// This is the UI-side of the adapter pattern.
+impl From<Section> for SectionView {
+    fn from(section: Section) -> Self {
+        let items = match section.content {
+            SectionData::Items(refs) => refs
+                .into_iter()
+                .map(DetailItem::Ref)
+                .collect(),
+            SectionData::Tracks(songs) => songs
+                .into_iter()
+                .map(DetailItem::Song)
+                .collect(),
+            SectionData::Stats(_) => Vec::new(), // TODO: Stats rendering
+            SectionData::Actions(_) => Vec::new(), // TODO: Actions rendering
+            SectionData::Paginated { items, .. } => items
+                .into_iter()
+                .map(DetailItem::Ref)
+                .collect(),
+            SectionData::Error(msg) => vec![DetailItem::header(&format!("Error: {}", msg))],
+        };
+
+        Self {
+            key: section.key,
+            title: section.title,
+            layout: LayoutKind::default(),
+            items,
+        }
+    }
+}
+
 // =============================================================================
 // DETAIL VIEW
 // =============================================================================
@@ -126,7 +158,7 @@ pub struct DetailView {
     /// Sections for structured rendering
     pub sections: Vec<SectionView>,
     /// View state (selection, marks, filter)
-    pub view: InteractiveListView,
+    pub view: SelectableList,
     /// Loading state
     pub load_state: LoadState,
     /// Title for breadcrumb
@@ -138,7 +170,7 @@ impl DetailView {
     pub fn new(content: ContentDetails) -> Self {
         let title = content.title().to_string();
         let sections = build_sections(&content);
-        let mut view = InteractiveListView::new();
+        let mut view = SelectableList::new();
         
         // Select first focusable item
         let items: Vec<_> = sections.iter().flat_map(|s| s.items.iter()).collect();
@@ -260,6 +292,21 @@ impl DetailStack {
 ///
 /// This replaces `flatten_content()`. Instead of losing structure,
 /// sections are kept separate for per-section layout in the future.
+///
+/// ## Adapter Pattern
+///
+/// For new code, prefer using the domain `ContentDetails::into_sections()` 
+/// method with the `From<Section> for SectionView` adapter:
+///
+/// ```ignore
+/// let sections: Vec<SectionView> = content
+///     .into_sections()
+///     .into_iter()
+///     .map(SectionView::from)
+///     .collect();
+/// ```
+///
+/// This keeps section logic in the domain layer (SOLID compliance).
 pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
     let mut sections = Vec::new();
 

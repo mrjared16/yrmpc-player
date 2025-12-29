@@ -6,6 +6,7 @@
 #![allow(unused_imports)]
 #![allow(unused_variables)]
 
+pub mod actions;
 pub mod app_state;
 pub mod backends;
 pub mod config;

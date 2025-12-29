@@ -44,6 +44,7 @@ mod tests {
     pub mod fixtures;
 }
 
+mod actions;
 mod config;
 mod core;
 mod ctx;

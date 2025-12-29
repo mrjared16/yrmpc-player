@@ -23,21 +23,21 @@ use crate::{
         UiAppEvent,
         list_ops::{MoveDirection, QueueListBehavior},
         modals::{Modal, RectExt},
-        widgets::interactive_list_view::{InteractiveListView, NavConfig},
+        widgets::selectable_list::{SelectableList, NavConfig},
     },
 };
 
 #[derive(Debug)]
 pub struct QueueModal {
     id: Id,
-    list_view: InteractiveListView,
+    list_view: SelectableList,
 }
 
 impl QueueModal {
     pub fn new() -> Self {
         Self {
             id: id::new(),
-            list_view: InteractiveListView::new(),
+            list_view: SelectableList::new(),
         }
     }
 
@@ -74,11 +74,11 @@ impl QueueModal {
 
 // Implement QueueListBehavior trait for shared action logic
 impl QueueListBehavior for QueueModal {
-    fn list_view(&self) -> &InteractiveListView {
+    fn list_view(&self) -> &SelectableList {
         &self.list_view
     }
 
-    fn list_view_mut(&mut self) -> &mut InteractiveListView {
+    fn list_view_mut(&mut self) -> &mut SelectableList {
         &mut self.list_view
     }
     // Uses default implementations for play_selected, delete_selected, move_selected

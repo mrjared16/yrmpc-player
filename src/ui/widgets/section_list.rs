@@ -42,12 +42,13 @@ use ratatui::{
     Frame,
 };
 
+use crate::actions::Selection;
 use crate::ctx::Ctx;
 use crate::domain::DetailItem;
 use crate::shared::key_event::KeyEvent;
 use crate::ui::panes::navigator_types::{InputMode, ListAction, SectionAction, EscResult, BackspaceResult};
 use crate::ui::widgets::detail_stack::SectionView;
-use crate::ui::widgets::interactive_list_view::{InteractiveListView, NavConfig};
+use crate::ui::widgets::selectable_list::{SelectableList, NavConfig};
 
 // =============================================================================
 // SECTION LIST
@@ -64,7 +65,7 @@ pub struct SectionList {
     /// Flattened items for navigation (cached)
     flat_items: Vec<DetailItem>,
     /// Interactive list view for navigation
-    list_view: InteractiveListView,
+    list_view: SelectableList,
     /// Title for display
     title: String,
 }
@@ -83,7 +84,7 @@ impl SectionList {
             .flat_map(|s| s.items.iter().cloned())
             .collect();
 
-        let mut list_view = InteractiveListView::new();
+        let mut list_view = SelectableList::new();
 
         // Select first focusable item
         if let Some(first) = flat_items.iter().position(|item| item.is_focusable()) {
@@ -160,12 +161,12 @@ impl SectionList {
     }
 
     /// Access underlying list view.
-    pub fn list_view(&self) -> &InteractiveListView {
+    pub fn list_view(&self) -> &SelectableList {
         &self.list_view
     }
 
     /// Access underlying list view mutably.
-    pub fn list_view_mut(&mut self) -> &mut InteractiveListView {
+    pub fn list_view_mut(&mut self) -> &mut SelectableList {
         &mut self.list_view
     }
 
@@ -267,6 +268,25 @@ impl SectionList {
             .marked_indices()
             .filter_map(|idx| self.flat_items.get(idx))
             .collect()
+    }
+
+    /// Get a Selection for the Intent system.
+    ///
+    /// Returns marked items if any are marked, otherwise returns the current item.
+    /// This is the primary method for panes to get items for action execution.
+    pub fn get_selection(&self) -> Selection {
+        if self.has_marked() {
+            Selection::new(
+                self.marked_items()
+                    .into_iter()
+                    .cloned()
+                    .collect()
+            )
+        } else if let Some(item) = self.selected_item() {
+            Selection::single(item.clone())
+        } else {
+            Selection::empty()
+        }
     }
 
     // =========================================================================

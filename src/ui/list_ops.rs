@@ -20,14 +20,14 @@ use anyhow::Result;
 
 use crate::ctx::Ctx;
 use crate::domain::{QueueItemAction, QueueItemOps, Song};
-use crate::ui::widgets::interactive_list_view::InteractiveListView;
+use crate::ui::widgets::selectable_list::SelectableList;
 
 /// Execute an action on the currently selected item
 ///
 /// Note: Takes owned items to avoid borrow conflicts with ctx.
 /// Callers should clone the items first: `ctx.queue.clone()`
 pub fn execute_on_selected(
-    view: &InteractiveListView,
+    view: &SelectableList,
     items: Vec<Song>,
     action: QueueItemAction,
     ctx: &mut Ctx,
@@ -47,7 +47,7 @@ pub fn execute_on_selected(
 /// Clears marks after execution.
 /// Note: Takes owned items to avoid borrow conflicts with ctx.
 pub fn execute_on_marked(
-    view: &mut InteractiveListView,
+    view: &mut SelectableList,
     items: Vec<Song>,
     action: QueueItemAction,
     ctx: &mut Ctx,
@@ -76,7 +76,7 @@ pub fn execute_on_marked(
 /// This is the common pattern: if marks exist, batch operation; else single item.
 /// Note: Takes owned items to avoid borrow conflicts with ctx.
 pub fn execute_on_marked_or_selected(
-    view: &mut InteractiveListView,
+    view: &mut SelectableList,
     items: Vec<Song>,
     action: QueueItemAction,
     ctx: &mut Ctx,
@@ -102,7 +102,7 @@ pub enum MoveDirection {
 /// Returns true if the move was executed.
 /// This is the shared implementation for QueuePaneV2 and QueueModal.
 pub fn execute_move(
-    view: &mut InteractiveListView,
+    view: &mut SelectableList,
     items: &[Song],
     direction: MoveDirection,
     ctx: &mut Ctx,
@@ -147,7 +147,7 @@ pub enum Selection {
 
 /// Get the current selection from a list view.
 /// Returns marked items if any are marked, otherwise the selected item.
-pub fn get_selection(view: &InteractiveListView) -> Option<Selection> {
+pub fn get_selection(view: &SelectableList) -> Option<Selection> {
     if view.has_marked() {
         let indices: Vec<_> = view.marked_indices().collect();
         if indices.is_empty() {
@@ -184,10 +184,10 @@ pub fn get_selection(view: &InteractiveListView) -> Option<Selection> {
 /// ```
 pub trait QueueListBehavior {
     /// Access to the underlying list view (immutable)
-    fn list_view(&self) -> &InteractiveListView;
+    fn list_view(&self) -> &SelectableList;
     
     /// Access to the underlying list view (mutable)
-    fn list_view_mut(&mut self) -> &mut InteractiveListView;
+    fn list_view_mut(&mut self) -> &mut SelectableList;
     
     /// Play or toggle the selected song.
     /// Default: Uses QueueItemAction::PlayOrToggle for Spotify-style behavior.

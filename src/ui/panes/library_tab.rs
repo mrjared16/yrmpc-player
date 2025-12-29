@@ -25,7 +25,7 @@ use crate::{
         BackspaceResult, DetailId, EntityRef, EscResult, InputMode,
         NavigatorPane, PaneAction, PaneId, TabId, TabPane,
     },
-    ui::widgets::interactive_list_view::{InteractiveListView, NavConfig},
+    ui::widgets::selectable_list::{SelectableList, NavConfig},
 };
 
 // =============================================================================
@@ -36,7 +36,7 @@ use crate::{
 #[derive(Debug, Clone, Default)]
 pub struct LibraryTabPane {
     /// List view for navigation
-    list_view: InteractiveListView,
+    list_view: SelectableList,
     /// Cached playlist items
     playlists: Vec<ContentRef>,
 }
@@ -44,7 +44,7 @@ pub struct LibraryTabPane {
 impl LibraryTabPane {
     pub fn new(_ctx: &Ctx) -> Self {
         Self {
-            list_view: InteractiveListView::new(),
+            list_view: SelectableList::new(),
             playlists: Vec::new(),
         }
     }

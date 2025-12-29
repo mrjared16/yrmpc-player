@@ -1,12 +1,35 @@
-//! DetailItem - Unified item type for navigation stacks.
+//! DetailItem - Domain items for navigation stacks.
 //!
-//! This enum represents any item that can appear in a navigation list:
+//! This enum represents **actionable content** that can appear in a navigation list:
 //! - Songs (playable)
 //! - ContentRefs (navigable - albums, artists, playlists)
-//! - Headers (non-focusable section dividers)
 //!
-//! By using a single enum type, we eliminate the "stringly typed" pattern
-//! where everything was forced into Song structs with metadata maps.
+//! ## Architecture Note
+//!
+//! **Presentation-only items** (headers, spacers) belong in the UI layer.
+//! Use [`ui::widgets::list_item::ListItem`] for list rendering, which wraps
+//! `DetailItem` and adds non-actionable variants.
+//!
+//! ```text
+//! ┌─────────────────────────────────────────────────────────────────────┐
+//! │ UI Layer (ListItem)                                                 │
+//! │   - ListItem::Content(DetailItem) - actionable content              │
+//! │   - ListItem::Header(String)      - section headers (non-focusable) │
+//! │   - ListItem::Spacer              - visual spacing                  │
+//! ├─────────────────────────────────────────────────────────────────────┤
+//! │ Domain Layer (DetailItem)                                           │
+//! │   - DetailItem::Song(Song)        - playable content                │
+//! │   - DetailItem::Ref(ContentRef)   - navigable reference             │
+//! └─────────────────────────────────────────────────────────────────────┘
+//! ```
+//!
+//! ## Migration Path
+//!
+//! The `Header` variant is **deprecated** and will be removed once all panes
+//! are migrated to use `ListItem` for list building. New code should:
+//! 1. Build lists using `Vec<ListItem>`
+//! 2. Extract actionable items with `item.as_content()` or `into_content()`
+//! 3. Pass only `DetailItem` to Intent/Selection (never Headers)
 //!
 //! # Design Decisions
 //!
@@ -33,7 +56,11 @@ use super::content::{ContentRef, ContentType};
 /// with metadata to represent albums, artists, and headers.
 #[derive(Debug, Clone)]
 pub enum DetailItem {
-    /// A section header (non-focusable, for visual grouping)
+    /// A section header (non-focusable, for visual grouping).
+    ///
+    /// **DEPRECATED**: Use `ui::widgets::list_item::ListItem::Header` instead.
+    /// This variant will be removed once all panes are migrated.
+    #[deprecated(since = "0.11.0", note = "Use ListItem::Header in UI layer instead")]
     Header {
         title: String,
     },
@@ -45,6 +72,10 @@ pub enum DetailItem {
 
 impl DetailItem {
     /// Create a header item.
+    ///
+    /// **DEPRECATED**: Use `ListItem::header()` in UI layer instead.
+    #[deprecated(since = "0.11.0", note = "Use ListItem::header() in UI layer instead")]
+    #[allow(deprecated)]
     pub fn header(title: impl Into<String>) -> Self {
         Self::Header { title: title.into() }
     }
