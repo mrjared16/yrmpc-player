@@ -291,18 +291,21 @@ impl Navigator {
             match key.code() {
                 KeyCode::Char('1') => {
                     self.switch_to_tab(TabId::Search);
+                    ctx.active_tab = TabId::Search.label().into();
                     key.stop_propagation();
                     ctx.render()?;
                     return Ok(());
                 }
                 KeyCode::Char('2') => {
                     self.switch_to_tab(TabId::Queue);
+                    ctx.active_tab = TabId::Queue.label().into();
                     key.stop_propagation();
                     ctx.render()?;
                     return Ok(());
                 }
                 KeyCode::Char('3') => {
                     self.switch_to_tab(TabId::Library);
+                    ctx.active_tab = TabId::Library.label().into();
                     key.stop_propagation();
                     ctx.render()?;
                     return Ok(());
@@ -557,6 +560,20 @@ impl Navigator {
     /// Handle UI events (queue changes, playback state, etc.).
     /// Routes events to all panes that might care.
     pub(crate) fn on_event(&mut self, event: &mut UiEvent, ctx: &Ctx) -> Result<()> {
+        // Handle TabChanged to sync Navigator's active pane with ctx.active_tab
+        if let UiEvent::TabChanged(tab_name) = event {
+            // Map TabName to TabId for Navigator's internal state
+            let new_tab_id = match tab_name.as_str() {
+                "Search" => Some(TabId::Search),
+                "Queue" => Some(TabId::Queue),
+                "Library" => Some(TabId::Library),
+                _ => None, // Unknown tab name - ignore
+            };
+            if let Some(tab_id) = new_tab_id {
+                self.switch_to_tab(tab_id);
+            }
+        }
+
         // Route to all panes - they have default implementations that ignore irrelevant events
         self.search_pane.on_event(event, ctx)?;
         self.queue_pane.on_event(event, ctx)?;

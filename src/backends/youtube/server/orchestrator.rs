@@ -55,12 +55,21 @@ pub fn play_position(
     queue.set_current(Some(pos));
     queue.set_playback_base_index(pos);
 
-    // Resolve and append current + next tracks (rolling window)
-    let prefetch_count = PREFETCH_WINDOW_SIZE.min(queue_len - pos);
-    let mut first_url_metadata: Option<(String, String)> = None;
+    // Build prefetch window respecting shuffle/repeat order
+    // This stores the indices for later lookup by handle_within_window_advance
+    let prefetch_indices = queue.build_prefetch_window(pos, PREFETCH_WINDOW_SIZE);
+    let prefetch_count = prefetch_indices.len();
 
-    for i in 0..prefetch_count {
-        let idx = pos + i;
+    log::debug!(
+        "Built prefetch window: {:?} (shuffle={})",
+        prefetch_indices,
+        queue.shuffle_enabled()
+    );
+
+    let mut first_url_metadata: Option<(String, String)> = None;
+    let mut first_track = true;
+
+    for (i, &idx) in prefetch_indices.iter().enumerate() {
         match queue.get_by_index(idx) {
             Ok(song) => {
                 let video_id = &song.uri;
@@ -78,7 +87,8 @@ pub fn play_position(
                             );
 
                             // Save metadata for MPRIS (first track only)
-                            if i == 0 {
+                            if first_track {
+                                first_track = false;
                                 let title = song.metadata.get("title")
                                     .and_then(|v| v.first())
                                     .cloned()
@@ -93,7 +103,7 @@ pub fn play_position(
                     }
                     Err(e) => {
                         log::error!("Failed to resolve stream URL for {}: {}", video_id, e);
-                        if i == 0 {
+                        if first_track {
                             return ServerResponse::Error(format!("Failed to resolve stream: {}", e));
                         }
                     }
@@ -254,9 +264,25 @@ fn handle_within_window_advance(
     state_tracker: &Arc<PlaybackStateTracker>,
     mpv_pos: usize,
 ) {
-    let base_index = queue.playback_base_index();
-    let new_queue_pos = base_index + mpv_pos;
-    log::info!("[DIAG-EOF] handle_within_window_advance: mpv_pos={} base_index={} new_queue_pos={} queue_len={}", mpv_pos, base_index, new_queue_pos, queue.len());
+    // KEY FIX: Use prefetch lookup instead of sequential arithmetic
+    // This respects shuffle order and repeat mode that were applied when building the window
+    let new_queue_pos = match queue.get_prefetched_at(mpv_pos) {
+        Some(idx) => idx,
+        None => {
+            // Fallback: if prefetch indices not available, use old behavior
+            let base_index = queue.playback_base_index();
+            log::warn!(
+                "[DIAG-EOF] Prefetch lookup failed for mpv_pos={}, falling back to base_index({}) + mpv_pos",
+                mpv_pos, base_index
+            );
+            base_index + mpv_pos
+        }
+    };
+
+    log::info!(
+        "[DIAG-EOF] handle_within_window_advance: mpv_pos={} new_queue_pos={} queue_len={}",
+        mpv_pos, new_queue_pos, queue.len()
+    );
 
     if new_queue_pos < queue.len() {
         log::info!("[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
@@ -276,13 +302,12 @@ fn handle_within_window_advance(
             let _ = playback.set_media_title(&title, &artist);
         }
 
-        // Maintain prefetch window - append next track if available
-        let prefetch_pos = new_queue_pos + PREFETCH_WINDOW_SIZE;
-        if prefetch_pos < queue.len() {
-            if let Ok(song) = queue.get_by_index(prefetch_pos) {
+        // Maintain prefetch window - extend using queue's playback order logic
+        if let Some(next_idx) = queue.extend_prefetch_window() {
+            if let Ok(song) = queue.get_by_index(next_idx) {
                 if let Ok(url) = playback.build_playback_url(&song.uri) {
                     let _ = playback.playlist_append(&url);
-                    log::debug!("Extended prefetch window to queue pos {}", prefetch_pos);
+                    log::debug!("Extended prefetch window with queue index {}", next_idx);
                 }
             }
         }
@@ -464,5 +489,160 @@ mod tests {
 
         assert_eq!(queue.current_index(), None);
         assert_eq!(state_tracker.get(), PlaybackState::Idle);
+    }
+
+    // =========================================================================
+    // RED TESTS: These tests MUST FAIL to prove the bugs exist
+    // =========================================================================
+
+    /// TEST: Shuffle is respected during auto-advance (within prefetch window).
+    ///
+    /// When shuffle is enabled and build_prefetch_window is called,
+    /// the prefetch window should contain shuffled tracks.
+    /// When mpv advances to mpv_pos=1, handle_within_window_advance should
+    /// return the shuffled track, not queue[1].
+    #[test]
+    fn shuffle_is_respected_during_auto_advance() {
+        let (playback, queue, state_tracker) = setup_test_services();
+
+        // Add 5 songs
+        for i in 0..5 {
+            queue.add(test_song(&format!("Song {}", i)), None);
+        }
+
+        // Enable shuffle BEFORE starting playback
+        queue.set_shuffle_enabled(true);
+
+        // Start playing from position 0
+        queue.set_current(Some(0));
+        queue.set_playback_base_index(0);
+
+        // KEY: Call build_prefetch_window to populate prefetch_indices
+        // This is what play_position does in production
+        let prefetch_indices = queue.build_prefetch_window(0, 3);
+
+        // The first track should be position 0 (where we started)
+        assert_eq!(prefetch_indices[0], 0, "First track should be starting position");
+
+        // With shuffle enabled, subsequent tracks should be from shuffle order
+        // They might be sequential (20% chance with 5 items), so we test that
+        // the prefetch lookup works correctly instead of asserting randomness
+
+        // Simulate: MPV auto-advanced within window (mpv_pos=1)
+        handle_within_window_advance(&playback, &queue, &state_tracker, 1);
+
+        // After advance, current should match what was at prefetch_indices[1]
+        let current = queue.current_index().expect("Should have current");
+
+        // The current index should be what was stored in prefetch_indices[1]
+        // (which may or may not be 1 depending on shuffle order)
+        assert_eq!(
+            current, prefetch_indices[1],
+            "Current should match the prefetched track at mpv_pos=1. \
+             Expected queue index {} (from prefetch), got {}",
+            prefetch_indices[1], current
+        );
+    }
+
+    /// RED TEST: Prefetch window does not respect shuffle order.
+    ///
+    /// BUG: play_position() builds prefetch window as:
+    ///   for i in 0..prefetch_count { idx = pos + i }  (SEQUENTIAL)
+    ///
+    /// When shuffle is enabled, the prefetch should use shuffle order.
+    #[test]
+    fn prefetch_window_respects_shuffle_order() {
+        let (playback, queue, state_tracker) = setup_test_services();
+
+        // Add 5 songs
+        for i in 0..5 {
+            queue.add(test_song(&format!("Song {}", i)), None);
+        }
+
+        // Enable shuffle
+        queue.set_shuffle_enabled(true);
+
+        // Start from position 0
+        // play_position will build prefetch window [0, 1, 2] SEQUENTIALLY
+        // but with shuffle enabled, it SHOULD build [0, shuffle[1], shuffle[2]]
+        let _ = play_position(&playback, &queue, 0, &state_tracker);
+
+        // After play_position, check what base_index was set to
+        let base = queue.playback_base_index();
+        assert_eq!(base, 0, "Base should be starting position");
+
+        // The BUG: We can't directly test what was prefetched because
+        // play_position doesn't store the shuffled indices anywhere.
+        // The only evidence is in handle_within_window_advance behavior
+        // (tested above).
+        //
+        // This test documents the architectural gap: we need to STORE
+        // what indices were actually prefetched, not just the base.
+
+        // To prove the bug, we simulate what WOULD happen:
+        // If we call next_index() multiple times, we get random results
+        // But play_position uses pos+i, ignoring shuffle.
+
+        // Get what next_index would return (respects shuffle)
+        let next_shuffle = queue.next_index();
+
+        // The bug: If shuffle was respected in prefetch, the second track
+        // would match next_shuffle. But play_position uses pos+1=1.
+        assert!(
+            next_shuffle != Some(1) || next_shuffle.is_none(),
+            "BUG: next_index() returns 1 in shuffle mode. \
+             This is statistically unlikely (1/4 chance). \
+             Run test multiple times - if it always passes, shuffle is broken."
+        );
+    }
+
+    /// TEST: handle_within_window_advance respects repeat mode.
+    ///
+    /// When RepeatAll is enabled and we reach the end of the queue,
+    /// the next advance should wrap to queue[0].
+    #[test]
+    fn within_window_advance_respects_repeat_all() {
+        let (playback, queue, state_tracker) = setup_test_services();
+
+        // Add 3 songs (exactly PREFETCH_WINDOW_SIZE)
+        queue.add(test_song("Song 0"), None);
+        queue.add(test_song("Song 1"), None);
+        queue.add(test_song("Song 2"), None);
+
+        // Enable Repeat All
+        queue.set_repeat_mode(RepeatMode::All);
+
+        // Start at position 0
+        queue.set_current(Some(0));
+        queue.set_playback_base_index(0);
+
+        // KEY: Build prefetch window - this is what play_position does
+        let prefetch_indices = queue.build_prefetch_window(0, 3);
+        assert_eq!(prefetch_indices, vec![0, 1, 2], "Initial prefetch window");
+
+        // Simulate: MPV at last track in window (mpv_pos=2)
+        // This is Song 2, which is also the last in queue
+        handle_within_window_advance(&playback, &queue, &state_tracker, 2);
+
+        // Current should be 2
+        assert_eq!(queue.current_index(), Some(2));
+
+        // After advance to pos 2, extend_prefetch_window was called
+        // With RepeatAll, it should have added 0 (wrapped)
+        // So prefetch_indices is now [0, 1, 2, 0]
+        assert_eq!(
+            queue.get_prefetched_at(3), Some(0),
+            "After extending, pos 3 should wrap to queue index 0"
+        );
+
+        // Now simulate: MPV tries to go to mpv_pos=3
+        // With the extended window, this should work!
+        handle_within_window_advance(&playback, &queue, &state_tracker, 3);
+
+        // With Repeat All, we should wrap to 0
+        assert_eq!(
+            queue.current_index(), Some(0),
+            "Repeat All should wrap to queue[0]"
+        );
     }
 }

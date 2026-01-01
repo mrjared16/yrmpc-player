@@ -39,6 +39,9 @@ pub struct QueueService {
     shuffle_enabled: Mutex<bool>,
     /// History of played indices for shuffle mode's "previous" functionality
     shuffle_history: Mutex<Vec<usize>>,
+    /// Pre-computed shuffle order (None = sequential mode)
+    /// Contains queue indices in shuffled playback order
+    shuffle_order: Mutex<Option<Vec<usize>>>,
     /// Playback base index - the queue index corresponding to MPV's playlist[0]
     ///
     /// When we call play_position(pos), we load pos and the next 2 tracks into MPV.
@@ -52,6 +55,13 @@ pub struct QueueService {
     /// After auto-advance within the prefetch window, current_idx changes but
     /// playback_base_index stays the same until we rebuild the MPV playlist.
     playback_base_index: Mutex<usize>,
+    /// Queue indices currently loaded in MPV's prefetch window.
+    ///
+    /// When play_position(5) is called with shuffle enabled, this might contain:
+    /// [5, 2, 8] - meaning MPV playlist[0]=queue[5], playlist[1]=queue[2], etc.
+    ///
+    /// This allows handle_within_window_advance to correctly map mpv_pos to queue_idx.
+    prefetch_indices: Mutex<Vec<usize>>,
 }
 
 impl QueueService {
@@ -64,7 +74,9 @@ impl QueueService {
             repeat_mode: Mutex::new(RepeatMode::Off),
             shuffle_enabled: Mutex::new(false),
             shuffle_history: Mutex::new(Vec::new()),
+            shuffle_order: Mutex::new(None),
             playback_base_index: Mutex::new(0),
+            prefetch_indices: Mutex::new(Vec::new()),
         }
     }
 
@@ -439,6 +451,162 @@ impl QueueService {
                 }
             }
             _ => Err(anyhow::anyhow!("Song not found")),
+        }
+    }
+
+    // =========================================================================
+    // PREFETCH WINDOW MANAGEMENT (for gapless playback with shuffle/repeat)
+    // =========================================================================
+
+    /// Build prefetch window starting from a queue index.
+    ///
+    /// Returns queue indices to load into MPV, respecting shuffle order.
+    /// Also stores the indices in `prefetch_indices` for later lookup.
+    ///
+    /// If shuffle is enabled but shuffle_order doesn't exist, generates it.
+    pub fn build_prefetch_window(&self, start_idx: usize, count: usize) -> Vec<usize> {
+        let len = self.len();
+        if len == 0 {
+            return Vec::new();
+        }
+
+        // Ensure shuffle order exists if shuffle is enabled
+        if *self.shuffle_enabled.lock() {
+            let mut order = self.shuffle_order.lock();
+            if order.is_none() || order.as_ref().map(|o| o.len()) != Some(len) {
+                *order = Some(self.generate_shuffle_order_internal(len, Some(start_idx)));
+            }
+        }
+
+        let mut indices = Vec::with_capacity(count);
+        let repeat_mode = *self.repeat_mode.lock();
+
+        // First index is always the start position
+        indices.push(start_idx);
+
+        // Get subsequent indices from playback order
+        for i in 1..count {
+            if let Some(next_idx) = self.get_next_in_playback_order(start_idx, i, repeat_mode) {
+                indices.push(next_idx);
+            } else {
+                break; // No more tracks
+            }
+        }
+
+        // Store for later lookup by handle_within_window_advance
+        *self.prefetch_indices.lock() = indices.clone();
+
+        indices
+    }
+
+    /// Get the queue index at a given position in the current prefetch window.
+    ///
+    /// This is the KEY method that fixes the shuffle bug:
+    /// Instead of `base_index + mpv_pos`, we look up from stored indices.
+    pub fn get_prefetched_at(&self, mpv_pos: usize) -> Option<usize> {
+        self.prefetch_indices.lock().get(mpv_pos).copied()
+    }
+
+    /// Extend the prefetch window by one track and return the new queue index.
+    ///
+    /// Called after auto-advance to maintain the rolling window.
+    pub fn extend_prefetch_window(&self) -> Option<usize> {
+        let mut indices = self.prefetch_indices.lock();
+        let window_len = indices.len();
+        let repeat_mode = *self.repeat_mode.lock();
+
+        // Get the starting position (first in current window)
+        let start_idx = *indices.first()?;
+
+        // Get next index based on where we are in playback order
+        if let Some(next_idx) = self.get_next_in_playback_order(start_idx, window_len, repeat_mode) {
+            indices.push(next_idx);
+            Some(next_idx)
+        } else {
+            None
+        }
+    }
+
+    /// Get the next queue index in playback order at a given offset.
+    ///
+    /// - In sequential mode: returns start_idx + offset (with optional wrap)
+    /// - In shuffle mode: finds start_idx in shuffle_order, returns shuffle_order[pos + offset]
+    fn get_next_in_playback_order(
+        &self,
+        start_idx: usize,
+        offset: usize,
+        repeat_mode: RepeatMode,
+    ) -> Option<usize> {
+        let len = self.len();
+        if len == 0 {
+            return None;
+        }
+
+        let shuffle_order = self.shuffle_order.lock();
+
+        if let Some(ref order) = *shuffle_order {
+            // Shuffle mode: find position of start_idx in shuffle order
+            let start_pos = order.iter().position(|&idx| idx == start_idx)?;
+            let target_pos = start_pos + offset;
+
+            if target_pos < order.len() {
+                Some(order[target_pos])
+            } else if repeat_mode == RepeatMode::All {
+                // Wrap around
+                Some(order[target_pos % order.len()])
+            } else {
+                None
+            }
+        } else {
+            // Sequential mode
+            let target_idx = start_idx + offset;
+
+            if target_idx < len {
+                Some(target_idx)
+            } else if repeat_mode == RepeatMode::All {
+                Some(target_idx % len)
+            } else {
+                None
+            }
+        }
+    }
+
+    /// Generate a shuffle order with Fisher-Yates algorithm.
+    ///
+    /// Places the current track at the start so it doesn't immediately replay.
+    fn generate_shuffle_order_internal(&self, len: usize, current: Option<usize>) -> Vec<usize> {
+        use rand::Rng;
+
+        let mut order: Vec<usize> = (0..len).collect();
+        let mut rng = rand::thread_rng();
+
+        // Fisher-Yates shuffle
+        for i in (1..len).rev() {
+            let j = rng.gen_range(0..=i);
+            order.swap(i, j);
+        }
+
+        // Move current track to front if specified
+        if let Some(curr) = current {
+            if let Some(pos) = order.iter().position(|&x| x == curr) {
+                order.swap(0, pos);
+            }
+        }
+
+        order
+    }
+
+    /// Clear the prefetch tracking (called when rebuilding MPV playlist)
+    pub fn clear_prefetch(&self) {
+        self.prefetch_indices.lock().clear();
+    }
+
+    /// Regenerate shuffle order (called when queue changes significantly)
+    pub fn regenerate_shuffle_order(&self) {
+        if *self.shuffle_enabled.lock() {
+            let len = self.len();
+            let current = self.current_index();
+            *self.shuffle_order.lock() = Some(self.generate_shuffle_order_internal(len, current));
         }
     }
 }
