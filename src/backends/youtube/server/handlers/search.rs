@@ -5,27 +5,35 @@ use std::sync::Arc;
 use crate::backends::youtube::{
     services::ApiService,
     protocol::{
-        BrowseEntry, ServerResponse, SongData, SearchItemData,
+        BrowseEntry, ServerResponse, SongData,
         PlaylistDetailsData, AlbumDetailsData, ArtistDetailsData,
     },
 };
+use crate::domain::MediaItem;
 
-/// Handle Search command
+/// Handle Search command - returns MediaItem directly (no intermediate types)
 pub fn handle_search(api: &Arc<ApiService>, query: &str) -> ServerResponse {
     match api.search_items(query) {
         Ok(results) => {
-            // Flatten sections into a single Vec for backward compatibility with protocol
-            let items: Vec<_> = results.flatten().into_iter().map(|item| {
-                use crate::domain::search::Displayable;
-                log::trace!("[DIAG-IMG] handle_search: item '{}' thumbnail={:?}",
-                    item.primary_line(), item.thumbnail());
-                SearchItemData::from(item)
-            }).collect();
+            // Convert domain search results to MediaItem directly
+            // Preserve section structure by inserting Header markers before each section's items
+            let mut items: Vec<MediaItem> = Vec::new();
 
-            // Log a sample of converted items
-            if !items.is_empty() {
-                log::trace!("[DIAG-IMG] handle_search: first converted item = {:?}", &items[0]);
+            for section in results.sections {
+                // Insert section header marker
+                items.push(MediaItem::header(&section.title));
+
+                // Add all items in this section (preserving their types for correct actions)
+                for item in section.items {
+                    use crate::domain::search::Displayable;
+                    log::trace!("[DIAG-IMG] handle_search: section='{}' item='{}' thumbnail={:?}",
+                        section.title, item.primary_line(), item.thumbnail());
+                    items.push(MediaItem::from(item));
+                }
             }
+
+            log::info!("[SEARCH] Returning {} MediaItem entries with section headers for query '{}'",
+                items.len(), query);
 
             ServerResponse::SearchResults(items)
         }

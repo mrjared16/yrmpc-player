@@ -574,6 +574,76 @@ impl From<MediaItem> for Song {
 }
 
 // =============================================================================
+// CONVERSIONS FROM SEARCH TYPES
+// =============================================================================
+
+use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem};
+
+/// Convert SearchItem to MediaItem (edge adapter - single conversion point)
+impl From<SearchItem> for MediaItem {
+    fn from(item: SearchItem) -> Self {
+        match item {
+            SearchItem::Playable(PlayableItem::Song(s)) => MediaItem::Track(Track {
+                id: s.video_id.clone(),
+                title: s.title,
+                artist: Some(s.artist),
+                album: s.album,
+                duration: s.duration,
+                thumbnail: s.thumbnail,
+                explicit: s.explicit,
+                backend: BackendExtension::YouTube(YouTubeData {
+                    video_id: Some(s.video_id),
+                    ..Default::default()
+                }),
+            }),
+            SearchItem::Playable(PlayableItem::Video(v)) => MediaItem::Track(Track {
+                id: v.video_id.clone(),
+                title: v.title,
+                artist: Some(v.channel),
+                album: None,
+                duration: v.duration,
+                thumbnail: v.thumbnail,
+                explicit: false,
+                backend: BackendExtension::YouTube(YouTubeData {
+                    video_id: Some(v.video_id),
+                    ..Default::default()
+                }),
+            }),
+            SearchItem::Browsable(BrowsableItem::Artist(a)) => MediaItem::Artist(Artist {
+                id: a.browse_id.clone().unwrap_or_else(|| a.name.clone()),
+                name: a.name,
+                subscribers: a.subscribers,
+                thumbnail: a.thumbnail,
+                description: None,
+                backend: BackendExtension::YouTube(YouTubeData {
+                    channel_id: a.browse_id,
+                    ..Default::default()
+                }),
+            }),
+            SearchItem::Browsable(BrowsableItem::Album(a)) => MediaItem::Album(Album {
+                id: a.album_id.clone(),
+                title: a.title,
+                artist: Some(a.artist),
+                year: a.year.and_then(|y| y.parse().ok()),
+                track_count: None,
+                thumbnail: a.thumbnail,
+                explicit: a.explicit,
+                backend: BackendExtension::None,
+            }),
+            SearchItem::Browsable(BrowsableItem::Playlist(p)) => MediaItem::Playlist(Playlist {
+                id: p.playlist_id.clone(),
+                title: p.title,
+                author: Some(p.author),
+                track_count: p.track_count.and_then(|s| s.parse().ok()),
+                thumbnail: p.thumbnail,
+                description: None,
+                backend: BackendExtension::None,
+            }),
+        }
+    }
+}
+
+// =============================================================================
 // TESTS
 // =============================================================================
 

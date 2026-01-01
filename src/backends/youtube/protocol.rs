@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{PlaybackState, Song, Status};
+use crate::domain::{PlaybackState, Song, Status, MediaItem};
 use crate::domain::status::OnOffOneshot;
 
 /// Commands sent from client to server
@@ -80,8 +80,8 @@ pub enum ServerResponse {
     Status(StatusData),
     Song(Option<SongData>),
     Playlist(Vec<SongData>),
-    /// Type-safe search results 
-    SearchResults(Vec<SearchItemData>),
+    /// Type-safe search results using MediaItem directly (no intermediate types)
+    SearchResults(Vec<MediaItem>),
     BrowseResults(Vec<BrowseEntry>),
     Library(Vec<BrowseEntry>),
     /// Search suggestions for autocomplete
@@ -233,6 +233,8 @@ pub enum SearchItemData {
     Artist(BrowsableData),
     Album(BrowsableData),
     Playlist(BrowsableData),
+    /// Section header for grouping search results (e.g., "Top Results", "Songs")
+    Header { title: String },
 }
 
 /// Data for playable items (songs/videos)
@@ -372,9 +374,10 @@ pub struct PlaylistDetailsData {
     pub thumbnail: Option<String>,
     pub track_count: usize,
     pub duration_text: Option<String>,
-    pub tracks: Vec<SongData>,
-    pub featured_artists: Vec<ArtistRefData>,
-    pub related_playlists: Vec<PlaylistRefData>,
+    /// Tracks as MediaItem (canonical type, no conversion needed)
+    pub tracks: Vec<MediaItem>,
+    pub featured_artists: Vec<MediaItem>,
+    pub related_playlists: Vec<MediaItem>,
 }
 
 /// Detailed album info (serializable)
@@ -382,11 +385,13 @@ pub struct PlaylistDetailsData {
 pub struct AlbumDetailsData {
     pub id: String,
     pub title: String,
-    pub artist: ArtistRefData,
+    /// Primary artist as MediaItem
+    pub artist: MediaItem,
     pub year: Option<String>,
     pub thumbnail: Option<String>,
-    pub tracks: Vec<SongData>,
-    pub more_by_artist: Vec<AlbumRefData>,
+    /// Tracks as MediaItem (canonical type)
+    pub tracks: Vec<MediaItem>,
+    pub more_by_artist: Vec<MediaItem>,
 }
 
 /// Detailed artist info (serializable)
@@ -397,42 +402,57 @@ pub struct ArtistDetailsData {
     pub subscribers: Option<String>,
     pub description: Option<String>,
     pub thumbnail: Option<String>,
-    pub top_songs: Vec<SongData>,
-    pub albums: Vec<AlbumRefData>,
-    pub singles: Vec<AlbumRefData>,
-    pub related_artists: Vec<ArtistRefData>,
+    /// Top songs as MediaItem (canonical type)
+    pub top_songs: Vec<MediaItem>,
+    pub albums: Vec<MediaItem>,
+    pub singles: Vec<MediaItem>,
+    pub related_artists: Vec<MediaItem>,
 }
 
-// Conversions from domain types to protocol types
-impl From<crate::backends::youtube::details::ArtistRef> for ArtistRefData {
+// Conversions from domain types to protocol types (using MediaItem as canonical type)
+
+impl From<crate::backends::youtube::details::ArtistRef> for MediaItem {
     fn from(a: crate::backends::youtube::details::ArtistRef) -> Self {
-        Self {
+        use crate::domain::media_item::{Artist, BackendExtension};
+        MediaItem::Artist(Artist {
             id: a.id,
             name: a.name,
+            subscribers: None,
             thumbnail: a.thumbnail,
-        }
+            description: None,
+            backend: BackendExtension::None,
+        })
     }
 }
 
-impl From<crate::backends::youtube::details::AlbumRef> for AlbumRefData {
+impl From<crate::backends::youtube::details::AlbumRef> for MediaItem {
     fn from(a: crate::backends::youtube::details::AlbumRef) -> Self {
-        Self {
+        use crate::domain::media_item::{Album, BackendExtension};
+        MediaItem::Album(Album {
             id: a.id,
             title: a.title,
-            year: a.year,
+            artist: None,
+            year: a.year.and_then(|y| y.parse().ok()),
+            track_count: None,
             thumbnail: a.thumbnail,
-        }
+            explicit: false,
+            backend: BackendExtension::None,
+        })
     }
 }
 
-impl From<crate::backends::youtube::details::PlaylistRef> for PlaylistRefData {
+impl From<crate::backends::youtube::details::PlaylistRef> for MediaItem {
     fn from(p: crate::backends::youtube::details::PlaylistRef) -> Self {
-        Self {
+        use crate::domain::media_item::{Playlist, BackendExtension};
+        MediaItem::Playlist(Playlist {
             id: p.id,
             title: p.title,
+            author: p.subtitle,
+            track_count: None,
             thumbnail: p.thumbnail,
-            subtitle: p.subtitle,
-        }
+            description: None,
+            backend: BackendExtension::None,
+        })
     }
 }
 
@@ -446,9 +466,9 @@ impl From<crate::backends::youtube::details::PlaylistDetails> for PlaylistDetail
             thumbnail: p.thumbnail,
             track_count: p.track_count,
             duration_text: p.duration_text,
-            tracks: p.tracks.into_iter().map(SongData::from).collect(),
-            featured_artists: p.featured_artists.into_iter().map(ArtistRefData::from).collect(),
-            related_playlists: p.related_playlists.into_iter().map(PlaylistRefData::from).collect(),
+            tracks: p.tracks.into_iter().map(MediaItem::from).collect(),
+            featured_artists: p.featured_artists.into_iter().map(MediaItem::from).collect(),
+            related_playlists: p.related_playlists.into_iter().map(MediaItem::from).collect(),
         }
     }
 }
@@ -458,11 +478,11 @@ impl From<crate::backends::youtube::details::AlbumDetails> for AlbumDetailsData 
         Self {
             id: a.id,
             title: a.title,
-            artist: ArtistRefData::from(a.artist),
+            artist: MediaItem::from(a.artist),
             year: a.year,
             thumbnail: a.thumbnail,
-            tracks: a.tracks.into_iter().map(SongData::from).collect(),
-            more_by_artist: a.more_by_artist.into_iter().map(AlbumRefData::from).collect(),
+            tracks: a.tracks.into_iter().map(MediaItem::from).collect(),
+            more_by_artist: a.more_by_artist.into_iter().map(MediaItem::from).collect(),
         }
     }
 }
@@ -475,15 +495,58 @@ impl From<crate::backends::youtube::details::ArtistDetails> for ArtistDetailsDat
             subscribers: a.subscribers,
             description: a.description,
             thumbnail: a.thumbnail,
-            top_songs: a.top_songs.into_iter().map(SongData::from).collect(),
-            albums: a.albums.into_iter().map(AlbumRefData::from).collect(),
-            singles: a.singles.into_iter().map(AlbumRefData::from).collect(),
-            related_artists: a.related_artists.into_iter().map(ArtistRefData::from).collect(),
+            top_songs: a.top_songs.into_iter().map(MediaItem::from).collect(),
+            albums: a.albums.into_iter().map(MediaItem::from).collect(),
+            singles: a.singles.into_iter().map(MediaItem::from).collect(),
+            related_artists: a.related_artists.into_iter().map(MediaItem::from).collect(),
         }
     }
 }
 
 // Conversions from protocol types back to domain types
+// Helper to convert MediaItem back to Song
+fn media_item_to_song(m: &MediaItem) -> Song {
+    Song::from(m.clone())
+}
+
+// Helper to convert MediaItem to ArtistRef
+fn media_item_to_artist_ref(m: &MediaItem) -> crate::backends::youtube::details::ArtistRef {
+    use crate::backends::youtube::details::ArtistRef;
+    use crate::domain::media_item::Displayable;
+    ArtistRef {
+        id: m.id().to_string(),
+        name: m.title().to_string(),
+        thumbnail: m.thumbnail_url().map(|s| s.to_string()),
+    }
+}
+
+// Helper to convert MediaItem to AlbumRef
+fn media_item_to_album_ref(m: &MediaItem) -> crate::backends::youtube::details::AlbumRef {
+    use crate::backends::youtube::details::AlbumRef;
+    use crate::domain::media_item::Displayable;
+    AlbumRef {
+        id: m.id().to_string(),
+        title: m.title().to_string(),
+        year: match m {
+            MediaItem::Album(a) => a.year.map(|y| y.to_string()),
+            _ => None,
+        },
+        thumbnail: m.thumbnail_url().map(|s| s.to_string()),
+    }
+}
+
+// Helper to convert MediaItem to PlaylistRef
+fn media_item_to_playlist_ref(m: &MediaItem) -> crate::backends::youtube::details::PlaylistRef {
+    use crate::backends::youtube::details::PlaylistRef;
+    use crate::domain::media_item::Displayable;
+    PlaylistRef {
+        id: m.id().to_string(),
+        title: m.title().to_string(),
+        thumbnail: m.thumbnail_url().map(|s| s.to_string()),
+        subtitle: m.subtitle().map(|s| s.to_string()),
+    }
+}
+
 impl PlaylistDetailsData {
     pub fn to_details(&self) -> crate::backends::youtube::details::PlaylistDetails {
         use crate::backends::youtube::details::*;
@@ -495,18 +558,9 @@ impl PlaylistDetailsData {
             thumbnail: self.thumbnail.clone(),
             track_count: self.track_count,
             duration_text: self.duration_text.clone(),
-            tracks: self.tracks.iter().map(|s| s.to_song()).collect(),
-            featured_artists: self.featured_artists.iter().map(|a| ArtistRef {
-                id: a.id.clone(),
-                name: a.name.clone(),
-                thumbnail: a.thumbnail.clone(),
-            }).collect(),
-            related_playlists: self.related_playlists.iter().map(|p| PlaylistRef {
-                id: p.id.clone(),
-                title: p.title.clone(),
-                thumbnail: p.thumbnail.clone(),
-                subtitle: p.subtitle.clone(),
-            }).collect(),
+            tracks: self.tracks.iter().map(media_item_to_song).collect(),
+            featured_artists: self.featured_artists.iter().map(media_item_to_artist_ref).collect(),
+            related_playlists: self.related_playlists.iter().map(media_item_to_playlist_ref).collect(),
         }
     }
 }
@@ -517,20 +571,11 @@ impl AlbumDetailsData {
         AlbumDetails {
             id: self.id.clone(),
             title: self.title.clone(),
-            artist: ArtistRef {
-                id: self.artist.id.clone(),
-                name: self.artist.name.clone(),
-                thumbnail: self.artist.thumbnail.clone(),
-            },
+            artist: media_item_to_artist_ref(&self.artist),
             year: self.year.clone(),
             thumbnail: self.thumbnail.clone(),
-            tracks: self.tracks.iter().map(|s| s.to_song()).collect(),
-            more_by_artist: self.more_by_artist.iter().map(|a| AlbumRef {
-                id: a.id.clone(),
-                title: a.title.clone(),
-                year: a.year.clone(),
-                thumbnail: a.thumbnail.clone(),
-            }).collect(),
+            tracks: self.tracks.iter().map(media_item_to_song).collect(),
+            more_by_artist: self.more_by_artist.iter().map(media_item_to_album_ref).collect(),
         }
     }
 }
@@ -544,24 +589,10 @@ impl ArtistDetailsData {
             subscribers: self.subscribers.clone(),
             description: self.description.clone(),
             thumbnail: self.thumbnail.clone(),
-            top_songs: self.top_songs.iter().map(|s| s.to_song()).collect(),
-            albums: self.albums.iter().map(|a| AlbumRef {
-                id: a.id.clone(),
-                title: a.title.clone(),
-                year: a.year.clone(),
-                thumbnail: a.thumbnail.clone(),
-            }).collect(),
-            singles: self.singles.iter().map(|a| AlbumRef {
-                id: a.id.clone(),
-                title: a.title.clone(),
-                year: a.year.clone(),
-                thumbnail: a.thumbnail.clone(),
-            }).collect(),
-            related_artists: self.related_artists.iter().map(|a| ArtistRef {
-                id: a.id.clone(),
-                name: a.name.clone(),
-                thumbnail: a.thumbnail.clone(),
-            }).collect(),
+            top_songs: self.top_songs.iter().map(media_item_to_song).collect(),
+            albums: self.albums.iter().map(media_item_to_album_ref).collect(),
+            singles: self.singles.iter().map(media_item_to_album_ref).collect(),
+            related_artists: self.related_artists.iter().map(media_item_to_artist_ref).collect(),
         }
     }
 }
