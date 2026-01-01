@@ -578,6 +578,7 @@ impl super::display::ListItemDisplay for ContentRef {
             ContentType::Directory => " ", // Nerd Font folder icon
             ContentType::Video => " ",   // Nerd Font video icon
             ContentType::Track => " ",   // Nerd Font music icon
+            ContentType::Header => "─",  // Section divider
         }
     }
 
@@ -592,6 +593,7 @@ impl super::display::ListItemDisplay for ContentRef {
 
 /// Type of content for navigation and rendering hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+#[non_exhaustive]  // Allow adding variants without breaking changes
 pub enum ContentType {
     #[default]
     Track,
@@ -600,6 +602,8 @@ pub enum ContentType {
     Playlist,
     Directory,
     Video,
+    /// Section header in search results (merged from api::ContentType)
+    Header,
 }
 
 /// Album release type.
@@ -843,9 +847,15 @@ pub enum SectionKey {
     // Content sections
     Tracks,         // Album/playlist tracks
     TopSongs,       // Artist top songs
-    SearchResults,  // Search result items
+    SearchResults,  // Search result items (legacy)
     NowPlaying,     // Queue current track
     UpNext,         // Queue upcoming tracks
+
+    // Search result sections (grouped by content type)
+    Songs,          // Search: song results
+    Artists,        // Search: artist results
+    Playlists,      // Search: playlist results
+    Videos,         // Search: video results
 
     // Related content
     RelatedAlbums,

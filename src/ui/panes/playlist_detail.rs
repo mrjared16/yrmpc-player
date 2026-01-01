@@ -67,6 +67,19 @@ impl NavigatorPane for PlaylistDetailPane {
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 PaneAction::Handled
             }
+            ContentAction::Enqueue(items) => {
+                // 'a' key: Add to queue without playing
+                let songs: Vec<_> = items
+                    .iter()
+                    .filter_map(|i| i.as_song())
+                    .cloned()
+                    .collect();
+                if !songs.is_empty() {
+                    PaneAction::Enqueue(songs)
+                } else {
+                    PaneAction::Handled
+                }
+            }
         })
     }
 }
@@ -106,8 +119,6 @@ impl PlaylistDetailPane {
                     name: content_ref.name,
                 })
             }
-            #[allow(deprecated)]
-            DetailItem::Header { .. } => PaneAction::Handled,
         }
     }
 }

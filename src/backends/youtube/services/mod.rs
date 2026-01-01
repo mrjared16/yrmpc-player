@@ -7,8 +7,10 @@
 
 pub mod api_service;
 pub mod playback_service;
+pub mod playback_state;
 pub mod queue_service;
 
 pub use api_service::ApiService;
 pub use playback_service::PlaybackService;
+pub use playback_state::{PlaybackState, PlaybackStateTracker};
 pub use queue_service::{QueueService, QueueItem, RepeatMode};

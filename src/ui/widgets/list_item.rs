@@ -259,4 +259,185 @@ mod tests {
         let header = ListItem::header("Test");
         assert!(header.into_content().is_none());
     }
+
+    // ============================================================================
+    // TDD Bug Regression Tests
+    // These tests prove bugs exist (should FAIL before fix)
+    // ============================================================================
+
+    /// BUG: task-39 - All items render as songs (type distinction lost)
+    ///
+    /// EXPECTED BEHAVIOR: Artist/Album/Playlist refs should have distinct icons
+    /// ACTUAL BEHAVIOR: All items show song icon (or no icon distinction)
+    ///
+    /// ROOT CAUSE: ListItem delegates to DetailItem which delegates to ContentRef
+    /// This test verifies the icon chain works correctly
+    #[test]
+    fn list_item_from_artist_ref_has_artist_icon() {
+        use crate::domain::content::{ContentRef, ContentType};
+        use crate::domain::display::ListItemDisplay;
+
+        let artist_ref = ContentRef {
+            content_type: ContentType::Artist,
+            id: "artist123".into(),
+            name: "Test Artist".into(),
+            thumbnail: None,
+            subtitle: None,
+        };
+        let detail_item = DetailItem::Ref(artist_ref);
+        let list_item = ListItem::from(detail_item);
+
+        let icon = list_item.type_icon();
+
+        // This test verifies that artist refs get the correct icon
+        // The icon should be artist-specific (👤 or Nerd Font  )
+        // NOT the song icon (🎵 or empty)
+        assert!(
+            !icon.is_empty(),
+            "BUG: Artist ref has empty icon. Expected artist icon like 👤 or  "
+        );
+        assert_ne!(
+            icon, "🎵",
+            "BUG: Artist ref has song icon. Should have artist icon."
+        );
+    }
+
+    #[test]
+    fn list_item_from_album_ref_has_album_icon() {
+        use crate::domain::content::{ContentRef, ContentType};
+        use crate::domain::display::ListItemDisplay;
+
+        let album_ref = ContentRef {
+            content_type: ContentType::Album,
+            id: "album456".into(),
+            name: "Test Album".into(),
+            thumbnail: None,
+            subtitle: None,
+        };
+        let detail_item = DetailItem::Ref(album_ref);
+        let list_item = ListItem::from(detail_item);
+
+        let icon = list_item.type_icon();
+
+        assert!(
+            !icon.is_empty(),
+            "BUG: Album ref has empty icon. Expected album icon like 💿 or  "
+        );
+        assert_ne!(
+            icon, "🎵",
+            "BUG: Album ref has song icon. Should have album icon."
+        );
+    }
+
+    #[test]
+    fn list_item_from_playlist_ref_has_playlist_icon() {
+        use crate::domain::content::{ContentRef, ContentType};
+        use crate::domain::display::ListItemDisplay;
+
+        let playlist_ref = ContentRef {
+            content_type: ContentType::Playlist,
+            id: "playlist789".into(),
+            name: "Test Playlist".into(),
+            thumbnail: None,
+            subtitle: None,
+        };
+        let detail_item = DetailItem::Ref(playlist_ref);
+        let list_item = ListItem::from(detail_item);
+
+        let icon = list_item.type_icon();
+
+        assert!(
+            !icon.is_empty(),
+            "BUG: Playlist ref has empty icon. Expected playlist icon like 📁 or  "
+        );
+        assert_ne!(
+            icon, "🎵",
+            "BUG: Playlist ref has song icon. Should have playlist icon."
+        );
+    }
+
+    // =========================================================================
+    // Task-53: Thumbnail Preservation Through UI Pipeline
+    // =========================================================================
+
+    #[test]
+    fn list_item_preserves_song_thumbnail_through_full_pipeline() {
+        use crate::domain::display::ListItemDisplay;
+        use std::collections::HashMap;
+
+        // Arrange: Create a Song with thumbnail in metadata
+        let mut metadata = HashMap::new();
+        metadata.insert("title".to_string(), vec!["Test Song".to_string()]);
+        metadata.insert("artist".to_string(), vec!["Test Artist".to_string()]);
+        metadata.insert("thumbnail".to_string(), vec!["https://example.com/thumb.jpg".to_string()]);
+
+        let song = Song {
+            id: None,
+            uri: "video123".to_string(),
+            duration: None,
+            metadata,
+            last_modified: None,
+            added: None,
+        };
+
+        // Verify Song has thumbnail
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://example.com/thumb.jpg"),
+            "Precondition: Song should have thumbnail in metadata"
+        );
+
+        // Act: Convert Song → DetailItem → ListItem
+        let detail_item = DetailItem::from(song);
+
+        // Verify DetailItem has thumbnail
+        assert_eq!(
+            detail_item.thumbnail_url(),
+            Some("https://example.com/thumb.jpg"),
+            "BUG: DetailItem should preserve Song's thumbnail"
+        );
+
+        let list_item = ListItem::from(detail_item);
+
+        // Assert: ListItem should have thumbnail
+        assert_eq!(
+            list_item.thumbnail_url(),
+            Some("https://example.com/thumb.jpg"),
+            "BUG: ListItem should preserve thumbnail through full Song → DetailItem → ListItem pipeline"
+        );
+    }
+
+    #[test]
+    fn list_item_preserves_artist_ref_thumbnail_through_full_pipeline() {
+        use crate::domain::content::{ContentRef, ContentType};
+        use crate::domain::display::ListItemDisplay;
+
+        // Arrange: Create a ContentRef (artist) with thumbnail
+        let artist_ref = ContentRef {
+            content_type: ContentType::Artist,
+            id: "artist123".into(),
+            name: "Famous Artist".into(),
+            thumbnail: Some("https://example.com/artist.jpg".into()),
+            subtitle: Some("1M subscribers".into()),
+        };
+
+        // Act: Convert to DetailItem → ListItem
+        let detail_item = DetailItem::Ref(artist_ref);
+
+        // Verify DetailItem has thumbnail
+        assert_eq!(
+            detail_item.thumbnail_url(),
+            Some("https://example.com/artist.jpg"),
+            "BUG: DetailItem::Ref should preserve ContentRef thumbnail"
+        );
+
+        let list_item = ListItem::from(detail_item);
+
+        // Assert: ListItem should have thumbnail
+        assert_eq!(
+            list_item.thumbnail_url(),
+            Some("https://example.com/artist.jpg"),
+            "BUG: ListItem should preserve thumbnail for ContentRef through full pipeline"
+        );
+    }
 }

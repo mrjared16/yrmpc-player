@@ -173,10 +173,11 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
     ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| {
             Ok(match item {
+                // Convert MediaItem to Song for legacy pane compatibility
                 DirOrSong::Dir { full_path, playlist: false, .. } => client.find(
                     &[Filter::new_with_kind(Tag::File, &full_path, FilterKind::StartsWith)],
                     None,
-                )?,
+                )?.into_iter().map(Song::from).collect(),
                 DirOrSong::Dir { name, playlist: true, .. } => {
                     client.list_playlist_info(&name, None)?
                 }

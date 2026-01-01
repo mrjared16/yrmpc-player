@@ -45,7 +45,7 @@ use anyhow::{Context, Result};
 
 use super::{
     protocol::{ServerCommand, ServerResponse, framing},
-    services::{ApiService, PlaybackService, QueueService},
+    services::{ApiService, PlaybackService, QueueService, PlaybackStateTracker},
     config::ExtractorType,
 };
 
@@ -54,6 +54,7 @@ pub struct YouTubeServer {
     api: Arc<ApiService>,
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
+    state_tracker: Arc<PlaybackStateTracker>,
     running: Arc<AtomicBool>,
     socket_path: PathBuf,
     mpv_socket_path: PathBuf,
@@ -80,6 +81,9 @@ impl YouTubeServer {
         // Create queue service
         let queue = Arc::new(QueueService::new());
 
+        // Create state tracker
+        let state_tracker = Arc::new(PlaybackStateTracker::new());
+
         // Create event broadcast channel (unbounded for non-blocking sends)
         let (event_tx, event_rx) = channel::unbounded();
 
@@ -87,6 +91,7 @@ impl YouTubeServer {
             api,
             playback,
             queue,
+            state_tracker,
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,
@@ -143,6 +148,7 @@ impl YouTubeServer {
         let running = Arc::clone(&self.running);
         let playback = Arc::clone(&self.playback);
         let queue = Arc::clone(&self.queue);
+        let state_tracker = Arc::clone(&self.state_tracker);
 
         thread::spawn(move || {
             log::info!("Internal event processor started");
@@ -154,7 +160,7 @@ impl YouTubeServer {
 
                         if event.starts_with("end-file:") {
                             let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                            orchestrator::handle_track_ended(&playback, &queue, reason);
+                            orchestrator::handle_track_ended(&playback, &queue, &state_tracker, reason);
                         }
                     }
                     Err(crossbeam::channel::RecvTimeoutError::Timeout) => {}
@@ -221,10 +227,10 @@ impl YouTubeServer {
             ServerCommand::SeekRelative(delta) => handlers::handle_seek_relative(&self.playback, delta),
 
             // Navigation (uses orchestrator)
-            ServerCommand::Next => orchestrator::next_track(&self.playback, &self.queue),
-            ServerCommand::Previous => orchestrator::previous_track(&self.playback, &self.queue),
-            ServerCommand::PlayPos(pos) => orchestrator::play_position(&self.playback, &self.queue, pos),
-            ServerCommand::PlayId(id) => orchestrator::play_id(&self.playback, &self.queue, id),
+            ServerCommand::Next => orchestrator::next_track(&self.playback, &self.queue, &self.state_tracker),
+            ServerCommand::Previous => orchestrator::previous_track(&self.playback, &self.queue, &self.state_tracker),
+            ServerCommand::PlayPos(pos) => orchestrator::play_position(&self.playback, &self.queue, pos, &self.state_tracker),
+            ServerCommand::PlayId(id) => orchestrator::play_id(&self.playback, &self.queue, id, &self.state_tracker),
 
             // Queue handlers
             ServerCommand::Add { uri, position } => {
@@ -269,7 +275,7 @@ impl YouTubeServer {
                 handlers::handle_get_suggestions(&self.api, &query)
             }
             ServerCommand::GetLibrary { category } => handlers::handle_get_library(&category),
-            
+
             // Rich browse details handlers
             ServerCommand::BrowsePlaylistDetails { playlist_id } => {
                 handlers::handle_browse_playlist_details(&self.api, &playlist_id)
@@ -294,7 +300,7 @@ impl YouTubeServer {
             Ok(event) => {
                 if event.starts_with("end-file:") {
                     let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                    orchestrator::handle_track_ended(&self.playback, &self.queue, reason);
+                    orchestrator::handle_track_ended(&self.playback, &self.queue, &self.state_tracker, reason);
                     return ServerResponse::IdleEvents(vec!["player".to_string()]);
                 }
 

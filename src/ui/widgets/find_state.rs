@@ -183,10 +183,10 @@ impl FindState {
         }
     }
 
-    /// Format display string like "[2/15]" or "[0/0]"
+    /// Format display string like "/keyword [2/15]" or "/keyword [0/0]"
     pub fn display_string(&self) -> String {
         let (current, total) = self.current_of_total();
-        format!("[{}/{}]", current, total)
+        format!("/{} [{}/{}]", self.find_text, current, total)
     }
 
     /// Get all matched indices
@@ -274,8 +274,8 @@ mod tests {
         let mut find = FindState::with_text("Match");
         find.apply(&items);
 
-        assert_eq!(find.display_string(), "[1/3]");
+        assert_eq!(find.display_string(), "/Match [1/3]");
         find.next_match();
-        assert_eq!(find.display_string(), "[2/3]");
+        assert_eq!(find.display_string(), "/Match [2/3]");
     }
 }

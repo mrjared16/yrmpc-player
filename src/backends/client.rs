@@ -69,7 +69,22 @@ fn item_to_song(item: &Item) -> crate::domain::Song {
     if let Some(ref artist) = item.subtitle {
         metadata.insert("artist".to_string(), vec![artist.clone()]);
     }
-    
+    // FIX: Copy thumbnail (Task-53) and type (Task-39)
+    if let Some(ref thumb) = item.thumbnail {
+        metadata.insert("thumbnail".to_string(), vec![thumb.clone()]);
+    }
+    // Map ContentType to type string for icons
+    let type_str = match item.content_type {
+        api::ContentType::Track => "song",
+        api::ContentType::Album => "album",
+        api::ContentType::Artist => "artist",
+        api::ContentType::Playlist => "playlist",
+        api::ContentType::Directory => "directory",
+        api::ContentType::Header => "header",
+        api::ContentType::Video => "video",
+    };
+    metadata.insert("type".to_string(), vec![type_str.to_string()]);
+
     crate::domain::Song {
         id: item.queue_id,
         uri: item.id.clone(),
@@ -184,22 +199,22 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     /// Get mutable reference to backend as trait object.
-    /// 
+    ///
     /// # Internal Use Only
-    /// 
+    ///
     /// This is an escape hatch for code that needs direct backend access.
     /// Prefer using the typed controller methods instead:
     /// - `playback()` for play/pause/stop
-    /// - `queue()` for queue operations  
+    /// - `queue()` for queue operations
     /// - `status()` for status queries (returns rich `domain::Status`)
     /// - `volume_control()` for volume
     /// - `library()` for search/browse
     /// - `youtube()` for YouTube-specific features (browse details)
-    /// 
+    ///
     // =========================================================================
     // CONTROLLER API - New organized interface
     // =========================================================================
-    // 
+    //
     // These methods provide a clean, organized API grouped by functionality.
     // Use these instead of the flat method list below.
     //
@@ -252,7 +267,7 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     /// Get saved playlists controller (MPD only)
-    /// 
+    ///
     /// Returns `None` if the backend doesn't support saved playlists.
     pub fn saved_playlists(&mut self) -> Option<SavedPlaylistController<'_>> {
         match self {
@@ -264,7 +279,7 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     /// Get sticker controller for metadata operations (MPD only)
-    /// 
+    ///
     /// Returns `None` if the backend doesn't support stickers.
     pub fn stickers(&mut self) -> Option<StickerController<'_>> {
         match self {
@@ -276,7 +291,7 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     /// Get output controller for audio output management (MPD only)
-    /// 
+    ///
     /// Returns `None` if the backend doesn't support output control.
     pub fn outputs_control(&mut self) -> Option<OutputController<'_>> {
         match self {
@@ -288,7 +303,7 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     /// Get database controller for update/rescan operations (MPD only)
-    /// 
+    ///
     /// Returns `None` if the backend doesn't support database management.
     pub fn database(&mut self) -> Option<DatabaseController<'_>> {
         match self {
@@ -308,7 +323,7 @@ impl<'name> BackendDispatcher<'name> {
     pub fn name(&self) -> &'static str {
         api::Backend::name(self)
     }
-    
+
     /// Get the backend capabilities using the new api::Backend trait
     pub fn capabilities(&self) -> &'static [api::Capability] {
         match self {
@@ -320,7 +335,7 @@ impl<'name> BackendDispatcher<'name> {
     // =========================================================================
     // LEGACY API - Deprecated, use controllers above instead
     // =========================================================================
-    // 
+    //
     // These methods are kept for backward compatibility.
     // They will be removed in a future version.
     //
@@ -488,7 +503,8 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     // ----- Library (use library() instead) -----
-    // NOTE: These methods now delegate to api::Discovery trait (not MusicBackend)
+    // NOTE: lsinfo/list_all/search/find use api::Discovery for search,
+    // but some MPD-specific features remain as direct calls
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().suggestions(query) instead")]
     pub fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>> {
@@ -608,16 +624,16 @@ impl<'name> BackendDispatcher<'name> {
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().search(filter) instead")]
-    pub fn search(&mut self, filter: &[Filter]) -> Result<Vec<crate::domain::Song>> {
+    pub fn search(&mut self, filter: &[Filter]) -> Result<Vec<crate::domain::MediaItem>> {
         // Convert filter to SearchQuery and use api::Discovery
         let query_text = filter.iter()
             .find(|f| !f.value.is_empty())
             .map(|f| f.value.as_ref())
             .unwrap_or("");
-        
+
         let results = api::Discovery::search(self, api::SearchQuery::new(query_text))?;
-        // Convert Items back to Songs for backward compat
-        Ok(results.items.into_iter().map(|item| item_to_song(&item)).collect())
+        // Convert Items directly to MediaItem (no lossy Song conversion!)
+        Ok(results.items.into_iter().map(crate::domain::MediaItem::from).collect())
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().find(filter, window) instead")]
@@ -625,12 +641,16 @@ impl<'name> BackendDispatcher<'name> {
         &mut self,
         filter: &[Filter],
         window: Option<(u32, u32)>,
-    ) -> Result<Vec<crate::domain::Song>> {
+    ) -> Result<Vec<crate::domain::MediaItem>> {
         // MPD-specific exact match with window - keep direct call
         match self {
             BackendDispatcher::Mpd(b) => {
                 let _ = window; // MPD client find doesn't support window in this wrapper
-                Ok(b.client.find(filter)?.into_iter().map(Into::into).collect())
+                // Convert MPD Songs to MediaItem::Track for consistency
+                Ok(b.client.find(filter)?.into_iter().map(|s| {
+                    let song: crate::domain::Song = s.into();
+                    crate::domain::MediaItem::from(song)
+                }).collect())
             }
             BackendDispatcher::YouTube(_) => self.search(filter),
         }
@@ -1513,7 +1533,7 @@ impl api::StatusQuery for BackendDispatcher<'_> {
 
 pub trait ClientStream: std::io::Write + Send {
     fn shutdown_both(&mut self) -> std::io::Result<()>;
-    
+
     /// Write MPD "noidle" command. Returns Ok without writing for non-MPD backends.
     fn write_noidle(&mut self) -> std::io::Result<()> {
         // Default implementation writes noidle for MPD compatibility
@@ -1545,7 +1565,7 @@ impl ClientStream for YouTubeStream {
     fn shutdown_both(&mut self) -> std::io::Result<()> {
         self.0.shutdown(std::net::Shutdown::Both)
     }
-    
+
     /// YouTube doesn't use MPD idle protocol, so don't write noidle
     fn write_noidle(&mut self) -> std::io::Result<()> {
         Ok(()) // No-op for YouTube
@@ -1555,5 +1575,145 @@ impl ClientStream for YouTubeStream {
 impl ClientStream for std::os::unix::net::UnixStream {
     fn shutdown_both(&mut self) -> std::io::Result<()> {
         self.shutdown(std::net::Shutdown::Both)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::display::ListItemDisplay;
+
+    #[test]
+    fn item_to_song_preserves_thumbnail() {
+        let item = Item {
+            id: "video123".to_string(),
+            content_type: api::ContentType::Track,
+            title: "Test Song".to_string(),
+            subtitle: Some("Test Artist".to_string()),
+            thumbnail: Some("https://example.com/thumb.jpg".to_string()),
+            duration: Some(std::time::Duration::from_secs(180)),
+            queue_id: None,
+        };
+
+        let song = item_to_song(&item);
+
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://example.com/thumb.jpg"),
+            "item_to_song should copy thumbnail to Song metadata"
+        );
+    }
+
+    #[test]
+    fn item_to_song_preserves_content_type_as_artist() {
+        let item = Item {
+            id: "artist123".to_string(),
+            content_type: api::ContentType::Artist,
+            title: "Famous Artist".to_string(),
+            subtitle: Some("1M subscribers".to_string()),
+            thumbnail: Some("https://example.com/artist.jpg".to_string()),
+            duration: None,
+            queue_id: None,
+        };
+
+        let song = item_to_song(&item);
+
+        assert_eq!(song.item_type(), Some("artist"));
+        assert_eq!(song.type_icon(), "🎤", "Artist should have microphone icon");
+        assert_eq!(song.thumbnail_url(), Some("https://example.com/artist.jpg"));
+    }
+
+    #[test]
+    fn item_to_song_preserves_content_type_as_album() {
+        let item = Item {
+            id: "album123".to_string(),
+            content_type: api::ContentType::Album,
+            title: "Greatest Hits".to_string(),
+            subtitle: Some("2024".to_string()),
+            thumbnail: Some("https://example.com/album.jpg".to_string()),
+            duration: None,
+            queue_id: None,
+        };
+
+        let song = item_to_song(&item);
+
+        assert_eq!(song.item_type(), Some("album"));
+        assert_eq!(song.type_icon(), "💿", "Album should have disc icon");
+        assert_eq!(song.thumbnail_url(), Some("https://example.com/album.jpg"));
+    }
+
+    /// Integration test: Verifies the FULL conversion chain from api::Item → Song → DetailItem
+    /// This test would have been RED before the fix because:
+    /// 1. item_to_song() didn't copy thumbnail → DetailItem::thumbnail_url() returned None
+    /// 2. item_to_song() didn't copy type → Song::item_type() returned None
+    ///
+    /// NOTE: DetailItem::type_icon() currently shows "🎵" for all songs because
+    /// From<Song> for DetailItem doesn't check metadata["type"]. This is a separate
+    /// architectural issue (Task-39 part 2). For now, we verify at the Song level.
+    ///
+    /// This is the actual code path used by SearchPaneV2:
+    /// BackendDispatcher::search() → item_to_song() → QueryResult → DetailItem::from()
+    #[test]
+    fn integration_full_conversion_chain_preserves_metadata() {
+        // Arrange: Create Items with ALL metadata (simulates what api::Discovery returns)
+        let items = vec![
+            Item {
+                id: "song123".to_string(),
+                content_type: api::ContentType::Track,
+                title: "Integration Test Song".to_string(),
+                subtitle: Some("Test Artist".to_string()),
+                thumbnail: Some("https://ytimg.com/song.jpg".to_string()),
+                duration: Some(std::time::Duration::from_secs(240)),
+                queue_id: Some(42),
+            },
+            Item {
+                id: "artist456".to_string(),
+                content_type: api::ContentType::Artist,
+                title: "Integration Test Artist".to_string(),
+                subtitle: Some("10M subscribers".to_string()),
+                thumbnail: Some("https://yt3.ggpht.com/artist.jpg".to_string()),
+                duration: None,
+                queue_id: None,
+            },
+            Item {
+                id: "album789".to_string(),
+                content_type: api::ContentType::Album,
+                title: "Integration Test Album".to_string(),
+                subtitle: Some("2024 • 12 songs".to_string()),
+                thumbnail: Some("https://lh3.googleusercontent.com/album.jpg".to_string()),
+                duration: None,
+                queue_id: None,
+            },
+        ];
+
+        // Act: Convert through item_to_song (same as BackendDispatcher::search)
+        let songs: Vec<_> = items.iter().map(item_to_song).collect();
+
+        // Assert: Verify ALL metadata survived the conversion
+        // These assertions would have FAILED before the fix to item_to_song()
+
+        // Song (Track)
+        assert_eq!(songs[0].thumbnail_url(), Some("https://ytimg.com/song.jpg"),
+            "REGRESSION: Song thumbnail lost in item_to_song()");
+        assert_eq!(songs[0].item_type(), Some("song"),
+            "REGRESSION: Song type lost in item_to_song()");
+        assert_eq!(songs[0].type_icon(), "🎵",
+            "REGRESSION: Song icon wrong - expected music note for Track");
+
+        // Artist
+        assert_eq!(songs[1].thumbnail_url(), Some("https://yt3.ggpht.com/artist.jpg"),
+            "REGRESSION: Artist thumbnail lost in item_to_song()");
+        assert_eq!(songs[1].item_type(), Some("artist"),
+            "REGRESSION: Artist type lost in item_to_song()");
+        assert_eq!(songs[1].type_icon(), "🎤",
+            "REGRESSION: Artist icon wrong - expected microphone");
+
+        // Album
+        assert_eq!(songs[2].thumbnail_url(), Some("https://lh3.googleusercontent.com/album.jpg"),
+            "REGRESSION: Album thumbnail lost in item_to_song()");
+        assert_eq!(songs[2].item_type(), Some("album"),
+            "REGRESSION: Album type lost in item_to_song()");
+        assert_eq!(songs[2].type_icon(), "💿",
+            "REGRESSION: Album icon wrong - expected disc");
     }
 }

@@ -24,8 +24,8 @@ impl ApiService {
         self.api.load_cookies(path)
     }
 
-    /// Search for music - returns type-safe SearchItem enum
-    pub fn search_items(&self, query: &str) -> Result<Vec<SearchItem>> {
+    /// Search for music - returns structured SearchResults with sections
+    pub fn search_items(&self, query: &str) -> Result<crate::domain::search::SearchResults> {
         self.api.search_items(query)
     }
 

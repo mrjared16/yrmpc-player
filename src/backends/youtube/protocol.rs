@@ -233,7 +233,6 @@ pub enum SearchItemData {
     Artist(BrowsableData),
     Album(BrowsableData),
     Playlist(BrowsableData),
-    Header(String),
 }
 
 /// Data for playable items (songs/videos)
@@ -303,7 +302,6 @@ impl From<crate::domain::search::SearchItem> for SearchItemData {
                 thumbnail: p.thumbnail,
                 can_queue: true,
             }),
-            SearchItem::Header(h) => SearchItemData::Header(h),
         }
     }
 }

@@ -189,8 +189,8 @@ mod tests {
     }
 
     #[test]
-    fn test_default_is_ytdlp() {
+    fn test_default_is_ytx() {
         let extractor = UrlResolver::default();
-        assert_eq!(extractor.extractor_type(), ExtractorType::YtDlp);
+        assert_eq!(extractor.extractor_type(), ExtractorType::Ytx);
     }
 }

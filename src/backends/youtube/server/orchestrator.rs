@@ -13,7 +13,7 @@ use anyhow::Result;
 
 use crate::backends::youtube::{
     protocol::{ServerResponse, SongData},
-    services::{PlaybackService, QueueService, RepeatMode},
+    services::{PlaybackService, QueueService, RepeatMode, PlaybackState, PlaybackStateTracker},
 };
 
 /// Prefetch window size for gapless playback
@@ -29,6 +29,7 @@ pub fn play_position(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     pos: usize,
+    state_tracker: &Arc<PlaybackStateTracker>,
 ) -> ServerResponse {
     log::info!("play_position called for pos={} (queue len={})", pos, queue.len());
 
@@ -36,6 +37,7 @@ pub fn play_position(
     if let Err(e) = playback.stop() {
         log::debug!("stop() returned error (may be idle): {}", e);
     }
+    state_tracker.force_set(PlaybackState::Idle);
 
     // Clear any remaining buffer entries
     if let Err(e) = playback.playlist_clear() {
@@ -46,6 +48,12 @@ pub fn play_position(
     if pos >= queue_len {
         return ServerResponse::Error("Position out of bounds".to_string());
     }
+
+    // Update current position in our queue and playback base tracking
+    // We do this before URL resolution so that the UI reflects the intent to play
+    // even if resolution fails (e.g. network error, or in tests).
+    queue.set_current(Some(pos));
+    queue.set_playback_base_index(pos);
 
     // Resolve and append current + next tracks (rolling window)
     let prefetch_count = PREFETCH_WINDOW_SIZE.min(queue_len - pos);
@@ -104,18 +112,16 @@ pub fn play_position(
         }
     }
 
-    // Update current position in our queue and playback base tracking
-    queue.set_current(Some(pos));
-    queue.set_playback_base_index(pos);
-
     // Play first track in MPV's playlist
     match playback.playlist_play_index(0) {
         Ok(_) => {
             log::info!("Playing position {} (prefetched {} tracks)", pos, prefetch_count);
+            state_tracker.force_set(PlaybackState::Playing);
             ServerResponse::Ok
         }
         Err(e) => {
             log::error!("Failed to play playlist index 0: {}", e);
+            state_tracker.force_set(PlaybackState::Idle);
             ServerResponse::Error(e.to_string())
         }
     }
@@ -126,8 +132,9 @@ pub fn play_position_internal(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     pos: usize,
+    state_tracker: &Arc<PlaybackStateTracker>,
 ) -> Result<()> {
-    match play_position(playback, queue, pos) {
+    match play_position(playback, queue, pos, state_tracker) {
         ServerResponse::Ok => Ok(()),
         ServerResponse::Error(e) => Err(anyhow::anyhow!("{}", e)),
         _ => Ok(()),
@@ -144,15 +151,17 @@ pub fn play_position_internal(
 pub fn handle_track_ended(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
     reason: &str,
 ) {
     log::info!("Track ended with reason: {}", reason);
 
     match reason {
-        "eof" => handle_eof(playback, queue),
-        "error" => handle_playback_error(playback, queue),
+        "eof" => handle_eof(playback, queue, state_tracker),
+        "error" => handle_playback_error(playback, queue, state_tracker),
         "stop" => {
             log::debug!("Playback stopped by user");
+            state_tracker.force_set(PlaybackState::Stopped);
         }
         _ => {
             log::debug!("Unhandled end-file reason: {}", reason);
@@ -161,28 +170,48 @@ pub fn handle_track_ended(
 }
 
 /// Handle natural end of file (eof)
-fn handle_eof(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) {
+fn handle_eof(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) {
+    log::info!("[DIAG-EOF] handle_eof: start");
+    state_tracker.force_set(PlaybackState::EndOfFile);
     let repeat_mode = queue.repeat_mode();
+    let current_idx = queue.current_index();
+    let queue_len = queue.len();
+    log::info!("[DIAG-EOF] handle_eof: repeat_mode={:?} current_idx={:?} queue_len={}", repeat_mode, current_idx, queue_len);
 
     // Handle Repeat One - replay current track
     if repeat_mode == RepeatMode::One {
-        log::info!("Repeat One: replaying current track");
+        log::info!("[DIAG-EOF] Repeat One: replaying current track");
+        if let Some(current_idx) = queue.current_index() {
+             let _ = play_position_internal(playback, queue, current_idx, state_tracker);
+             return;
+        }
+        // Fallback to old behavior if no current index (shouldn't happen)
         if let Err(e) = playback.seek(0.0, "absolute") {
             log::error!("Failed to seek to start: {}", e);
         }
         if let Err(e) = playback.unpause() {
             log::error!("Failed to unpause: {}", e);
         }
+        state_tracker.force_set(PlaybackState::Playing);
         return;
     }
 
     // Natural end - MPV auto-advanced to next track
+    // Use queue.current_index() as source of truth (NOT mpv_pos) for reliability
+    // Check mpv_pos primarily to detect if we advanced within the window or if the window is done
     let mpv_pos = playback.get_playlist_pos().unwrap_or(-1);
+    log::info!("[DIAG-EOF] handle_eof: mpv_pos={}", mpv_pos);
 
     if mpv_pos < 0 {
-        handle_end_of_window(playback, queue, repeat_mode);
+        log::info!("[DIAG-EOF] handle_eof: calling handle_end_of_window");
+        handle_end_of_window(playback, queue, state_tracker, repeat_mode);
     } else {
-        handle_within_window_advance(playback, queue, mpv_pos as usize);
+        log::info!("[DIAG-EOF] handle_eof: calling handle_within_window_advance");
+        handle_within_window_advance(playback, queue, state_tracker, mpv_pos as usize);
     }
 }
 
@@ -190,24 +219,31 @@ fn handle_eof(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) {
 fn handle_end_of_window(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
     repeat_mode: RepeatMode,
 ) {
+    log::info!("[DIAG-EOF] handle_end_of_window: start");
     if let Some(current) = queue.current_index() {
         let next_pos = current + 1;
+        log::info!("[DIAG-EOF] handle_end_of_window: current={} next_pos={} queue_len={}", current, next_pos, queue.len());
         if next_pos < queue.len() {
             // More songs in queue - start new prefetch window
-            log::info!("End of prefetch window, loading next batch at {}", next_pos);
-            let _ = play_position_internal(playback, queue, next_pos);
+            log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", next_pos);
+            let _ = play_position_internal(playback, queue, next_pos, state_tracker);
         } else {
             // At end of queue - check Repeat All
             if repeat_mode == RepeatMode::All {
-                log::info!("Repeat All: looping back to start");
-                let _ = play_position_internal(playback, queue, 0);
+                log::info!("[DIAG-EOF] Repeat All: looping back to start");
+                let _ = play_position_internal(playback, queue, 0, state_tracker);
             } else {
-                log::info!("Reached end of queue");
+                log::info!("[DIAG-EOF] Reached end of queue, going idle");
                 queue.set_current(None);
+                state_tracker.force_set(PlaybackState::Idle);
             }
         }
+    } else {
+        log::warn!("[DIAG-EOF] EOF with no current_index - staying idle");
+        state_tracker.force_set(PlaybackState::Idle);
     }
 }
 
@@ -215,14 +251,17 @@ fn handle_end_of_window(
 fn handle_within_window_advance(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
     mpv_pos: usize,
 ) {
     let base_index = queue.playback_base_index();
     let new_queue_pos = base_index + mpv_pos;
+    log::info!("[DIAG-EOF] handle_within_window_advance: mpv_pos={} base_index={} new_queue_pos={} queue_len={}", mpv_pos, base_index, new_queue_pos, queue.len());
 
     if new_queue_pos < queue.len() {
-        log::debug!("MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
+        log::info!("[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
         queue.set_current(Some(new_queue_pos));
+        state_tracker.force_set(PlaybackState::Playing);
 
         // Update MPRIS metadata for current track
         if let Ok(song) = queue.get_by_index(new_queue_pos) {
@@ -251,12 +290,18 @@ fn handle_within_window_advance(
 }
 
 /// Handle playback error by skipping to next track
-fn handle_playback_error(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) {
+fn handle_playback_error(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) {
     log::warn!("Playback error, attempting to skip to next");
     if let Some(current) = queue.current_index() {
         let next_pos = current + 1;
         if next_pos < queue.len() {
-            let _ = play_position_internal(playback, queue, next_pos);
+            let _ = play_position_internal(playback, queue, next_pos, state_tracker);
+        } else {
+            state_tracker.force_set(PlaybackState::Idle);
         }
     }
 }
@@ -300,32 +345,124 @@ pub fn get_playlist(queue: &Arc<QueueService>) -> ServerResponse {
 }
 
 /// Next track navigation
-pub fn next_track(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) -> ServerResponse {
+pub fn next_track(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) -> ServerResponse {
     match queue.next_index() {
-        Some(idx) => play_position(playback, queue, idx),
+        Some(idx) => play_position(playback, queue, idx, state_tracker),
         None => ServerResponse::Error("No next track".into()),
     }
 }
 
 /// Previous track navigation
-pub fn previous_track(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) -> ServerResponse {
+pub fn previous_track(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) -> ServerResponse {
     match queue.previous_index() {
         Some(0) => {
             // At first track, restart current track
             match playback.seek(0.0, "absolute") {
-                Ok(_) => ServerResponse::Ok,
+                Ok(_) => {
+                    state_tracker.force_set(PlaybackState::Playing);
+                    ServerResponse::Ok
+                }
                 Err(e) => ServerResponse::Error(e.to_string()),
             }
         }
-        Some(idx) => play_position(playback, queue, idx),
+        Some(idx) => play_position(playback, queue, idx, state_tracker),
         None => ServerResponse::Error("No previous track".into()),
     }
 }
 
 /// Play by song ID
-pub fn play_id(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>, id: u32) -> ServerResponse {
+pub fn play_id(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    id: u32,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) -> ServerResponse {
     match queue.find_index_by_id(id) {
-        Some(pos) => play_position(playback, queue, pos),
+        Some(pos) => play_position(playback, queue, pos, state_tracker),
         None => ServerResponse::Error("Song not found".into()),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::PathBuf;
+    use crate::backends::youtube::config::ExtractorType;
+    use crate::domain::Song;
+
+    fn setup_test_services() -> (Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>) {
+        // Mock socket path
+        let socket = PathBuf::from("/tmp/test-mpv.sock");
+
+        let playback = Arc::new(PlaybackService::new(&socket, ExtractorType::default()).unwrap());
+        let queue = Arc::new(QueueService::new());
+        let state_tracker = Arc::new(PlaybackStateTracker::new());
+
+        (playback, queue, state_tracker)
+    }
+
+    fn test_song(id: &str) -> Song {
+        let mut song = Song::default();
+        song.uri = id.to_string();
+        song.metadata.insert("title".to_string(), vec![id.to_string()]);
+        song
+    }
+
+    #[test]
+    fn eof_advances_to_next_track() {
+        let (playback, queue, state_tracker) = setup_test_services();
+        queue.add(test_song("Song 1"), None);
+        queue.add(test_song("Song 2"), None);
+        queue.set_current(Some(0));
+
+        handle_eof(&playback, &queue, &state_tracker);
+
+        assert_eq!(queue.current_index(), Some(1));
+    }
+
+    #[test]
+    fn eof_with_repeat_one_replays_current() {
+        let (playback, queue, state_tracker) = setup_test_services();
+        queue.add(test_song("Song 1"), None);
+        queue.set_current(Some(0));
+        queue.set_repeat_mode(RepeatMode::One);
+
+        handle_eof(&playback, &queue, &state_tracker);
+
+        assert_eq!(queue.current_index(), Some(0));
+    }
+
+    #[test]
+    fn eof_at_end_with_repeat_all_loops() {
+        let (playback, queue, state_tracker) = setup_test_services();
+        queue.add(test_song("Song 1"), None);
+        queue.add(test_song("Song 2"), None);
+        queue.set_current(Some(1));  // Last song
+        queue.set_repeat_mode(RepeatMode::All);
+
+        handle_eof(&playback, &queue, &state_tracker);
+
+        assert_eq!(queue.current_index(), Some(0));  // Looped
+    }
+
+    #[test]
+    fn eof_at_end_without_repeat_goes_idle() {
+        let (playback, queue, state_tracker) = setup_test_services();
+        queue.add(test_song("Song 1"), None);
+        queue.set_current(Some(0));
+        queue.set_repeat_mode(RepeatMode::Off);
+
+        handle_eof(&playback, &queue, &state_tracker);
+
+        assert_eq!(queue.current_index(), None);
+        assert_eq!(state_tracker.get(), PlaybackState::Idle);
     }
 }

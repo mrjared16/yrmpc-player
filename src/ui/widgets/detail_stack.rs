@@ -131,7 +131,16 @@ impl From<Section> for SectionView {
                 .into_iter()
                 .map(DetailItem::Ref)
                 .collect(),
-            SectionData::Error(msg) => vec![DetailItem::header(&format!("Error: {}", msg))],
+            SectionData::Error(msg) => {
+                // Create a Song with header metadata for error display
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("type".into(), vec!["header".into()]);
+                metadata.insert("title".into(), vec![format!("Error: {}", msg)]);
+                vec![DetailItem::Song(crate::domain::Song {
+                    metadata,
+                    ..Default::default()
+                })]
+            }
         };
 
         Self {
@@ -312,15 +321,45 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
 
     match content {
         ContentDetails::Search(search) => {
-            // Search results: items are already DetailItems with embedded headers
-            // For now, put all items in a single section
-            // TODO: Parse headers to create proper sections, respect config.search.sections order
-            if !search.items.is_empty() {
-                sections.push(SectionView::new(
-                    SectionKey::Stats, // Placeholder
-                    "", // No section title, headers are inline
-                    search.items.clone(),
-                ));
+            // Search results: group items by content type into proper sections
+            // This allows Tab navigation between sections and proper header rendering
+            use crate::domain::ContentType;
+
+            let mut songs: Vec<DetailItem> = Vec::new();
+            let mut albums: Vec<DetailItem> = Vec::new();
+            let mut artists: Vec<DetailItem> = Vec::new();
+            let mut playlists: Vec<DetailItem> = Vec::new();
+            let mut videos: Vec<DetailItem> = Vec::new();
+
+            for item in &search.items {
+                match item {
+                    DetailItem::Song(_) => songs.push(item.clone()),
+                    DetailItem::Ref(r) => match r.content_type {
+                        ContentType::Album => albums.push(item.clone()),
+                        ContentType::Artist => artists.push(item.clone()),
+                        ContentType::Playlist => playlists.push(item.clone()),
+                        ContentType::Video => videos.push(item.clone()),
+                        ContentType::Track => songs.push(item.clone()),
+                        _ => songs.push(item.clone()),
+                    },
+                }
+            }
+
+            // Create sections for each non-empty group
+            if !songs.is_empty() {
+                sections.push(SectionView::new(SectionKey::Tracks, "Songs", songs));
+            }
+            if !albums.is_empty() {
+                sections.push(SectionView::new(SectionKey::Albums, "Albums", albums));
+            }
+            if !artists.is_empty() {
+                sections.push(SectionView::new(SectionKey::Artists, "Artists", artists));
+            }
+            if !playlists.is_empty() {
+                sections.push(SectionView::new(SectionKey::Playlists, "Playlists", playlists));
+            }
+            if !videos.is_empty() {
+                sections.push(SectionView::new(SectionKey::Videos, "Videos", videos));
             }
         }
 
@@ -446,25 +485,52 @@ fn build_extension_sections(extensions: &Extensions, sections: &mut Vec<SectionV
 // COMPATIBILITY HELPERS
 // =============================================================================
 
-/// Convert sections to flat items with headers (for NavStack compatibility).
+/// Convert sections to flat ListItems with headers.
 ///
-/// This is a bridge function for SearchPaneV2 which still uses NavStack<DetailItem>.
-/// In the future, SearchPaneV2 should use DetailStack directly.
-pub fn sections_to_items(sections: &[SectionView]) -> Vec<DetailItem> {
+/// Returns `Vec<ListItem>` where:
+/// - Section titles become `ListItem::Header(title)`
+/// - Section items become `ListItem::Content(DetailItem)`
+///
+/// This is the correct architecture: headers in UI layer (ListItem),
+/// actionable content in domain layer (DetailItem).
+pub fn sections_to_list_items(sections: &[SectionView]) -> Vec<crate::ui::widgets::list_item::ListItem> {
+    use crate::ui::widgets::list_item::ListItem;
+
     let mut items = Vec::new();
     for section in sections {
         if !section.title.is_empty() && !section.items.is_empty() {
-            items.push(DetailItem::header(&section.title));
+            items.push(ListItem::Header(section.title.clone()));
         }
-        items.extend(section.items.iter().cloned());
+        for detail_item in &section.items {
+            items.push(ListItem::Content(detail_item.clone()));
+        }
     }
     items
 }
 
-/// Build sections and flatten to items (convenience function).
+/// Build sections and flatten to ListItems (convenience function).
 ///
-/// Equivalent to: `sections_to_items(&build_sections(content))`
+/// Returns `Vec<ListItem>` for UI rendering. To extract actionable items,
+/// use `item.as_content()` or `item.into_content()`.
+pub fn flatten_to_list_items(content: &ContentDetails) -> Vec<crate::ui::widgets::list_item::ListItem> {
+    sections_to_list_items(&build_sections(content))
+}
+
+/// DEPRECATED: Use sections_to_list_items instead.
+/// This function exists only for compatibility during migration.
+#[deprecated(note = "Use sections_to_list_items() which returns Vec<ListItem>")]
+pub fn sections_to_items(sections: &[SectionView]) -> Vec<DetailItem> {
+    // Convert by stripping headers - callers should migrate to sections_to_list_items
+    sections
+        .iter()
+        .flat_map(|s| s.items.iter().cloned())
+        .collect()
+}
+
+/// DEPRECATED: Use flatten_to_list_items instead.
+#[deprecated(note = "Use flatten_to_list_items() which returns Vec<ListItem>")]
 pub fn flatten_content(content: &ContentDetails) -> Vec<DetailItem> {
+    #[allow(deprecated)]
     sections_to_items(&build_sections(content))
 }
 

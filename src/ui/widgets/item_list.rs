@@ -267,6 +267,8 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
     fn build_rich_row(&self, item: &'a T, is_playing: bool, matches_filter: bool) -> Element<'a> {
         let icon = item.type_icon();
         let prefix = if is_playing { "▶ " } else { "" };
+        let thumb_url = item.thumbnail_url();
+        log::trace!("[DIAG-IMG] build_rich_row: title={} thumbnail_url={:?}", item.primary_text(), thumb_url);
 
         // Primary line: [prefix][icon] [title]
         let primary = format!("{}{} {}", prefix, icon, item.primary_text());
@@ -300,7 +302,7 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
             vec![
                 // Thumbnail
                 Element::image(
-                    item.thumbnail_url().map(String::from),
+                    thumb_url.map(String::from),
                     self.config.thumbnail_width,
                     self.config.row_height,
                 ),
@@ -323,7 +325,9 @@ impl<'a, T: ListItemDisplay> StatefulWidget for ItemListWidget<'a, T> {
     type State = ListState;
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
-        match self.effective_mode(area) {
+        let mode = self.effective_mode(area);
+        log::trace!("[DIAG-IMG] ItemListWidget::render mode={:?} area_width={} items={}", mode, area.width, self.items.len());
+        match mode {
             ListRenderMode::Compact => self.render_compact(area, buf, state),
             ListRenderMode::Rich => self.render_rich(area, buf, state),
         }

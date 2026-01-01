@@ -18,14 +18,15 @@ use std::time::Duration;
 ///
 /// Separates playable vs browsable to prevent LSP violations
 /// in queue operations (Artist can't be queued).
+///
+/// NOTE: Headers are NOT part of domain model - they belong in UI layer.
+/// Use ListItem::Header for section separators in UI lists.
 #[derive(Debug, Clone, PartialEq)]
 pub enum SearchItem {
     /// Songs and videos - can be queued directly
     Playable(PlayableItem),
     /// Artists, albums, playlists - open detail view
     Browsable(BrowsableItem),
-    /// UI section separator
-    Header(String),
 }
 
 /// Items that can be queued directly (have video_id)
@@ -50,8 +51,6 @@ pub enum ItemAction {
     Play(String),
     /// Navigate to this path (e.g., "artist:UC123")
     Browse(String),
-    /// No action (headers)
-    None,
 }
 
 /// Reference to content that needs fetching for queue
@@ -81,6 +80,78 @@ pub enum QueueAction {
     PlayNow,
 }
 
+/// A section of search results with a title header
+///
+/// This preserves the API's section structure (e.g., "Top Result", "Songs", "Artists")
+/// without mixing header metadata into the domain item types.
+#[derive(Debug, Clone, PartialEq)]
+pub struct SearchSection {
+    /// Section title (e.g., "Top Result", "Songs", "Artists")
+    pub title: String,
+    /// Items in this section
+    pub items: Vec<SearchItem>,
+}
+
+impl SearchSection {
+    /// Create a new search section
+    pub fn new(title: impl Into<String>, items: Vec<SearchItem>) -> Self {
+        Self {
+            title: title.into(),
+            items,
+        }
+    }
+
+    /// Check if this section is empty
+    pub fn is_empty(&self) -> bool {
+        self.items.is_empty()
+    }
+
+    /// Get the number of items in this section
+    pub fn len(&self) -> usize {
+        self.items.len()
+    }
+}
+
+/// Complete search results containing multiple sections
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct SearchResults {
+    /// Sections of search results
+    pub sections: Vec<SearchSection>,
+}
+
+impl SearchResults {
+    /// Create empty search results
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a section to the results
+    pub fn add_section(&mut self, section: SearchSection) {
+        if !section.is_empty() {
+            self.sections.push(section);
+        }
+    }
+
+    /// Flatten all items from all sections into a single Vec
+    /// (for backwards compatibility with code expecting Vec<SearchItem>)
+    pub fn flatten(&self) -> Vec<SearchItem> {
+        self.sections
+            .iter()
+            .flat_map(|s| s.items.clone())
+            .collect()
+    }
+
+    /// Get total item count across all sections
+    pub fn total_items(&self) -> usize {
+        self.sections.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// Check if there are any results
+    pub fn is_empty(&self) -> bool {
+        self.sections.is_empty() || self.sections.iter().all(|s| s.is_empty())
+    }
+}
+
 // ============ Implementations ============
 
 impl SearchItem {
@@ -89,13 +160,7 @@ impl SearchItem {
         match self {
             Self::Playable(p) => ItemAction::Play(p.video_id().to_string()),
             Self::Browsable(b) => ItemAction::Browse(b.browse_path()),
-            Self::Header(_) => ItemAction::None,
         }
-    }
-
-    /// Check if this item is a section header
-    pub fn is_header(&self) -> bool {
-        matches!(self, Self::Header(_))
     }
 }
 

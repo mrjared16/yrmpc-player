@@ -1202,6 +1202,16 @@ impl<'ui> Ui<'ui> {
     ) -> Result<()> {
         match pane {
             Some(pane_type) => {
+                // Route through Navigator for panes it manages (Search, Queue)
+                // when new architecture is enabled
+                if let Some(ref mut navigator) = self.navigator {
+                    if matches!(pane_type, PaneType::Search | PaneType::Queue) {
+                        navigator.on_query_finished(id, data, ctx)?;
+                        ctx.render()?;
+                        return Ok(());
+                    }
+                }
+
                 let visible =
                     self.tabs.get(&ctx.active_tab).is_some_and(|tab| {
                         tab.panes.panes_iter().any(|pane| pane.pane == pane_type)

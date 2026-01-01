@@ -23,7 +23,7 @@ use ratatui::{
     layout::{Constraint, Layout, Rect},
     style::{Color, Style, Stylize},
     text::Span,
-    widgets::{Block, Borders, List, ListItem},
+    widgets::{Block, Borders, List, ListItem, ListState},
 };
 
 use super::{Pane, browser::SongExt};
@@ -45,7 +45,6 @@ use crate::{
         widgets::{
             content_view::ContentView,
             selectable_list::NavConfig,
-            detail_stack::flatten_content,
         },
     },
 };
@@ -61,6 +60,7 @@ fn kind_to_string(kind: ContentType) -> &'static str {
         ContentType::Track => "track",
         ContentType::Directory => "directory",
         ContentType::Video => "video",
+        ContentType::Header => "header",
     }
 }
 
@@ -84,6 +84,14 @@ pub struct SearchPaneV2 {
     view: ContentView<SearchableContent>,
     /// Navigation config
     nav_config: NavConfig,
+    /// Search suggestions from backend
+    suggestions: Vec<String>,
+    /// Whether to show suggestions dropdown
+    showing_suggestions: bool,
+    /// State for suggestion list selection
+    suggestions_state: ListState,
+    /// Last query string (for debouncing)
+    last_suggestion_query: String,
 }
 
 impl SearchPaneV2 {
@@ -116,6 +124,10 @@ impl SearchPaneV2 {
                 scrolloff: config.scrolloff,
                 wrap: config.wrap_navigation,
             },
+            suggestions: Vec::new(),
+            showing_suggestions: false,
+            suggestions_state: ListState::default(),
+            last_suggestion_query: String::new(),
         }
     }
 
@@ -184,6 +196,7 @@ impl SearchPaneV2 {
         if all {
             level.section_list.items()
                 .iter()
+                .filter_map(|item| item.as_content())
                 .filter_map(|item| match item {
                     DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
                     _ => None,
@@ -349,39 +362,30 @@ impl SearchPaneV2 {
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 // Move/Delete not applicable in SearchPane - search results are read-only
             }
-        }
-
-        // Handle additional actions not covered by ContentView (e.g., 'a' for enqueue)
-        if let Some(action) = event.as_common_action(ctx) {
-            match action {
-                CommonAction::Left => {
-                    // Force back navigation if handled by CommonAction
-                    if self.view.can_pop() {
-                        self.view.pop();
-                    } else {
-                        self.phase = Phase::Search;
-                    }
-                    ctx.render()?;
+            ContentAction::Enqueue(items) => {
+                // 'a' key: Add to queue without playing
+                let enqueue_items: Vec<Enqueue> = items
+                    .iter()
+                    .filter_map(|i| i.as_song())
+                    .map(|song| Enqueue::Song { song: song.clone() })
+                    .collect();
+                if !enqueue_items.is_empty() {
+                    self.add_to_queue(ctx, enqueue_items, false);
                 }
-                CommonAction::AddOptions { .. } => {
-                    // 'a' key: Add to queue without playing
-                    let enqueue = self.get_enqueue_items(false);
-                    if !enqueue.is_empty() {
-                        self.add_to_queue(ctx, enqueue, false);
-                    }
-                }
-                _ => {}
             }
         }
+
+        // NOTE: All actions are now handled via ContentView's typed action system above.
+        // Previously there was a redundant CommonAction check here that caused duplicate handling.
+        // See Task-49 for details.
 
         Ok(())
     }
 
     /// Interpret what activation means for a DetailItem in SearchPane.
     ///
-    /// - Song: Play it (with marked songs if any)
+    /// - Song: Play it (with marked songs if any), or toggle pause if same song
     /// - Ref (Artist/Album/Playlist): Navigate to detail view
-    /// - Header: Do nothing
     fn resolve_action(&mut self, ctx: &mut Ctx, item: DetailItem) -> Result<()> {
         use crate::domain::content::ContentType;
 
@@ -407,7 +411,21 @@ impl SearchPaneV2 {
                         }
                     }
                 }
-                // Single song play
+
+                // Task-50: Check if this song is already playing - toggle pause instead
+                if let Some((_, current_song)) = ctx.find_current_song_in_queue() {
+                    if current_song.uri == song.uri {
+                        // Same song - toggle pause/play
+                        ctx.command(|client| {
+                            client.pause_toggle()?;
+                            Ok(())
+                        });
+                        ctx.render()?;
+                        return Ok(());
+                    }
+                }
+
+                // Different song - clear queue, add, and play
                 self.play_song(ctx, song);
                 ctx.render()?;
             }
@@ -419,9 +437,6 @@ impl SearchPaneV2 {
                     ContentType::Playlist => self.fetch_playlist_detail(ctx, content_ref.id),
                     _ => {} // Not navigable
                 }
-            }
-            DetailItem::Header { .. } => {
-                // Headers are not activatable
             }
         }
         Ok(())
@@ -486,7 +501,6 @@ impl SearchPaneV2 {
                     name: content_ref.name,
                 })
             }
-            DetailItem::Header { .. } => PaneAction::Handled,
         }
     }
 
@@ -616,6 +630,36 @@ impl SearchPaneV2 {
 
     // ========== RENDERING ==========
 
+    /// Get current search query string from focused input
+    fn get_current_query_string(&self) -> String {
+        self.inputs.inputs.iter().find_map(|input| match input {
+            InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
+                if !value.is_empty() && key == "any" =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        }).unwrap_or_default()
+    }
+
+    /// Render suggestions dropdown
+    fn render_suggestions(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .title("Suggestions")
+            .style(ctx.config.theme.borders_style);
+
+        let items: Vec<ListItem> = self.suggestions.iter().map(|s| {
+            ListItem::new(Span::raw(s))
+        }).collect();
+
+        let list = List::new(items)
+            .block(block)
+            .highlight_style(ctx.config.theme.current_item_style);
+
+        frame.render_stateful_widget(list, area, &mut self.suggestions_state);
+    }
+
     /// Render the search inputs column
     fn render_inputs(&mut self, frame: &mut Frame, area: Rect, _ctx: &Ctx) {
         // Input groups implement Widget trait, render directly
@@ -724,7 +768,13 @@ impl Pane for SearchPaneV2 {
         // Render all 3 columns
         self.render_inputs(frame, input_area, ctx);
         self.render_results(frame, results_area, ctx);
-        self.render_preview(frame, preview_area, ctx);
+
+        // In Search phase, show suggestions in preview area when available
+        if self.phase == Phase::Search && self.showing_suggestions {
+            self.render_suggestions(frame, preview_area, ctx);
+        } else {
+            self.render_preview(frame, preview_area, ctx);
+        }
 
         Ok(())
     }
@@ -734,9 +784,13 @@ impl Pane for SearchPaneV2 {
 
         // Handle insert mode first (when typing in text fields)
         if self.phase == Phase::Search && self.inputs.insert_mode {
+            // Store old query for debouncing
+            let old_query = self.get_current_query_string();
+
             match event.as_common_action(ctx) {
                 Some(CommonAction::Close) => {
                     self.inputs.insert_mode = false;
+                    self.showing_suggestions = false;
                     if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
                         if value.is_empty() {
                             value.push('0');
@@ -745,7 +799,23 @@ impl Pane for SearchPaneV2 {
                     ctx.render()?;
                 }
                 Some(CommonAction::Confirm) => {
+                    // If showing suggestions and one is selected, use it
+                    if self.showing_suggestions {
+                        if let Some(idx) = self.suggestions_state.selected() {
+                            if let Some(suggestion) = self.suggestions.get(idx).cloned() {
+                                if let InputType::Textbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                                    *value = suggestion;
+                                }
+                                self.showing_suggestions = false;
+                                self.search(ctx);
+                                ctx.render()?;
+                                return Ok(());
+                            }
+                        }
+                    }
+
                     self.inputs.insert_mode = false;
+                    self.showing_suggestions = false;
                     if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
                         if value.is_empty() {
                             value.push('0');
@@ -754,6 +824,26 @@ impl Pane for SearchPaneV2 {
                     // Trigger search after confirming input
                     self.search(ctx);
                     ctx.render()?;
+                }
+                Some(CommonAction::Down) if self.showing_suggestions => {
+                    // Navigate suggestions down
+                    let len = self.suggestions.len();
+                    if len > 0 {
+                        let next = self.suggestions_state.selected()
+                            .map_or(0, |i| (i + 1) % len);
+                        self.suggestions_state.select(Some(next));
+                        ctx.render()?;
+                    }
+                }
+                Some(CommonAction::Up) if self.showing_suggestions => {
+                    // Navigate suggestions up
+                    let len = self.suggestions.len();
+                    if len > 0 {
+                        let prev = self.suggestions_state.selected()
+                            .map_or(len - 1, |i| (i + len - 1) % len);
+                        self.suggestions_state.select(Some(prev));
+                        ctx.render()?;
+                    }
                 }
                 _ => {
                     event.stop_propagation();
@@ -783,6 +873,27 @@ impl Pane for SearchPaneV2 {
                     }
                 }
             }
+
+            // Check if query changed and trigger suggestions
+            let new_query = self.get_current_query_string();
+            if new_query != old_query {
+                self.last_suggestion_query = new_query.clone();
+                if !new_query.is_empty() && new_query.len() > 1 {
+                    // Trigger suggestions query
+                    ctx.query()
+                        .id(SEARCH_ID)
+                        .replace_id("search_suggestions_v2")
+                        .target(PaneType::Search)
+                        .query(move |client| {
+                            let suggestions = client.get_search_suggestions(new_query)?;
+                            Ok(QueryResult::SearchSuggestions(suggestions))
+                        });
+                } else {
+                    self.showing_suggestions = false;
+                    self.suggestions.clear();
+                }
+            }
+
             return Ok(());
         }
 
@@ -807,7 +918,13 @@ impl Pane for SearchPaneV2 {
         match (id, data) {
             ("search_v2", QueryResult::SearchResult { data }) => {
                 log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
-                // Convert Songs to DetailItems (handles type conversion via From impl)
+                // MediaItem provides type-safe access to all fields
+                if let Some(first) = data.first() {
+                    use crate::domain::media_item::Displayable;
+                    log::info!("[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
+                        first.title(), first.content_type(), first.thumbnail_url());
+                }
+                // Convert MediaItems to DetailItems (type-safe, no data loss)
                 let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
                 
                 // Clear stack and set new root
@@ -827,6 +944,12 @@ impl Pane for SearchPaneV2 {
             ("fetch_artist_v2", QueryResult::ArtistDetail(details)) => {
                 // Push artist content to stack
                 self.view.push(SearchableContent::Artist(details));
+            }
+            (SEARCH_ID, QueryResult::SearchSuggestions(suggestions)) => {
+                // Update suggestions list
+                self.suggestions = suggestions;
+                self.showing_suggestions = !self.suggestions.is_empty();
+                self.suggestions_state.select(None);
             }
             _ => {}
         }
@@ -975,6 +1098,19 @@ impl NavigatorPane for SearchPaneV2 {
                                 // Not applicable in SearchPane
                                 return Ok(PaneAction::Handled);
                             }
+                            ContentAction::Enqueue(items) => {
+                                // 'a' key: Add to queue without playing
+                                let songs: Vec<crate::domain::Song> = items
+                                    .iter()
+                                    .filter_map(|i| i.as_song())
+                                    .cloned()
+                                    .collect();
+                                if !songs.is_empty() {
+                                    // Use the action system for enqueue
+                                    return Ok(PaneAction::Enqueue(songs));
+                                }
+                                return Ok(PaneAction::Handled);
+                            }
                         }
                     }
                 }
@@ -992,7 +1128,15 @@ impl NavigatorPane for SearchPaneV2 {
         match (id, data) {
             ("search_v2", crate::QueryResult::SearchResult { data }) => {
                 log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
+                // MediaItem provides type-safe access to all fields
+                if let Some(first) = data.first() {
+                    use crate::domain::media_item::Displayable;
+                    log::info!("[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",
+                        first.title(), first.content_type(), first.thumbnail_url());
+                }
+                // Convert MediaItems to DetailItems (type-safe, no data loss)
                 let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
+                
                 self.view.clear();
                 self.view.push(SearchableContent::results("Results", items));
                 self.phase = Phase::BrowseResults;

@@ -26,7 +26,6 @@ impl Displayable for SearchItem {
         match self {
             Self::Playable(p) => p.primary_line(),
             Self::Browsable(b) => b.primary_line(),
-            Self::Header(h) => h,
         }
     }
 
@@ -34,7 +33,6 @@ impl Displayable for SearchItem {
         match self {
             Self::Playable(p) => p.secondary_line(),
             Self::Browsable(b) => b.secondary_line(),
-            Self::Header(_) => None,
         }
     }
 
@@ -42,7 +40,6 @@ impl Displayable for SearchItem {
         match self {
             Self::Playable(p) => p.thumbnail(),
             Self::Browsable(b) => b.thumbnail(),
-            Self::Header(_) => None,
         }
     }
 
@@ -50,7 +47,6 @@ impl Displayable for SearchItem {
         match self {
             Self::Playable(p) => p.type_icon(),
             Self::Browsable(b) => b.type_icon(),
-            Self::Header(_) => "─",
         }
     }
 }
@@ -203,7 +199,6 @@ impl ListItemDisplay for SearchItem {
                 BrowsableItem::Album(_) => Style::default().fg(Color::Yellow),
                 BrowsableItem::Playlist(_) => Style::default().fg(Color::Magenta),
             },
-            Self::Header(_) => Style::default().fg(Color::DarkGray),
         }
     }
 
@@ -213,7 +208,7 @@ impl ListItemDisplay for SearchItem {
                 PlayableItem::Song(s) => s.duration.map(|d| Cow::Owned(format_duration(d))),
                 PlayableItem::Video(v) => v.duration.map(|d| Cow::Owned(format_duration(d))),
             },
-            _ => None,
+            Self::Browsable(_) => None,
         }
     }
 }

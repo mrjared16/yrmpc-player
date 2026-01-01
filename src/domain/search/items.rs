@@ -173,3 +173,77 @@ impl Default for PlaylistItem {
         }
     }
 }
+
+// ============ ContentUri methods ============
+// These construct ContentUri on-the-fly from existing ID fields
+// for backwards compatibility during migration.
+
+use crate::domain::content_uri::ContentUri;
+use super::{PlayableItem, BrowsableItem, SearchItem};
+
+impl SongItem {
+    /// Get the ContentUri for this song
+    pub fn content_uri(&self) -> ContentUri {
+        ContentUri::youtube_video(&self.video_id)
+    }
+}
+
+impl VideoItem {
+    /// Get the ContentUri for this video
+    pub fn content_uri(&self) -> ContentUri {
+        ContentUri::youtube_video(&self.video_id)
+    }
+}
+
+impl ArtistItem {
+    /// Get the ContentUri for this artist
+    pub fn content_uri(&self) -> Option<ContentUri> {
+        self.browse_id.as_ref().map(ContentUri::youtube_artist)
+    }
+}
+
+impl AlbumItem {
+    /// Get the ContentUri for this album
+    pub fn content_uri(&self) -> ContentUri {
+        ContentUri::youtube_album(&self.album_id)
+    }
+}
+
+impl PlaylistItem {
+    /// Get the ContentUri for this playlist
+    pub fn content_uri(&self) -> ContentUri {
+        ContentUri::youtube_playlist(&self.playlist_id)
+    }
+}
+
+impl PlayableItem {
+    /// Get the ContentUri for this playable item
+    pub fn content_uri(&self) -> ContentUri {
+        match self {
+            Self::Song(s) => s.content_uri(),
+            Self::Video(v) => v.content_uri(),
+        }
+    }
+}
+
+impl BrowsableItem {
+    /// Get the ContentUri for this browsable item
+    pub fn content_uri(&self) -> Option<ContentUri> {
+        match self {
+            Self::Artist(a) => a.content_uri(),
+            Self::Album(a) => Some(a.content_uri()),
+            Self::Playlist(p) => Some(p.content_uri()),
+        }
+    }
+}
+
+impl SearchItem {
+    /// Get the ContentUri for this search item
+    pub fn content_uri(&self) -> Option<ContentUri> {
+        match self {
+            Self::Playable(p) => Some(p.content_uri()),
+            Self::Browsable(b) => b.content_uri(),
+        }
+    }
+}
+

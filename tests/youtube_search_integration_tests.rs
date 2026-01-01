@@ -232,3 +232,134 @@ mod enum_variant_tests {
         }
     }
 }
+
+/// E2E tests for search result display flow
+/// Simulates: ytmapi-rs → SearchItem → DetailItem → UI
+/// NOTE: Headers are now in UI layer (ListItem::Header), NOT in domain types
+#[cfg(test)]
+mod search_display_e2e_tests {
+    use rmpc::domain::search::{SearchItem, PlayableItem, BrowsableItem, SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
+    use rmpc::domain::detail_item::DetailItem;
+    use rmpc::domain::display::ListItemDisplay;
+    use std::time::Duration;
+
+    /// Helper: Create mock search results simulating "kim long" query
+    /// Based on actual YouTube Music API response structure
+    /// NOTE: Headers are NOT in search results - they're in SearchSection.title
+    fn mock_kim_long_search_results() -> Vec<SearchItem> {
+        vec![
+            // Artist result (would be in "Top Result" section)
+            SearchItem::Browsable(BrowsableItem::Artist(ArtistItem {
+                browse_id: Some("UC12345kimlong".into()),
+                name: "Kim Long".into(),
+                subscribers: Some("10K subscribers".into()),
+                thumbnail: Some("https://lh3.googleusercontent.com/kimlong.jpg".into()),
+            })),
+
+            // Song result (would be in "Songs" section)
+            SearchItem::Playable(PlayableItem::Song(SongItem {
+                video_id: "abc123song".into(),
+                title: "Về Với Em - Kim Long".into(),
+                artist: "Kim Long".into(),
+                album: Some("Single".into()),
+                duration: Some(Duration::from_secs(245)),
+                thumbnail: Some("https://i.ytimg.com/vi/abc123/sddefault.jpg".into()),
+                explicit: false,
+            })),
+
+            // Album result (would be in "Albums" section)
+            SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
+                album_id: "MPREb_kimlong123".into(),
+                title: "Best of Kim Long".into(),
+                artist: "Kim Long".into(),
+                year: Some("2023".into()),
+                album_type: Some("Album".into()),
+                thumbnail: Some("https://lh3.googleusercontent.com/album.jpg".into()),
+                explicit: false,
+            })),
+
+            // Playlist result (would be in "Playlists" section)
+            SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
+                playlist_id: "PLkimlong456".into(),
+                title: "Kim Long Greatest Hits".into(),
+                author: "YouTube Music".into(),
+                track_count: Some("25 songs".into()),
+                thumbnail: Some("https://lh3.googleusercontent.com/playlist.jpg".into()),
+            })),
+
+            // Video result (would be in "Videos" section)
+            SearchItem::Playable(PlayableItem::Video(VideoItem {
+                video_id: "xyz789video".into(),
+                title: "Kim Long Live Concert".into(),
+                channel: "Kim Long Official".into(),
+                views: Some("1M views".into()),
+                duration: Some(Duration::from_secs(3600)),
+                thumbnail: Some("https://i.ytimg.com/vi/xyz789/sddefault.jpg".into()),
+            })),
+        ]
+    }
+
+    /// E2E Test: Verify SearchItem → DetailItem preserves types correctly
+    /// This is the NEW flow - no more Song intermediate step for browsable items
+    #[test]
+    fn e2e_search_to_detail_item_preserves_types() {
+        let search_results = mock_kim_long_search_results();
+
+        // Convert SearchItem → DetailItem directly (new type-safe conversion)
+        let detail_items: Vec<DetailItem> = search_results
+            .into_iter()
+            .map(DetailItem::from)
+            .collect();
+
+        // === ASSERTIONS: Verify the flow preserves types correctly ===
+
+        // Item 0: Kim Long (artist)
+        assert_eq!(detail_items[0].type_icon(), "🎤", "Artist should show microphone");
+        assert!(detail_items[0].thumbnail_url().is_some(), "Artist should have thumbnail");
+        assert!(detail_items[0].is_navigable(), "Artist should be navigable");
+
+        // Item 1: Song
+        assert_eq!(detail_items[1].type_icon(), "🎵", "Song should show music note");
+        assert!(detail_items[1].thumbnail_url().is_some(), "Song should have thumbnail");
+        assert!(detail_items[1].is_playable(), "Song should be playable");
+
+        // Item 2: Album
+        assert_eq!(detail_items[2].type_icon(), "💿", "Album should show disc");
+        assert!(detail_items[2].is_navigable(), "Album should be navigable");
+
+        // Item 3: Playlist
+        assert_eq!(detail_items[3].type_icon(), "📁", "Playlist should show folder");
+        assert!(detail_items[3].is_navigable(), "Playlist should be navigable");
+
+        // Item 4: Video
+        assert_eq!(detail_items[4].type_icon(), "🎵", "Video converts to Song, shows music note");
+        assert!(detail_items[4].is_playable(), "Video should be playable");
+    }
+
+    /// Test: All DetailItems are focusable (headers are in ListItem, not DetailItem)
+    #[test]
+    fn all_detail_items_are_focusable() {
+        let items = mock_kim_long_search_results();
+
+        for item in items {
+            let detail = DetailItem::from(item);
+            assert!(detail.is_focusable(), "All DetailItems should be focusable");
+            assert!(!detail.is_header(), "No DetailItem should be a header");
+        }
+    }
+
+    /// Test: Unknown song types show empty icon
+    #[test]
+    fn unknown_types_show_nothing() {
+        let mut song = rmpc::domain::Song::default();
+        song.metadata.insert("type".into(), vec!["some_future_type".into()]);
+        song.metadata.insert("title".into(), vec!["Test".into()]);
+
+        // Song without known type should show empty icon
+        assert_eq!(song.type_icon(), "", "Unknown type should show nothing");
+
+        // Song without any type metadata should also show nothing
+        let song_no_type = rmpc::domain::Song::default();
+        assert_eq!(song_no_type.type_icon(), "", "No metadata should show nothing");
+    }
+}

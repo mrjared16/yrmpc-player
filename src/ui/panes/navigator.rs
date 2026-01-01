@@ -360,6 +360,9 @@ impl Navigator {
             PaneAction::QueueMove { ids, direction } => {
                 self.execute_queue_move(ctx, ids, direction)?;
             }
+            PaneAction::TogglePause => {
+                self.execute_intent(ctx, Intent::toggle_playback())?;
+            }
             PaneAction::ShowModal(_kind) => {
                 // TODO: Implement modal display
                 log::info!("Navigator: ShowModal requested");
@@ -607,5 +610,121 @@ mod tests {
         assert_eq!(TabId::Search.hotkey(), '1');
         assert_eq!(TabId::Queue.hotkey(), '2');
         assert_eq!(TabId::Library.hotkey(), '3');
+    }
+
+    // =========================================================================
+    // RED TEST: Task-51 - Number key should update ctx.active_tab
+    // =========================================================================
+    //
+    // This test verifies that pressing number keys (1/2/3) in Navigator
+    // should update BOTH:
+    // 1. Navigator's internal active pane (works correctly)
+    // 2. ctx.active_tab (DOES NOT WORK - this is the bug)
+    //
+    // Currently, Navigator::handle_key() calls switch_to_tab() which only
+    // updates self.active but never touches ctx.active_tab. The tab bar
+    // reads ctx.active_tab for highlighting, so they get out of sync.
+
+    use crate::config::Config;
+    use crate::ctx::Ctx;
+    use crate::domain::Status;
+    use crate::mpd::version::Version;
+    use crate::shared::image_cache::ImageCache;
+    use crate::shared::ring_vec::RingVec;
+    use crossbeam::channel::unbounded;
+    use crossterm::event::{KeyCode, KeyModifiers, KeyEvent as CKeyEvent};
+    use std::cell::{Cell, RefCell};
+    use std::collections::{HashMap, HashSet};
+    use std::sync::{Arc, RwLock};
+
+    fn create_test_ctx() -> Ctx {
+        let (tx, _rx) = unbounded();
+        let (work_tx, _work_rx) = unbounded();
+        let (client_tx, _client_rx) = unbounded();
+
+        let key_config_file = crate::config::keys::KeyConfigFile::default();
+        let key_config: crate::config::keys::KeyConfig = key_config_file.try_into().unwrap();
+        let config = Config::default();
+        let config_with_keybinds = Config {
+            keybinds: key_config,
+            ..config
+        };
+
+        Ctx {
+            backend_version: Version::new(0, 0, 0),
+            config: Arc::new(config_with_keybinds),
+            status: Status::default(),
+            queue: Vec::new(),
+            image_cache: ImageCache::new(tx.clone()),
+            app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
+            stickers: HashMap::new(),
+            // Start with Search tab active
+            active_tab: crate::config::tabs::TabName::from("Search"),
+            supported_commands: HashSet::new(),
+            capabilities: &[],
+            db_update_start: None,
+            app_event_sender: tx.clone(),
+            work_sender: work_tx,
+            client_request_sender: client_tx.clone(),
+            needs_render: Cell::new(false),
+            stickers_to_fetch: RefCell::new(HashSet::new()),
+            lrc_index: Default::default(),
+            rendered_frames: 0,
+            messages: RingVec::default(),
+            last_status_update: std::time::Instant::now(),
+            song_played: None,
+            stickers_supported: crate::ctx::StickersSupport::Unsupported,
+            scheduler: crate::core::scheduler::Scheduler::new((tx, client_tx)),
+            debug_ui_log: None,
+            queue_panel_visible: false,
+            previous_tab: None,
+        }
+    }
+
+    /// RED TEST: This test MUST FAIL with current implementation.
+    ///
+    /// The bug: Pressing '2' key in Navigator switches internal pane to Queue,
+    /// but ctx.active_tab stays as "Search". The tab bar reads ctx.active_tab
+    /// for highlighting, so they get out of sync.
+    ///
+    /// PROOF:
+    /// - Navigator::handle_key() line 299: calls self.switch_to_tab(TabId::Queue)
+    /// - Navigator::switch_to_tab() line 187: only calls self.switch_to(PaneId::Tab(tab))
+    /// - ctx.active_tab is NEVER updated by Navigator
+    ///
+    /// FIX REQUIRED: switch_to_tab() or handle_key() must also set ctx.active_tab
+    #[test]
+    fn pressing_number_key_should_update_ctx_active_tab() {
+        let mut ctx = create_test_ctx();
+
+        // Initial state: active_tab is "Search"
+        assert_eq!(ctx.active_tab.as_str(), "Search", "Initial state should be Search tab");
+
+        // Create Navigator (starts with Search pane active)
+        let mut navigator = Navigator::new(&ctx);
+        assert_eq!(navigator.active, PaneId::Tab(TabId::Search), "Navigator should start on Search");
+
+        // Simulate pressing '2' key to switch to Queue tab
+        let crossterm_key = CKeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
+        let mut key = crate::shared::key_event::KeyEvent::from(crossterm_key);
+        let _ = navigator.handle_key(&mut key, &mut ctx);
+
+        // Navigator's internal state DOES change (this works)
+        assert_eq!(
+            navigator.active,
+            PaneId::Tab(TabId::Queue),
+            "Navigator internal state should switch to Queue"
+        );
+
+        // BUG: ctx.active_tab should ALSO change to "Queue" but it doesn't!
+        // This causes the tab bar highlight to stay on "Search" while
+        // Navigator shows the Queue pane content.
+        assert_eq!(
+            ctx.active_tab.as_str(),
+            "Queue",
+            "BUG: ctx.active_tab should be 'Queue' after pressing '2', \
+             but Navigator::handle_key() never updates ctx.active_tab. \
+             The tab bar reads ctx.active_tab for highlighting, so they get out of sync."
+        );
     }
 }

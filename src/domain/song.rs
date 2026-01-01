@@ -152,8 +152,9 @@ impl ListItemDisplay for Song {
             Some("album") => "💿",
             Some("playlist") => "📁",
             Some("video") => "🎬",
-            Some("header") => "─",
-            _ => "🎵",
+            Some("header") => "─",  // Header shows dash
+            Some("song") => "🎵",   // Explicit song type shows music note
+            _ => "",  // Unknown types or no metadata show nothing
         }
     }
 
@@ -180,6 +181,95 @@ impl ListItemDisplay for Song {
 
     fn is_header(&self) -> bool {
         self.item_type() == Some("header")
+    }
+}
+
+// =============================================================================
+// TESTS - Verify Song metadata → icon/header mapping works correctly
+// =============================================================================
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::display::ListItemDisplay;
+
+    /// Helper to create Song with specific type metadata
+    fn song_with_type(type_str: &str) -> Song {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("type".into(), vec![type_str.into()]);
+        metadata.insert("title".into(), vec!["Test".into()]);
+        Song {
+            id: None,
+            uri: "test123".into(),
+            duration: None,
+            metadata,
+            last_modified: None,
+            added: None,
+        }
+    }
+
+    #[test]
+    fn song_with_artist_type_shows_artist_icon() {
+        let song = song_with_type("artist");
+        assert_eq!(song.type_icon(), "🎤", "Artist should show microphone icon");
+    }
+
+    #[test]
+    fn song_with_album_type_shows_album_icon() {
+        let song = song_with_type("album");
+        assert_eq!(song.type_icon(), "💿", "Album should show disc icon");
+    }
+
+    #[test]
+    fn song_with_playlist_type_shows_playlist_icon() {
+        let song = song_with_type("playlist");
+        assert_eq!(song.type_icon(), "📁", "Playlist should show folder icon");
+    }
+
+    #[test]
+    fn song_with_video_type_shows_video_icon() {
+        let song = song_with_type("video");
+        assert_eq!(song.type_icon(), "🎬", "Video should show clapperboard icon");
+    }
+
+    #[test]
+    fn song_with_header_type_shows_dash_icon() {
+        let song = song_with_type("header");
+        assert_eq!(song.type_icon(), "─", "Header should show dash");
+        assert!(song.is_header(), "Header type should be identified as header");
+    }
+
+    #[test]
+    fn song_with_explicit_song_type_shows_music_icon() {
+        let song = song_with_type("song");
+        assert_eq!(song.type_icon(), "🎵", "Explicit song type should show music note");
+    }
+
+    #[test]
+    fn song_with_unknown_type_shows_nothing() {
+        let song = song_with_type("unknown_garbage");
+        assert_eq!(song.type_icon(), "", "Unknown type should show nothing");
+    }
+
+    #[test]
+    fn song_without_type_metadata_shows_nothing() {
+        let song = Song::default();
+        assert_eq!(song.type_icon(), "", "No type metadata should show nothing");
+    }
+
+    #[test]
+    fn song_thumbnail_url_returns_metadata_value() {
+        let mut metadata = std::collections::HashMap::new();
+        metadata.insert("thumbnail".into(), vec!["https://example.com/cover.jpg".into()]);
+        let song = Song {
+            id: None,
+            uri: "test".into(),
+            duration: None,
+            metadata,
+            last_modified: None,
+            added: None,
+        };
+        assert_eq!(song.thumbnail_url(), Some("https://example.com/cover.jpg"));
     }
 }
 

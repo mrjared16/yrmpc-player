@@ -28,7 +28,7 @@ use crate::{
     shared::{
         events::AppEvent,
         key_event::KeyEvent,
-        macros::{modal, status_info},
+        macros::{modal, status_info, status_error},
         mouse_event::MouseEvent,
     },
     ui::{
@@ -163,6 +163,15 @@ impl QueuePaneV2 {
                         }
                     }
                 }
+
+                // Check if this song is currently playing
+                if let Some((_, current_song)) = ctx.find_current_song_in_queue() {
+                    if current_song.uri == song.uri &&
+                       (ctx.status.state == crate::domain::PlaybackState::Play || ctx.status.state == crate::domain::PlaybackState::Pause) {
+                        return PaneAction::TogglePause;
+                    }
+                }
+
                 PaneAction::Play(song)
             }
             DetailItem::Ref(content_ref) => {
@@ -178,7 +187,6 @@ impl QueuePaneV2 {
                     name: content_ref.name,
                 })
             }
-            DetailItem::Header { .. } => PaneAction::Handled,
         }
     }
 
@@ -199,12 +207,15 @@ impl QueuePaneV2 {
     }
 
     /// Convert indices to queue IDs
-    fn indices_to_ids(&self, indices: &[usize], ctx: &Ctx) -> Vec<u32> {
-        indices
-            .iter()
-            .filter_map(|&idx| ctx.queue.get(idx))
-            .filter_map(|s| s.id)
-            .collect()
+    fn indices_to_ids(&self, indices: &[usize], ctx: &Ctx) -> Result<Vec<u32>> {
+        let mut ids = Vec::new();
+        for &idx in indices {
+            match ctx.queue.get(idx).and_then(|s| s.id) {
+                Some(id) => ids.push(id),
+                None => anyhow::bail!("Selected items not found in queue"),
+            }
+        }
+        Ok(ids)
     }
 
     /// Handle queue-specific actions (delete all, shuffle, etc.)
@@ -220,11 +231,13 @@ impl QueuePaneV2 {
             }
             QueueActions::Delete => {
                 let indices = self.selected_indices();
-                let ids = self.indices_to_ids(&indices, ctx);
-                if !ids.is_empty() {
-                    Ok(PaneAction::QueueDelete(ids))
-                } else {
-                    Ok(PaneAction::Handled)
+                match self.indices_to_ids(&indices, ctx) {
+                    Ok(ids) if !ids.is_empty() => Ok(PaneAction::QueueDelete(ids)),
+                    Ok(_) => Ok(PaneAction::Handled),
+                    Err(e) => {
+                        status_error!("{}", e);
+                        Ok(PaneAction::Handled)
+                    }
                 }
             }
             QueueActions::DeleteAll => {
@@ -367,6 +380,15 @@ impl Pane for QueuePaneV2 {
         // Delegate to ContentView
         let action = self.view.handle_key(event, ctx);
         match action {
+            ContentAction::Handled => {
+                // Handled internally by ContentView
+            }
+            ContentAction::Back => {
+                // Back at root - no-op in queue pane
+            }
+            ContentAction::Mark(_) => {
+                // Marks handled internally by SectionList
+            }
             ContentAction::Activate(item) => {
                 let pane_action = self.resolve_action(item, ctx);
                 // For legacy Pane, we just trigger the action directly
@@ -398,7 +420,9 @@ impl Pane for QueuePaneV2 {
                 // Queue move operations - would need queue IDs
                 // For now, just render
             }
-            _ => {}
+            ContentAction::Enqueue(_) => {
+                // Items already in queue - enqueue is a no-op
+            }
         }
         ctx.render()?;
         Ok(())
@@ -502,6 +526,10 @@ impl NavigatorPane for QueuePaneV2 {
                     Ok(PaneAction::Handled)
                 }
             }
+            ContentAction::Enqueue(_) => {
+                // Items already in queue - enqueue is a no-op
+                Ok(PaneAction::Handled)
+            }
         }
     }
 
@@ -531,3 +559,137 @@ impl TabPane for QueuePaneV2 {
         false // Nothing to go back to
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::{Song, Status, PlaybackState};
+    use crate::ctx::Ctx;
+    use crate::config::Config;
+    use std::sync::{Arc, RwLock};
+    use std::cell::{Cell, RefCell};
+    use std::collections::{HashMap, HashSet};
+    use crossbeam::channel::unbounded;
+    use crate::shared::image_cache::ImageCache;
+    use crate::shared::ring_vec::RingVec;
+    use crate::mpd::version::Version;
+
+    fn create_test_ctx() -> Ctx {
+        let (tx, _rx) = unbounded();
+        let (work_tx, _work_rx) = unbounded();
+        let (client_tx, _client_rx) = unbounded();
+
+        Ctx {
+            backend_version: Version::new(0, 0, 0),
+            config: Arc::new(Config::default()),
+            status: Status::default(),
+            queue: Vec::new(),
+            image_cache: ImageCache::new(tx.clone()),
+            app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
+            stickers: HashMap::new(),
+            active_tab: crate::config::tabs::TabName::from("Queue"),
+            supported_commands: HashSet::new(),
+            capabilities: &[],
+            db_update_start: None,
+            app_event_sender: tx.clone(),
+            work_sender: work_tx,
+            client_request_sender: client_tx.clone(),
+            needs_render: Cell::new(false),
+            stickers_to_fetch: RefCell::new(HashSet::new()),
+            lrc_index: Default::default(),
+            rendered_frames: 0,
+            messages: RingVec::default(),
+            last_status_update: std::time::Instant::now(),
+            song_played: None,
+            stickers_supported: crate::ctx::StickersSupport::Unsupported,
+            scheduler: crate::core::scheduler::Scheduler::new((tx, client_tx)),
+            debug_ui_log: None,
+            queue_panel_visible: false,
+            previous_tab: None,
+        }
+    }
+
+    #[test]
+    fn resolve_action_toggles_pause_for_playing_song() {
+        let mut ctx = create_test_ctx();
+        let pane = QueuePaneV2::new(&ctx);
+
+        let song = Song {
+            id: Some(1),
+            uri: "test_uri".to_string(),
+            ..Default::default()
+        };
+        ctx.queue = vec![song.clone()];
+        ctx.status.songid = Some(1);
+        ctx.status.state = PlaybackState::Play;
+
+        let item = DetailItem::Song(song);
+        let action = pane.resolve_action(item, &ctx);
+
+        match action {
+            PaneAction::TogglePause => {},
+            PaneAction::Play(_) => panic!("Should toggle pause, not play"),
+            _ => panic!("Unexpected action: {:?}", action),
+        }
+    }
+
+    #[test]
+    fn resolve_action_plays_different_song() {
+        let mut ctx = create_test_ctx();
+        let pane = QueuePaneV2::new(&ctx);
+
+        let song1 = Song { id: Some(1), uri: "uri1".to_string(), ..Default::default() };
+        let song2 = Song { id: Some(2), uri: "uri2".to_string(), ..Default::default() };
+        ctx.queue = vec![song1.clone(), song2.clone()];
+
+        ctx.status.songid = Some(1);
+        ctx.status.state = PlaybackState::Play;
+
+        let item = DetailItem::Song(song2.clone());
+        let action = pane.resolve_action(item, &ctx);
+
+        match action {
+            PaneAction::Play(s) => assert_eq!(s.id, song2.id),
+            _ => panic!("Should play song2"),
+        }
+    }
+
+    #[test]
+    fn indices_to_ids_errors_on_missing_ids() {
+        let mut ctx = create_test_ctx();
+        let pane = QueuePaneV2::new(&ctx);
+
+        let song = Song { id: Some(100), uri: "uri".to_string(), ..Default::default() };
+        ctx.queue = vec![song];
+
+        let indices = vec![0, 1];
+        let result = pane.indices_to_ids(&indices, &ctx);
+
+        assert!(result.is_err());
+        assert_eq!(result.unwrap_err().to_string(), "Selected items not found in queue");
+    }
+
+    #[test]
+    fn resolve_action_resumes_paused_song() {
+        let mut ctx = create_test_ctx();
+        let pane = QueuePaneV2::new(&ctx);
+
+        let song = Song {
+            id: Some(1),
+            uri: "test_uri".to_string(),
+            ..Default::default()
+        };
+        ctx.queue = vec![song.clone()];
+        ctx.status.songid = Some(1);
+        ctx.status.state = PlaybackState::Pause;
+
+        let item = DetailItem::Song(song);
+        let action = pane.resolve_action(item, &ctx);
+
+        match action {
+            PaneAction::TogglePause => {},
+            _ => panic!("Should toggle pause (resume), got: {:?}", action),
+        }
+    }
+}
+

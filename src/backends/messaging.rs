@@ -17,7 +17,7 @@ use ratatui::{style::Style, widgets::ListItem};
 
 use crate::{
     config::tabs::PaneType,
-    domain::{Song, Status},
+    domain::{MediaItem, Song, Status},
     mpd::commands::{Decoder, IdleEvent, Volume},
     shared::macros::try_skip,
     ui::{dir_or_song::DirOrSong, dirstack::Path},
@@ -101,7 +101,7 @@ pub(crate) enum QueryResult {
     LsInfo { data: Vec<String>, path: Option<Path> },
     DirOrSong { data: Vec<DirOrSong>, path: Option<Path> },
     SearchSuggestions(Vec<String>),
-    SearchResult { data: Vec<Song> },
+    SearchResult { data: Vec<MediaItem> },
     AddToPlaylist { playlists: Vec<String>, song_file: String },
     AddToPlaylistMultiple { playlists: Vec<String>, song_files: Vec<String> },
     AlbumArt(Option<Vec<u8>>),

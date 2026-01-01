@@ -13,8 +13,21 @@ use crate::backends::youtube::{
 /// Handle Search command
 pub fn handle_search(api: &Arc<ApiService>, query: &str) -> ServerResponse {
     match api.search_items(query) {
-        Ok(items) => {
-            ServerResponse::SearchResults(items.into_iter().map(SearchItemData::from).collect())
+        Ok(results) => {
+            // Flatten sections into a single Vec for backward compatibility with protocol
+            let items: Vec<_> = results.flatten().into_iter().map(|item| {
+                use crate::domain::search::Displayable;
+                log::trace!("[DIAG-IMG] handle_search: item '{}' thumbnail={:?}",
+                    item.primary_line(), item.thumbnail());
+                SearchItemData::from(item)
+            }).collect();
+
+            // Log a sample of converted items
+            if !items.is_empty() {
+                log::trace!("[DIAG-IMG] handle_search: first converted item = {:?}", &items[0]);
+            }
+
+            ServerResponse::SearchResults(items)
         }
         Err(e) => ServerResponse::Error(e.to_string()),
     }

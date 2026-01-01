@@ -9,9 +9,9 @@ use std::time::Duration;
 #[serde(rename_all = "lowercase")]
 pub enum ExtractorType {
     /// yt-dlp CLI (reliable, widely used, ~3-4s per extraction)
-    #[default]
     YtDlp,
     /// ytx Go binary (fast, ~200ms, requires ytx in PATH)
+    #[default]
     Ytx,
 }
 
@@ -126,7 +126,7 @@ impl Default for ApiConfig {
             cookie_file: None,
             cache_duration: Duration::from_secs(3600),
             max_search_results: 50,
-            extractor: ExtractorType::default(), // yt-dlp by default
+            extractor: ExtractorType::default(), // ytx by default (fast, ~200ms)
         }
     }
 }

@@ -4,17 +4,8 @@
 
 use std::time::Duration;
 
-/// Type of content item
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
-pub enum ContentType {
-    #[default]
-    Track,
-    Album,
-    Artist,
-    Playlist,
-    Directory,
-    Header, // Section header in search results
-}
+// Re-export ContentType from domain (single source of truth)
+pub use crate::domain::ContentType;
 
 /// A displayable/playable item
 ///

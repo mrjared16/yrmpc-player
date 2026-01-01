@@ -316,10 +316,11 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => match path.as_slice() {
                     [_artist] => album_songs,
+                    // Convert MediaItem to Song for legacy pane compatibility
                     [] => client.find(
                         &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
                         None,
-                    )?,
+                    )?.into_iter().map(Song::from).collect(),
                     _ => Vec::new(),
                 },
                 DirOrSong::Song(song) => vec![song.clone()],
@@ -346,8 +347,10 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
                     move |client| {
                         let separator = separator.map(|v| v.as_ref().to_owned());
                         let separator = separator.as_deref();
+                        // Convert MediaItem to Song for legacy pane compatibility
                         let all_songs: Vec<Song> = client
-                            .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?;
+                            .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?
+                            .into_iter().map(Song::from).collect();
                         Ok(QueryResult::SongsList {
                             data: all_songs,
                             path: Some(current.into()),

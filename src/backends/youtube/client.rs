@@ -29,6 +29,10 @@ use crate::{
 
 /// Convert SearchItemData to Song for UI compatibility
 /// This maintains backward compatibility with the existing UI which expects Song
+///
+/// Headers are skipped (return None) - they are added by the UI layer
+/// via SectionList and ListItem::Header. The domain layer should only
+/// contain actionable content.
 fn search_item_data_to_song(item: SearchItemData) -> Option<Song> {
     match item {
         SearchItemData::Song(p) => Some(song_from_playable(&p, "song")),
@@ -36,12 +40,6 @@ fn search_item_data_to_song(item: SearchItemData) -> Option<Song> {
         SearchItemData::Artist(b) => Some(song_from_browsable(&b, "artist")),
         SearchItemData::Album(b) => Some(song_from_browsable(&b, "album")),
         SearchItemData::Playlist(b) => Some(song_from_browsable(&b, "playlist")),
-        SearchItemData::Header(h) => {
-            let mut song = Song::default();
-            song.metadata.insert("type".into(), vec!["header".into()]);
-            song.metadata.insert("title".into(), vec![h]);
-            Some(song)
-        }
     }
 }
 
@@ -470,9 +468,19 @@ impl MusicBackend for YouTubeProxy {
 
         match self.request(ServerCommand::Search { query: query.to_string() })? {
             ServerResponse::SearchResults(items) => {
+                // [DIAG-IMG] Log first item to verify thumbnails in received IPC data
+                if !items.is_empty() {
+                    log::info!("[DIAG-IMG] client.search: received {} items, first = {:?}", items.len(), &items[0]);
+                }
                 // Convert SearchItemData to Song for UI compatibility
                 Ok(items.into_iter().filter_map(|item| {
-                    search_item_data_to_song(item)
+                    let song = search_item_data_to_song(item);
+                    if let Some(ref s) = song {
+                        log::info!("[DIAG-IMG] client.search: converted song '{}' thumbnail={:?}",
+                            s.metadata.get("title").and_then(|v| v.first()).unwrap_or(&"?".to_string()),
+                            s.metadata.get("thumbnail"));
+                    }
+                    song
                 }).collect())
             }
             ServerResponse::Error(e) => Err(anyhow!(e)),
@@ -1069,6 +1077,273 @@ impl api::StatusQuery for YouTubeProxy {
 
 #[cfg(test)]
 mod tests {
-    // Integration tests would start a server and connect client
-    // For unit tests, we'd mock the socket connection
+    use super::*;
+    use crate::backends::youtube::protocol::{PlayableData, BrowsableData, SearchItemData};
+    use crate::domain::display::ListItemDisplay;
+
+    // =========================================================================
+    // Task-53: RED Tests for Thumbnail Preservation Bug
+    // =========================================================================
+    //
+    // BUG CONTEXT: Thumbnails are present at daemon side (verified via logs)
+    // but missing at TUI side. This test verifies the conversion functions
+    // correctly preserve thumbnails.
+    //
+    // EXPECTED: These tests should PASS if the code is correct.
+    // If they FAIL, the bug is in the conversion functions.
+    // If they PASS but runtime still fails, the bug is in IPC serialization.
+
+    #[test]
+    fn song_from_playable_preserves_thumbnail() {
+        // Arrange: Create PlayableData with a thumbnail
+        let playable = PlayableData {
+            video_id: "abc123".to_string(),
+            title: "Test Song".to_string(),
+            artist: "Test Artist".to_string(),
+            album: Some("Test Album".to_string()),
+            duration_ms: Some(180000),
+            thumbnail: Some("https://example.com/thumb.jpg".to_string()),
+        };
+
+        // Act: Convert to Song
+        let song = song_from_playable(&playable, "song");
+
+        // Assert: Thumbnail should be in metadata
+        let thumb = song.metadata.get("thumbnail");
+        assert!(
+            thumb.is_some(),
+            "BUG: Song metadata should contain 'thumbnail' key after conversion"
+        );
+        assert_eq!(
+            thumb.unwrap().first().map(|s| s.as_str()),
+            Some("https://example.com/thumb.jpg"),
+            "BUG: Thumbnail URL should match the input"
+        );
+
+        // Also verify via ListItemDisplay trait
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://example.com/thumb.jpg"),
+            "BUG: Song::thumbnail_url() should return the thumbnail"
+        );
+    }
+
+    #[test]
+    fn song_from_browsable_preserves_thumbnail() {
+        // Arrange: Create BrowsableData with a thumbnail
+        let browsable = BrowsableData {
+            browse_id: Some("artist123".to_string()),
+            browse_path: "artist:artist123".to_string(),
+            title: "Test Artist".to_string(),
+            subtitle: Some("1M subscribers".to_string()),
+            thumbnail: Some("https://example.com/artist.jpg".to_string()),
+            can_queue: false,
+        };
+
+        // Act: Convert to Song
+        let song = song_from_browsable(&browsable, "artist");
+
+        // Assert: Thumbnail should be in metadata
+        let thumb = song.metadata.get("thumbnail");
+        assert!(
+            thumb.is_some(),
+            "BUG: Song metadata should contain 'thumbnail' key for browsable items"
+        );
+        assert_eq!(
+            thumb.unwrap().first().map(|s| s.as_str()),
+            Some("https://example.com/artist.jpg"),
+            "BUG: Thumbnail URL should match the input"
+        );
+
+        // Also verify via ListItemDisplay trait
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://example.com/artist.jpg"),
+            "BUG: Song::thumbnail_url() should return the thumbnail for browsable items"
+        );
+    }
+
+    #[test]
+    fn search_item_data_to_song_preserves_thumbnail_for_songs() {
+        // Arrange: Create SearchItemData::Song with thumbnail
+        let item = SearchItemData::Song(PlayableData {
+            video_id: "video123".to_string(),
+            title: "Search Result Song".to_string(),
+            artist: "Artist Name".to_string(),
+            album: None,
+            duration_ms: Some(240000),
+            thumbnail: Some("https://ytimg.com/vi/video123/thumb.jpg".to_string()),
+        });
+
+        // Act: Convert via the full pipeline
+        let song = search_item_data_to_song(item);
+
+        // Assert: Should return Some(Song) with thumbnail
+        assert!(song.is_some(), "Conversion should succeed for Song variant");
+        let song = song.unwrap();
+
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://ytimg.com/vi/video123/thumb.jpg"),
+            "BUG: search_item_data_to_song should preserve thumbnail for Song variant"
+        );
+    }
+
+    #[test]
+    fn search_item_data_to_song_preserves_thumbnail_for_artists() {
+        // Arrange: Create SearchItemData::Artist with thumbnail
+        let item = SearchItemData::Artist(BrowsableData {
+            browse_id: Some("UC12345".to_string()),
+            browse_path: "artist:UC12345".to_string(),
+            title: "Famous Artist".to_string(),
+            subtitle: Some("10M subscribers".to_string()),
+            thumbnail: Some("https://yt3.ggpht.com/artist.jpg".to_string()),
+            can_queue: false,
+        });
+
+        // Act: Convert via the full pipeline
+        let song = search_item_data_to_song(item);
+
+        // Assert: Should return Some(Song) with thumbnail
+        assert!(song.is_some(), "Conversion should succeed for Artist variant");
+        let song = song.unwrap();
+
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://yt3.ggpht.com/artist.jpg"),
+            "BUG: search_item_data_to_song should preserve thumbnail for Artist variant"
+        );
+    }
+
+    #[test]
+    fn search_item_data_to_song_preserves_thumbnail_for_albums() {
+        // Arrange: Create SearchItemData::Album with thumbnail
+        let item = SearchItemData::Album(BrowsableData {
+            browse_id: Some("MPREb_album123".to_string()),
+            browse_path: "album:MPREb_album123".to_string(),
+            title: "Greatest Hits".to_string(),
+            subtitle: Some("2023 · 12 songs".to_string()),
+            thumbnail: Some("https://lh3.googleusercontent.com/album.jpg".to_string()),
+            can_queue: true,
+        });
+
+        // Act: Convert via the full pipeline
+        let song = search_item_data_to_song(item);
+
+        // Assert: Should return Some(Song) with thumbnail
+        assert!(song.is_some(), "Conversion should succeed for Album variant");
+        let song = song.unwrap();
+
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://lh3.googleusercontent.com/album.jpg"),
+            "BUG: search_item_data_to_song should preserve thumbnail for Album variant"
+        );
+    }
+
+    // =========================================================================
+    // IPC Serialization Round-Trip Tests
+    // =========================================================================
+    //
+    // These tests verify that SearchItemData survives JSON serialization
+    // and deserialization (simulating the IPC path between daemon and TUI).
+
+    #[test]
+    fn search_item_data_survives_json_roundtrip_with_thumbnail() {
+        use crate::backends::youtube::protocol::ServerResponse;
+
+        // Arrange: Create SearchItemData with thumbnail
+        let original = SearchItemData::Song(PlayableData {
+            video_id: "xyz789".to_string(),
+            title: "IPC Test Song".to_string(),
+            artist: "IPC Artist".to_string(),
+            album: Some("IPC Album".to_string()),
+            duration_ms: Some(300000),
+            thumbnail: Some("https://ipc.test/thumbnail.jpg".to_string()),
+        });
+
+        // Wrap in ServerResponse (as the daemon does)
+        let response = ServerResponse::SearchResults(vec![original.clone()]);
+
+        // Act: Serialize to JSON (daemon → IPC)
+        let json = serde_json::to_string(&response).expect("Serialization should succeed");
+
+        // Log the JSON for debugging
+        println!("[DIAG-IPC] Serialized JSON: {}", json);
+
+        // Act: Deserialize from JSON (IPC → TUI)
+        let deserialized: ServerResponse =
+            serde_json::from_str(&json).expect("Deserialization should succeed");
+
+        // Extract the items
+        let items = match deserialized {
+            ServerResponse::SearchResults(items) => items,
+            _ => panic!("Expected SearchResults variant"),
+        };
+
+        assert_eq!(items.len(), 1, "Should have exactly one item");
+
+        // Verify thumbnail survived the round-trip
+        let item = &items[0];
+        match item {
+            SearchItemData::Song(p) => {
+                assert_eq!(
+                    p.thumbnail,
+                    Some("https://ipc.test/thumbnail.jpg".to_string()),
+                    "BUG: Thumbnail should survive JSON serialization round-trip"
+                );
+            }
+            _ => panic!("Expected Song variant"),
+        }
+
+        // Now test the full conversion pipeline after deserialization
+        let song = search_item_data_to_song(items.into_iter().next().unwrap());
+        assert!(song.is_some());
+        let song = song.unwrap();
+
+        assert_eq!(
+            song.thumbnail_url(),
+            Some("https://ipc.test/thumbnail.jpg"),
+            "BUG: Thumbnail should be preserved after IPC round-trip and conversion"
+        );
+    }
+
+    #[test]
+    fn browsable_data_survives_json_roundtrip_with_thumbnail() {
+        use crate::backends::youtube::protocol::ServerResponse;
+
+        // Arrange: Create Artist with thumbnail
+        let original = SearchItemData::Artist(BrowsableData {
+            browse_id: Some("UCBR8-60-B28hp2BmDPdntcQ".to_string()),
+            browse_path: "artist:UCBR8-60-B28hp2BmDPdntcQ".to_string(),
+            title: "YouTube Channel".to_string(),
+            subtitle: Some("50M subscribers".to_string()),
+            thumbnail: Some("https://yt3.ggpht.com/channel.jpg".to_string()),
+            can_queue: false,
+        });
+
+        let response = ServerResponse::SearchResults(vec![original]);
+        let json = serde_json::to_string(&response).expect("Serialization should succeed");
+
+        println!("[DIAG-IPC] Artist JSON: {}", json);
+
+        let deserialized: ServerResponse =
+            serde_json::from_str(&json).expect("Deserialization should succeed");
+
+        let items = match deserialized {
+            ServerResponse::SearchResults(items) => items,
+            _ => panic!("Expected SearchResults"),
+        };
+
+        match &items[0] {
+            SearchItemData::Artist(b) => {
+                assert_eq!(
+                    b.thumbnail,
+                    Some("https://yt3.ggpht.com/channel.jpg".to_string()),
+                    "BUG: Artist thumbnail should survive JSON round-trip"
+                );
+            }
+            _ => panic!("Expected Artist variant"),
+        }
+    }
 }

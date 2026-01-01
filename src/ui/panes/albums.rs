@@ -163,7 +163,8 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
     ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Clone + 'static {
         move |client| match item {
             DirOrSong::Dir { name, .. } => {
-                Ok(client.find(&[Filter::new(Tag::Album, &name)], None)?)
+                // Convert MediaItem to Song for legacy pane compatibility
+                Ok(client.find(&[Filter::new(Tag::Album, &name)], None)?.into_iter().map(Song::from).collect())
             }
             DirOrSong::Song(song) => Ok(vec![song.clone()]),
         }
@@ -185,9 +186,11 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
                     .replace_id("albums_data")
                     .target(PaneType::Albums)
                     .query(move |client| {
+                        // Convert MediaItem to Song for legacy pane compatibility
                         let data = client
                             .find(&[Filter::new(Tag::Album, current)], None)?
                             .into_iter()
+                            .map(Song::from)
                             .sorted_by(|a, b| {
                                 a.with_custom_sort(&sort_order)
                                     .cmp(&b.with_custom_sort(&sort_order))

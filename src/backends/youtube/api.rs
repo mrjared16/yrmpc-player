@@ -91,19 +91,19 @@ impl YouTubeApi {
     }
 
 
-    /// Search for music - returns type-safe SearchItem enum
+    /// Search for music - returns structured SearchResults with sections
     /// 
     /// This is the new recommended search method that uses the domain::search types
     /// for exhaustive type matching and proper separation of playable vs browsable items.
-    pub fn search_items(&self, query: &str) -> Result<Vec<crate::domain::search::SearchItem>> {
-        use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem, SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
+    pub fn search_items(&self, query: &str) -> Result<crate::domain::search::SearchResults> {
+        use crate::domain::search::{SearchItem, SearchSection, SearchResults};
         
         let raw_query = query;
         let query = match Self::sanitize_query(raw_query) {
             Some(q) => q,
             None => {
                 log::debug!("YouTube API: search_items called with empty/invalid query, skipping");
-                return Ok(Vec::new());
+                return Ok(SearchResults::new());
             }
         };
 
@@ -122,12 +122,12 @@ impl YouTubeApi {
                 e
             })?;
 
-        let mut items = Vec::new();
+        let mut search_results = SearchResults::new();
 
         // Top results
         if !results.top_results.is_empty() {
             log::info!("search_items: {} top_results found for '{}'", results.top_results.len(), query_for_log);
-            items.push(SearchItem::Header("Top Result".into()));
+            let mut items = Vec::new();
             for (idx, r) in results.top_results.into_iter().enumerate() {
                 log::debug!("  TopResult[{}]: name='{}', type={:?}, video_id={:?}, browse_id={:?}, byline={:?}, artist={:?}", 
                     idx, r.result_name, r.result_type, r.video_id, r.browse_id, r.byline, r.artist);
@@ -136,62 +136,53 @@ impl YouTubeApi {
                     Err(e) => log::warn!("  TopResult[{}] conversion failed: {}", idx, e),
                 }
             }
+            search_results.add_section(SearchSection::new("Top Result", items));
         } else {
             log::warn!("search_items: No top_results from API for '{}'", query_for_log);
         }
 
         // Artists
         if !results.artists.is_empty() {
-            items.push(SearchItem::Header("Artists".into()));
-            for a in results.artists {
-                items.push(SearchItem::from(a));
-            }
+            let items: Vec<_> = results.artists.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new("Artists", items));
         }
 
         // Albums
         if !results.albums.is_empty() {
-            items.push(SearchItem::Header("Albums".into()));
-            for a in results.albums {
-                items.push(SearchItem::from(a));
-            }
+            let items: Vec<_> = results.albums.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new("Albums", items));
         }
 
         // Songs
         if !results.songs.is_empty() {
-            items.push(SearchItem::Header("Songs".into()));
-            for s in results.songs {
-                items.push(SearchItem::from(s));
-            }
+            let items: Vec<_> = results.songs.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new("Songs", items));
         }
 
         // Videos
         if !results.videos.is_empty() {
-            items.push(SearchItem::Header("Videos".into()));
-            for v in results.videos {
-                if let Ok(item) = SearchItem::try_from(v) {
-                    items.push(item);
-                }
-            }
+            let items: Vec<_> = results.videos
+                .into_iter()
+                .filter_map(|v| SearchItem::try_from(v).ok())
+                .collect();
+            search_results.add_section(SearchSection::new("Videos", items));
         }
 
         // Featured playlists (curated by YouTube Music)
         if !results.featured_playlists.is_empty() {
-            items.push(SearchItem::Header("Featured Playlists".into()));
-            for p in results.featured_playlists {
-                items.push(SearchItem::from(p));
-            }
+            let items: Vec<_> = results.featured_playlists.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new("Featured Playlists", items));
         }
 
         // Community playlists (user-created)
         if !results.community_playlists.is_empty() {
-            items.push(SearchItem::Header("Playlists".into()));
-            for p in results.community_playlists {
-                items.push(SearchItem::from(p));
-            }
+            let items: Vec<_> = results.community_playlists.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new("Playlists", items));
         }
 
-        log::info!("search_items returned {} items for '{}'", items.len(), query_for_log);
-        Ok(items)
+        log::info!("search_items returned {} items in {} sections for '{}'", 
+            search_results.total_items(), search_results.sections.len(), query_for_log);
+        Ok(search_results)
     }
 
     /// Get search suggestions for autocomplete

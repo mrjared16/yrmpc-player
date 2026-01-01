@@ -112,6 +112,7 @@ impl<'a> Element<'a> {
             }
 
             Element::Image { url, .. } => {
+                log::trace!("[DIAG-IMG] Element::render Image url={:?} area={:?}", url, area);
                 let widget = AsyncImage::new(&ctx.image_cache, url.clone());
                 widget.render(area, buf);
             }

@@ -78,6 +78,18 @@ impl<T: ListItemDisplay> ListItemDisplay for HighlightedItem<'_, T> {
     fn is_focusable(&self) -> bool {
         self.item.is_focusable()
     }
+
+    fn is_header(&self) -> bool {
+        self.item.is_header()
+    }
+
+    fn icon_style(&self) -> ratatui::style::Style {
+        self.item.icon_style()
+    }
+
+    fn filter_matches(&self, filter: &str) -> bool {
+        self.item.filter_matches(filter)
+    }
 }
 
 /// Configuration for navigation behavior
@@ -446,16 +458,9 @@ impl SelectableList {
                     key.stop_propagation();
                     return ListAction::Handled;
                 }
-                KeyCode::Char('n') => {
-                    self.filter_next_match();
-                    key.stop_propagation();
-                    return ListAction::Handled;
-                }
-                KeyCode::Char('N') => {
-                    self.filter_prev_match();
-                    key.stop_propagation();
-                    return ListAction::Handled;
-                }
+                // NOTE: 'n'/'N' for next/prev match are NOT handled here in Find mode.
+                // All characters (including n/N) should be typed into the filter pattern.
+                // n/N navigation only works in Normal mode AFTER filter is confirmed (see below).
                 KeyCode::Char(ch) => {
                     self.filter_push_char(items, ch);
                     key.stop_propagation();
@@ -571,6 +576,15 @@ impl SelectableList {
                 let indices = self.get_marked_or_selected();
                 if !indices.is_empty() {
                     return ListAction::MoveDown(indices);
+                }
+                return ListAction::Handled;
+            }
+            // Add to queue ('a' key)
+            KeyCode::Char('a') => {
+                key.stop_propagation();
+                let indices = self.get_marked_or_selected();
+                if !indices.is_empty() {
+                    return ListAction::Enqueue(indices);
                 }
                 return ListAction::Handled;
             }
@@ -786,9 +800,13 @@ impl SelectableList {
             row_height: 2,
         };
 
+        // Extract filter text as owned String to avoid borrow issues
+        let filter_text = self.filter_text().map(|s| s.to_string());
+
         let widget = ItemListWidget::new(&highlighted_items, ctx)
             .config(item_config)
-            .highlight_style(config.theme.current_item_style);
+            .highlight_style(config.theme.current_item_style)
+            .filter(filter_text.as_deref());
 
         // Sync list_state
         self.list_state.select(self.state.selected());
@@ -901,5 +919,165 @@ mod tests {
 
         let indices: Vec<_> = view.marked_indices().collect();
         assert_eq!(indices, vec![1, 3, 5]);
+    }
+
+    // ============================================================================
+    // TDD Bug Regression Tests
+    // These tests prove bugs exist (should FAIL before fix)
+    // ============================================================================
+
+    /// BUG: task-43 - 'a' key (add to queue) not working
+    ///
+    /// EXPECTED BEHAVIOR: Pressing 'a' should return ListAction::Enqueue(indices)
+    /// ACTUAL BEHAVIOR: Returns ListAction::Passthrough (key not handled)
+    ///
+    /// ROOT CAUSE: SelectableList.handle_key() doesn't handle 'a' key
+    #[test]
+    fn handle_key_a_returns_enqueue_action() {
+        use crate::ui::panes::navigator_types::ListAction;
+        use crate::tests::fixtures::ctx;
+        use crate::shared::key_event::KeyEvent;
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        let items = vec![
+            TestItem { name: "Song 1".into(), focusable: true },
+            TestItem { name: "Song 2".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.select(Some(0));
+
+        // Create a KeyEvent for 'a' key
+        let crossterm_key = CKeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE);
+        let mut key = KeyEvent::from(crossterm_key);
+        let ctx = ctx();
+        let action = view.handle_key(&mut key, &items, &ctx);
+
+        // This test verifies 'a' key returns Enqueue action
+        // After fix: should return ListAction::Enqueue with selected indices
+        assert!(
+            matches!(action, ListAction::Enqueue(_)),
+            "Expected 'a' key to return Enqueue action, got {:?}",
+            action
+        );
+
+        // Verify the indices are correct
+        if let ListAction::Enqueue(indices) = action {
+            assert_eq!(indices, vec![0], "Should enqueue selected item at index 0");
+        }
+    }
+
+    /// BUG: task-42 - Find mode no highlight on matches
+    ///
+    /// EXPECTED BEHAVIOR: is_filter_match() returns true for items matching filter
+    /// ACTUAL BEHAVIOR: Filter state not properly exposed/used in rendering
+    #[test]
+    fn filter_match_is_detected_for_matching_item() {
+        let items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Banana".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+
+        // Enter find mode with "ap"
+        view.enter_find_mode(&items, "ap");
+
+        // Check if filter is active
+        assert!(view.is_filtering(), "Should be in filter mode");
+        assert_eq!(view.filter_text(), Some("ap"), "Filter text should be 'ap'");
+
+        // Test filter matching - this exposes the rendering bug
+        // The filter exists but is_filter_match isn't used properly in render
+        assert!(
+            view.is_filter_match(0),
+            "Apple should match 'ap' (case-insensitive)"
+        );
+        assert!(
+            !view.is_filter_match(1),
+            "Banana should NOT match 'ap'"
+        );
+        assert!(
+            view.is_filter_match(2),
+            "Apricot should match 'ap' (case-insensitive)"
+        );
+    }
+
+    // ============================================================================
+    // Task-48: Find mode cannot type 'n' character
+    // ============================================================================
+
+    /// BUG: task-48 - Find mode: Cannot type 'n' character
+    ///
+    /// EXPECTED BEHAVIOR: Pressing 'n' in Find mode adds 'n' to filter pattern
+    /// ACTUAL BEHAVIOR: 'n' triggers filter_next_match() instead of typing
+    ///
+    /// ROOT CAUSE: KeyCode::Char('n') is matched before KeyCode::Char(ch) in Find mode
+    ///
+    /// This test should FAIL before fix, PASS after fix.
+    #[test]
+    fn find_mode_typing_n_adds_to_filter() {
+        use crate::ui::panes::navigator_types::ListAction;
+        use crate::tests::fixtures::ctx;
+        use crate::shared::key_event::KeyEvent;
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        let items = vec![
+            TestItem { name: "Song One".into(), focusable: true },
+            TestItem { name: "Another Song".into(), focusable: true },
+            TestItem { name: "None".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.select(Some(0));
+
+        // Enter Find mode with initial text "so"
+        view.enter_find_mode(&items, "so");
+        assert_eq!(view.mode, InputMode::Find, "Should be in Find mode");
+        assert_eq!(view.filter_text(), Some("so"), "Initial filter should be 'so'");
+
+        // Now press 'n' - this should ADD 'n' to the filter, making it "son"
+        let crossterm_key = CKeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE);
+        let mut key = KeyEvent::from(crossterm_key);
+        let ctx = ctx();
+        let _action = view.handle_key(&mut key, &items, &ctx);
+
+        // THE CRITICAL ASSERTION:
+        // After pressing 'n' in Find mode, filter should be "son"
+        // BUG: Currently 'n' triggers filter_next_match() so filter stays "so"
+        assert_eq!(
+            view.filter_text(),
+            Some("son"),
+            "BUG: Pressing 'n' in Find mode should add 'n' to filter, not jump to next match. Filter is {:?}",
+            view.filter_text()
+        );
+    }
+
+    /// BUG: task-48 - 'N' should also be typeable in Find mode
+    #[test]
+    fn find_mode_typing_capital_n_adds_to_filter() {
+        use crate::tests::fixtures::ctx;
+        use crate::shared::key_event::KeyEvent;
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        let items = vec![
+            TestItem { name: "Name".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.select(Some(0));
+
+        // Enter Find mode
+        view.enter_find_mode(&items, "");
+
+        // Press 'N' (capital)
+        let crossterm_key = CKeyEvent::new(KeyCode::Char('N'), KeyModifiers::SHIFT);
+        let mut key = KeyEvent::from(crossterm_key);
+        let ctx = ctx();
+        let _action = view.handle_key(&mut key, &items, &ctx);
+
+        // Should add 'N' to filter
+        assert_eq!(
+            view.filter_text(),
+            Some("N"),
+            "BUG: Pressing 'N' in Find mode should add 'N' to filter"
+        );
     }
 }

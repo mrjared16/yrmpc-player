@@ -12,9 +12,11 @@ use anyhow::Result;
 
 use crate::{
     actions::{
-        intent::{IntentKind, Intent, Selection},
         handler::{HandleResult, Handler},
+        intent::{Intent, IntentKind, Selection},
     },
+    backends::{BackendDispatcher, interaction::{BackendActions, Enqueue}},
+    config::keys::actions::{AutoplayKind, Position},
     ctx::Ctx,
     domain::ContentType,
 };
@@ -68,16 +70,25 @@ impl Handler for PlayHandler {
             ));
         }
 
-        // Play the song(s)
-        // For now, play the first song directly
-        if let Some(first_song) = songs.first() {
-            if let Some(id) = first_song.id {
-                ctx.command(move |client| {
-                    client.play_id(id)?;
-                    Ok(())
-                });
-            }
-        }
+        // Convert songs to Enqueue items
+        // Use Enqueue::Song for full metadata support (required for YouTube)
+        let items: Vec<Enqueue> = songs
+            .into_iter()
+            .map(|song| Enqueue::Song { song })
+            .collect();
+
+        // Use resolve_and_enqueue for proper YouTube support:
+        // - Resolves song URIs to stream URLs
+        // - Adds to queue
+        // - Starts playback
+        BackendDispatcher::resolve_and_enqueue(
+            ctx,
+            items,
+            Position::Replace,    // Clear queue and replace
+            AutoplayKind::First,  // Play the first song
+            ctx.find_current_song_in_queue().map(|(i, _)| i),
+            Some(0),              // Start from first song in selection
+        );
 
         Ok(HandleResult::Done)
     }

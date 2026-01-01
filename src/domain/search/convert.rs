@@ -106,8 +106,14 @@ impl From<ytmapi_rs::parse::BasicSearchResultCommunityPlaylist> for SearchItem {
                 }))
             }
             _ => {
-                // Handle future variants gracefully
-                SearchItem::Header("Unknown Playlist Type".into())
+                // Handle future variants gracefully - create a placeholder playlist
+                SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
+                    playlist_id: String::new(),
+                    title: "Unknown Content".to_string(),
+                    author: String::new(),
+                    track_count: None,
+                    thumbnail: None,
+                }))
             }
         }
     }

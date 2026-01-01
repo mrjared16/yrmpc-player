@@ -592,7 +592,9 @@ impl SearchPane {
                         client.send_lsinfo(Some(&uri))?;
                     }
                     client.send_execute_cmd_list()?;
-                    let data: Vec<Song> = client.read_songs_response()?.into_iter().map(Into::into).collect();
+                    let songs: Vec<Song> = client.read_songs_response()?.into_iter().map(Into::into).collect();
+                    // Convert to MediaItem for unified QueryResult type
+                    let data: Vec<crate::domain::MediaItem> = songs.into_iter().map(crate::domain::MediaItem::from).collect();
 
                     Ok(QueryResult::SearchResult { data })
                 },
@@ -619,6 +621,9 @@ impl SearchPane {
                         client.find(&filter, None)
                     }?;
 
+                    // Convert MediaItem to Song for legacy pane compatibility
+                    let data: Vec<Song> = data.into_iter().map(Song::from).collect();
+
                     let data = if stickers_supported && rating_filter.is_some() {
                         // empty URI returns all songs with the sticker
                         let ratings = client.find_stickers("", RATING_STICKER, rating_filter)?;
@@ -637,6 +642,8 @@ impl SearchPane {
                         data
                     };
 
+                    // Convert back to MediaItem for unified QueryResult type
+                    let data: Vec<crate::domain::MediaItem> = data.into_iter().map(crate::domain::MediaItem::from).collect();
                     Ok(QueryResult::SearchResult { data })
                 },
             );
@@ -1511,12 +1518,15 @@ impl Pane for SearchPane {
                 ctx.render()?;
             }
             (SEARCH, QueryResult::SearchResult { data }) => {
+                // Convert MediaItem to Song for legacy pane processing
+                let data: Vec<Song> = data.into_iter().map(Song::from).collect();
+
                 // Elegant solution: Use headers as section markers
                 // Server sends: [Header("Top Result"), Song, Header("Artists"), Artist, ...]
                 // We track which section each item belongs to based on preceding header
-                
+
                 use std::collections::HashMap;
-                
+
                 let mut sections: HashMap<String, Vec<Song>> = HashMap::new();
                 let mut current_section = String::from("unknown");
                 

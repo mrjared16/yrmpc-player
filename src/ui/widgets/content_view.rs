@@ -212,6 +212,7 @@ impl<C: ContentViewable> ContentView<C> {
             SectionAction::MoveUp(items) => ContentAction::MoveUp(items),
             SectionAction::MoveDown(items) => ContentAction::MoveDown(items),
             SectionAction::Delete(items) => ContentAction::Delete(items),
+            SectionAction::Enqueue(items) => ContentAction::Enqueue(items),
 
             SectionAction::Passthrough => ContentAction::Handled,
         }

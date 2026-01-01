@@ -41,14 +41,20 @@ impl<'a> AsyncImage<'a> {
 impl<'a> Widget for AsyncImage<'a> {
     fn render(self, area: Rect, buf: &mut Buffer) {
         if let Some(url) = self.url {
+            log::trace!("[DIAG-IMG] AsyncImage::render url={} size={:?}", url, self.size);
             // Use the proper size-aware API
             if let Some(protocol_arc) = self.cache.get_protocol(&url, self.size) {
+                log::trace!("[DIAG-IMG] Got protocol for url={}", url);
                 if let Ok(protocol) = protocol_arc.lock() {
                     let image = Image::new(&*protocol);
                     image.render(area, buf);
                     return;
                 }
+            } else {
+                log::trace!("[DIAG-IMG] No protocol in cache for url={}", url);
             }
+        } else {
+            log::trace!("[DIAG-IMG] AsyncImage::render url=None (no thumbnail)");
         }
 
         // Placeholder

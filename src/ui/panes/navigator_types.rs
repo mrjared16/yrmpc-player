@@ -109,6 +109,8 @@ pub enum ListAction {
     MoveDown(Vec<usize>),
     /// 'd' pressed - delete items
     Delete(Vec<usize>),
+    /// 'a' pressed - add to queue (enqueue without playing)
+    Enqueue(Vec<usize>),
     /// Esc with nothing to clear - bubble up
     Back,
     /// Key not handled - pass to next layer
@@ -136,6 +138,8 @@ pub enum SectionAction {
     MoveDown(Vec<DetailItem>),
     /// 'd' pressed - delete items
     Delete(Vec<DetailItem>),
+    /// 'a' pressed - add to queue (enqueue without playing)
+    Enqueue(Vec<DetailItem>),
     /// Esc/Backspace with nothing to handle - bubble up
     Back,
     /// Key not handled
@@ -161,6 +165,8 @@ pub enum ContentAction {
     MoveDown(Vec<DetailItem>),
     /// 'd' pressed - delete items
     Delete(Vec<DetailItem>),
+    /// 'a' pressed - add to queue (enqueue without playing)
+    Enqueue(Vec<DetailItem>),
     /// Back requested - pane decides what to do
     Back,
 }
@@ -203,7 +209,10 @@ pub enum PaneAction {
     
     /// Queue: Move items in specified direction (unified facade)
     QueueMove { ids: Vec<u32>, direction: MoveDirection },
-    
+
+    /// Toggle playback (Pause/Play)
+    TogglePause,
+
     /// Show a modal
     ShowModal(ModalKind),
     
