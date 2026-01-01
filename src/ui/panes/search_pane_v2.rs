@@ -630,6 +630,91 @@ impl SearchPaneV2 {
 
     // ========== RENDERING ==========
 
+    /// Reorder search results by config section order.
+    /// This ensures top_results appears first (if configured), followed by songs, artists, etc.
+    fn reorder_by_config_sections(data: Vec<crate::domain::MediaItem>, config_sections: &[String]) -> Vec<DetailItem> {
+        use crate::domain::media_item::{MediaItem, Displayable};
+        use std::collections::HashMap;
+
+        // Phase 1: Group items by section (using headers as markers)
+        let mut sections: HashMap<String, Vec<MediaItem>> = HashMap::new();
+        let mut current_section = String::from("unknown");
+
+        // Map header titles to config section names
+        fn header_to_section(title: &str) -> String {
+            match title.to_lowercase().as_str() {
+                "top result" | "top results" => "top_results".to_string(),
+                "songs" => "songs".to_string(),
+                "artists" => "artists".to_string(),
+                "albums" => "albums".to_string(),
+                "playlists" | "featured playlists" | "community playlists" => "playlists".to_string(),
+                "videos" => "videos".to_string(),
+                other => other.to_lowercase().replace(" ", "_"),
+            }
+        }
+
+        fn section_display_name(section: &str) -> &'static str {
+            match section {
+                "top_results" => "Top Results",
+                "songs" => "Songs",
+                "artists" => "Artists",
+                "albums" => "Albums",
+                "playlists" => "Playlists",
+                "videos" => "Videos",
+                _ => "Other",
+            }
+        }
+
+        // Process items, tracking current section
+        for item in data {
+            match &item {
+                MediaItem::Header { title } => {
+                    // Header marks start of new section
+                    current_section = header_to_section(title);
+                }
+                _ => {
+                    // Regular item - add to current section
+                    sections.entry(current_section.clone()).or_default().push(item);
+                }
+            }
+        }
+
+        // Log what we found per section
+        let section_counts: Vec<String> = sections.iter()
+            .map(|(k, v)| format!("{}:{}", k, v.len()))
+            .collect();
+        log::info!("[SEARCH_V2] Sections found: {}", section_counts.join(", "));
+
+        // Phase 2: Build display list based on config order
+        let mut result: Vec<DetailItem> = Vec::new();
+
+        for section in config_sections {
+            if let Some(items) = sections.get_mut(section) {
+                if !items.is_empty() {
+                    // Add section header as DetailItem
+                    result.push(DetailItem::header(section_display_name(section)));
+                    // Add items in order
+                    for item in items.drain(..) {
+                        result.push(DetailItem::from(item));
+                    }
+                }
+            }
+        }
+
+        // Add any remaining items not in config (e.g., "videos" if not configured)
+        for (section, mut items) in sections.into_iter() {
+            if !items.is_empty() && !config_sections.contains(&section) {
+                result.push(DetailItem::header(section_display_name(&section)));
+                for item in items.drain(..) {
+                    result.push(DetailItem::from(item));
+                }
+            }
+        }
+
+        log::info!("[SEARCH_V2] Reordered {} items by config sections: {:?}", result.len(), config_sections);
+        result
+    }
+
     /// Get current search query string from focused input
     fn get_current_query_string(&self) -> String {
         self.inputs.inputs.iter().find_map(|input| match input {
@@ -913,7 +998,7 @@ impl Pane for SearchPaneV2 {
         id: &'static str,
         data: QueryResult,
         _is_visible: bool,
-        _ctx: &Ctx,
+        ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
             ("search_v2", QueryResult::SearchResult { data }) => {
@@ -924,13 +1009,13 @@ impl Pane for SearchPaneV2 {
                     log::info!("[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
                         first.title(), first.content_type(), first.thumbnail_url());
                 }
-                // Convert MediaItems to DetailItems (type-safe, no data loss)
-                let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
-                
+                // Reorder by config sections (top_results first, then songs, artists, etc.)
+                let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);
+
                 // Clear stack and set new root
                 self.view.clear();
                 self.view.push(SearchableContent::results("Results", items));
-                
+
                 self.phase = Phase::BrowseResults;
             }
             ("fetch_playlist_v2", QueryResult::PlaylistDetail(details)) => {
@@ -1122,7 +1207,7 @@ impl NavigatorPane for SearchPaneV2 {
         &mut self,
         id: &'static str,
         data: crate::QueryResult,
-        _ctx: &Ctx,
+        ctx: &Ctx,
     ) -> Result<()> {
         // Delegate to the Pane implementation's logic
         match (id, data) {
@@ -1134,9 +1219,9 @@ impl NavigatorPane for SearchPaneV2 {
                     log::info!("[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",
                         first.title(), first.content_type(), first.thumbnail_url());
                 }
-                // Convert MediaItems to DetailItems (type-safe, no data loss)
-                let items: Vec<DetailItem> = data.into_iter().map(DetailItem::from).collect();
-                
+                // Reorder by config sections (top_results first, then songs, artists, etc.)
+                let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);
+
                 self.view.clear();
                 self.view.push(SearchableContent::results("Results", items));
                 self.phase = Phase::BrowseResults;
