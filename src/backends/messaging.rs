@@ -102,6 +102,8 @@ pub(crate) enum QueryResult {
     DirOrSong { data: Vec<DirOrSong>, path: Option<Path> },
     SearchSuggestions(Vec<String>),
     SearchResult { data: Vec<MediaItem> },
+    /// Search results with proper section structure (no flat markers)
+    SearchResultSectioned(crate::domain::search::SearchResults),
     AddToPlaylist { playlists: Vec<String>, song_file: String },
     AddToPlaylistMultiple { playlists: Vec<String>, song_files: Vec<String> },
     AlbumArt(Option<Vec<u8>>),

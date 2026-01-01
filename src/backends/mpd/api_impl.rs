@@ -9,7 +9,7 @@ use anyhow::Result;
 use super::backend::MpdBackend;
 use super::protocol::mpd_client::MpdClient as MpdClientTrait;
 use crate::backends::api::{
-    self, Item, SearchQuery, SearchResults, BrowseResult, Capability,
+    self, Item, SearchQuery, SearchResults, SearchSection, BrowseResult, Capability,
     InsertAt, AfterAdd, ContentType,
 };
 use crate::mpd::commands::{LsInfoEntry, ValueChange};
@@ -246,8 +246,11 @@ impl api::Discovery for MpdBackend<'_> {
             let domain_song: crate::domain::Song = s.into();
             Item::from(&domain_song)
         }).collect();
-        
-        Ok(SearchResults { items })
+
+        // MPD returns flat results - group all into a single "songs" section
+        let mut results = SearchResults::default();
+        results.add_section(SearchSection::new("songs", "Songs", items));
+        Ok(results)
     }
 
     fn browse(&mut self, path: &str) -> Result<BrowseResult> {

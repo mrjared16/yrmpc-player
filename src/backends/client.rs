@@ -633,7 +633,9 @@ impl<'name> BackendDispatcher<'name> {
 
         let results = api::Discovery::search(self, api::SearchQuery::new(query_text))?;
         // Convert Items directly to MediaItem (no lossy Song conversion!)
-        Ok(results.items.into_iter().map(crate::domain::MediaItem::from).collect())
+        // Note: This flattens sections - for structured results, use Discovery::search directly
+        #[allow(deprecated)]
+        Ok(results.items().into_iter().map(crate::domain::MediaItem::from).collect())
     }
 
     #[deprecated(since = "0.12.0", note = "Use dispatcher.library().find(filter, window) instead")]

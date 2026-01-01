@@ -297,6 +297,19 @@ impl DetailStack {
 // BUILD SECTIONS
 // =============================================================================
 
+/// Convert section name to SectionKey
+fn section_key_from_name(name: &str) -> SectionKey {
+    match name.to_lowercase().as_str() {
+        "songs" | "tracks" | "top songs" => SectionKey::Tracks,
+        "albums" => SectionKey::Albums,
+        "artists" => SectionKey::Artists,
+        "playlists" | "featured playlists" | "community playlists" => SectionKey::Playlists,
+        "videos" => SectionKey::Videos,
+        "top result" | "top results" => SectionKey::Stats, // Using Stats for Top Results
+        _ => SectionKey::Actions, // Default fallback
+    }
+}
+
 /// Build sections from ContentDetails, preserving structure.
 ///
 /// This replaces `flatten_content()`. Instead of losing structure,
@@ -304,7 +317,7 @@ impl DetailStack {
 ///
 /// ## Adapter Pattern
 ///
-/// For new code, prefer using the domain `ContentDetails::into_sections()` 
+/// For new code, prefer using the domain `ContentDetails::into_sections()`
 /// method with the `From<Section> for SectionView` adapter:
 ///
 /// ```ignore
@@ -321,45 +334,88 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
 
     match content {
         ContentDetails::Search(search) => {
-            // Search results: group items by content type into proper sections
-            // This allows Tab navigation between sections and proper header rendering
             use crate::domain::ContentType;
 
-            let mut songs: Vec<DetailItem> = Vec::new();
-            let mut albums: Vec<DetailItem> = Vec::new();
-            let mut artists: Vec<DetailItem> = Vec::new();
-            let mut playlists: Vec<DetailItem> = Vec::new();
-            let mut videos: Vec<DetailItem> = Vec::new();
+            // Check if items are pre-sectioned (contain Header markers)
+            // This implements ADR-section-as-container: if headers exist, preserve that structure
+            let has_headers = search.items.iter().any(|item| {
+                matches!(item, DetailItem::Ref(r) if r.content_type == ContentType::Header)
+            });
 
-            for item in &search.items {
-                match item {
-                    DetailItem::Song(_) => songs.push(item.clone()),
-                    DetailItem::Ref(r) => match r.content_type {
-                        ContentType::Album => albums.push(item.clone()),
-                        ContentType::Artist => artists.push(item.clone()),
-                        ContentType::Playlist => playlists.push(item.clone()),
-                        ContentType::Video => videos.push(item.clone()),
-                        ContentType::Track => songs.push(item.clone()),
-                        _ => songs.push(item.clone()),
-                    },
+            if has_headers {
+                // Pre-sectioned data: parse headers and their following items into SectionViews
+                log::debug!("[build_sections] Detected pre-sectioned data, preserving structure");
+                let mut current_section_name = String::from("Results");
+                let mut current_items: Vec<DetailItem> = Vec::new();
+
+                for item in &search.items {
+                    match item {
+                        DetailItem::Ref(r) if r.content_type == ContentType::Header => {
+                            // Save previous section if it has items
+                            if !current_items.is_empty() {
+                                sections.push(SectionView::new(
+                                    section_key_from_name(&current_section_name),
+                                    &current_section_name,
+                                    std::mem::take(&mut current_items),
+                                ));
+                            }
+                            // Start new section
+                            current_section_name = r.name.clone();
+                        }
+                        _ => {
+                            // Regular item - add to current section
+                            current_items.push(item.clone());
+                        }
+                    }
                 }
-            }
 
-            // Create sections for each non-empty group
-            if !songs.is_empty() {
-                sections.push(SectionView::new(SectionKey::Tracks, "Songs", songs));
-            }
-            if !albums.is_empty() {
-                sections.push(SectionView::new(SectionKey::Albums, "Albums", albums));
-            }
-            if !artists.is_empty() {
-                sections.push(SectionView::new(SectionKey::Artists, "Artists", artists));
-            }
-            if !playlists.is_empty() {
-                sections.push(SectionView::new(SectionKey::Playlists, "Playlists", playlists));
-            }
-            if !videos.is_empty() {
-                sections.push(SectionView::new(SectionKey::Videos, "Videos", videos));
+                // Don't forget the last section
+                if !current_items.is_empty() {
+                    sections.push(SectionView::new(
+                        section_key_from_name(&current_section_name),
+                        &current_section_name,
+                        current_items,
+                    ));
+                }
+            } else {
+                // No headers: use legacy grouping by content type
+                log::debug!("[build_sections] No headers found, grouping by content type");
+                let mut songs: Vec<DetailItem> = Vec::new();
+                let mut albums: Vec<DetailItem> = Vec::new();
+                let mut artists: Vec<DetailItem> = Vec::new();
+                let mut playlists: Vec<DetailItem> = Vec::new();
+                let mut videos: Vec<DetailItem> = Vec::new();
+
+                for item in &search.items {
+                    match item {
+                        DetailItem::Song(_) => songs.push(item.clone()),
+                        DetailItem::Ref(r) => match r.content_type {
+                            ContentType::Album => albums.push(item.clone()),
+                            ContentType::Artist => artists.push(item.clone()),
+                            ContentType::Playlist => playlists.push(item.clone()),
+                            ContentType::Video => videos.push(item.clone()),
+                            ContentType::Track => songs.push(item.clone()),
+                            _ => songs.push(item.clone()),
+                        },
+                    }
+                }
+
+                // Create sections for each non-empty group
+                if !songs.is_empty() {
+                    sections.push(SectionView::new(SectionKey::Tracks, "Songs", songs));
+                }
+                if !albums.is_empty() {
+                    sections.push(SectionView::new(SectionKey::Albums, "Albums", albums));
+                }
+                if !artists.is_empty() {
+                    sections.push(SectionView::new(SectionKey::Artists, "Artists", artists));
+                }
+                if !playlists.is_empty() {
+                    sections.push(SectionView::new(SectionKey::Playlists, "Playlists", playlists));
+                }
+                if !videos.is_empty() {
+                    sections.push(SectionView::new(SectionKey::Videos, "Videos", videos));
+                }
             }
         }
 

@@ -30,10 +30,58 @@ impl SearchQuery {
     }
 }
 
-/// Search results
+/// Search results with structured sections
+///
+/// Sections contain their items as containers, not markers in a flat list.
+/// This enables proper separation of concerns:
+/// - Backend: Returns sections in native order
+/// - UI: Applies config-based ordering (presentation concern)
 #[derive(Debug, Clone, Default)]
 pub struct SearchResults {
+    /// Sections of search results (e.g., "Songs", "Albums", "Artists")
+    pub sections: Vec<SearchSection>,
+}
+
+/// A section of search results
+#[derive(Debug, Clone, Default)]
+pub struct SearchSection {
+    /// Section key for config ordering (e.g., "songs", "albums", "top_results")
+    pub key: String,
+    /// Display title (e.g., "Songs", "Albums", "Top Result")
+    pub title: String,
+    /// Items in this section
     pub items: Vec<Item>,
+}
+
+impl SearchSection {
+    pub fn new(key: impl Into<String>, title: impl Into<String>, items: Vec<Item>) -> Self {
+        Self {
+            key: key.into(),
+            title: title.into(),
+            items,
+        }
+    }
+}
+
+impl SearchResults {
+    pub fn new() -> Self {
+        Self { sections: Vec::new() }
+    }
+
+    pub fn add_section(&mut self, section: SearchSection) {
+        self.sections.push(section);
+    }
+
+    /// Total number of items across all sections
+    pub fn total_items(&self) -> usize {
+        self.sections.iter().map(|s| s.items.len()).sum()
+    }
+
+    /// Flatten all sections into a single list of items (loses section structure)
+    #[deprecated(note = "Use sections directly to preserve structure")]
+    pub fn items(&self) -> Vec<Item> {
+        self.sections.iter().flat_map(|s| s.items.clone()).collect()
+    }
 }
 
 /// Browse results with navigation context

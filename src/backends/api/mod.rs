@@ -47,7 +47,7 @@ mod status_query;
 
 // Re-export all types at api:: level
 pub use content::{ContentType, Item, Capability};
-pub use discovery::{Discovery, SearchQuery, SearchResults, BrowseResult};
+pub use discovery::{Discovery, SearchQuery, SearchResults, SearchSection, BrowseResult};
 pub use playback::{Playback, Volume, State, Status, Repeat};
 pub use queue::{Queue, InsertAt, AfterAdd, ToggleMode};
 pub use status_query::StatusQuery;

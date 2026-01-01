@@ -133,55 +133,38 @@ impl SearchPaneV2 {
 
     // ========== SEARCH QUERY ==========
 
-    /// Trigger search query
+    /// Trigger search query using sectioned API (ADR-section-as-container)
     fn search(&self, ctx: &Ctx) {
         log::debug!("SearchPaneV2::search() called");
-        let search_mode = self.inputs.search_mode();
-        
-        // Build filter from inputs
-        let filter: Vec<_> = self.inputs.inputs.iter()
-            .filter_map(|input| {
+
+        // Get search text from primary input
+        let search_text = self.inputs.inputs.iter()
+            .find_map(|input| {
                 match input {
-                    InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
-                        if !value.is_empty() && !key.is_empty() =>
-                    {
-                        Some((key.to_owned(), value.to_owned(), search_mode))
-                    }
+                    InputType::Textbox(TextboxInput { value, filter_key: Some(_), .. })
+                        if !value.is_empty() => Some(value.clone()),
                     _ => None,
                 }
-            })
-            .collect();
+            });
 
-        log::debug!("SearchPaneV2::search() filter={:?}", filter);
-        
-        if filter.is_empty() {
-            log::debug!("SearchPaneV2::search() early return - filter empty");
-            // No filter - will clear results via query result handler
+        let Some(query_text) = search_text else {
+            log::debug!("SearchPaneV2::search() early return - no search text");
             return;
-        }
+        };
 
-        let fold_case = self.inputs.fold_case();
-        let mut filter_owned = filter;
+        log::debug!("SearchPaneV2::search() query_text={}", query_text);
 
         ctx.query()
             .id(SEARCH_ID)
             .replace_id(SEARCH_ID)
             .target(PaneType::Search)
             .query(move |client| {
-                let filter = filter_owned
-                    .iter_mut()
-                    .map(|(key, value, kind)| {
-                        Filter::new(std::mem::take(key), value.as_str()).with_type((*kind).into())
-                    })
-                    .collect_vec();
-
-                let data = if fold_case {
-                    client.search(&filter)
-                } else {
-                    client.find(&filter, None)
-                }?;
-
-                Ok(QueryResult::SearchResult { data })
+                // Use the new sectioned API (api::Discovery::search)
+                use crate::backends::api::{Discovery, SearchQuery};
+                let results = Discovery::search(client, SearchQuery::new(&query_text))?;
+                Ok(QueryResult::SearchResultSectioned(
+                    crate::domain::search::SearchResults::from(results)
+                ))
             });
     }
 
@@ -715,6 +698,68 @@ impl SearchPaneV2 {
         result
     }
 
+    /// Apply config-based ordering to sections (presentation concern).
+    ///
+    /// This implements the ADR-section-as-container pattern:
+    /// - Backend returns sections in native order
+    /// - UI applies config ordering as a presentation concern
+    fn apply_config_order(
+        sections: Vec<crate::domain::search::SearchSection>,
+        config_order: &[String],
+    ) -> Vec<crate::domain::search::SearchSection> {
+        use std::collections::HashMap;
+
+        // Build a map of key -> section for quick lookup
+        let mut section_map: HashMap<String, crate::domain::search::SearchSection> =
+            sections.into_iter().map(|s| (s.key.clone(), s)).collect();
+
+        let mut result = Vec::new();
+
+        // Add sections in config order
+        for key in config_order {
+            if let Some(section) = section_map.remove(key) {
+                if !section.items.is_empty() {
+                    result.push(section);
+                }
+            }
+        }
+
+        // Add any remaining sections not in config (e.g., "videos" if not configured)
+        for (_, section) in section_map {
+            if !section.items.is_empty() {
+                result.push(section);
+            }
+        }
+
+        log::info!("[SEARCH_V2] Applied config order: {:?} -> {} sections", config_order, result.len());
+        result
+    }
+
+    /// Convert structured sections to flat DetailItems with headers.
+    ///
+    /// This is a bridge for the existing SearchResultsContent which uses flat items.
+    /// Eventually, SearchResultsContent should be updated to store sections directly.
+    fn sections_to_detail_items(
+        sections: Vec<crate::domain::search::SearchSection>,
+    ) -> Vec<DetailItem> {
+        let section_count = sections.len();
+        let mut result = Vec::new();
+
+        for section in sections {
+            // Add header for this section
+            result.push(DetailItem::header(&section.title));
+
+            // Add items
+            for item in section.items {
+                result.push(DetailItem::from(item));
+            }
+        }
+
+        log::info!("[SEARCH_V2] Converted {} sections to {} DetailItems",
+            section_count, result.len());
+        result
+    }
+
     /// Get current search query string from focused input
     fn get_current_query_string(&self) -> String {
         self.inputs.inputs.iter().find_map(|input| match input {
@@ -1001,9 +1046,26 @@ impl Pane for SearchPaneV2 {
         ctx: &Ctx,
     ) -> Result<()> {
         match (id, data) {
+            // NEW: Handle sectioned search results (ADR-section-as-container)
+            (SEARCH_ID, QueryResult::SearchResultSectioned(results)) => {
+                log::debug!("SearchPaneV2::on_query_finished received sectioned results with {} sections",
+                    results.sections.len());
+
+                // Apply config ordering (presentation concern - UI layer only)
+                let ordered_sections = Self::apply_config_order(results.sections, &ctx.config.search.sections);
+
+                // Convert sections to DetailItems for existing SearchResultsContent
+                let items = Self::sections_to_detail_items(ordered_sections);
+
+                // Clear stack and set new root
+                self.view.clear();
+                self.view.push(SearchableContent::results("Results", items));
+
+                self.phase = Phase::BrowseResults;
+            }
+            // LEGACY: Handle flat search results (backward compatibility)
             ("search_v2", QueryResult::SearchResult { data }) => {
-                log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
-                // MediaItem provides type-safe access to all fields
+                log::debug!("SearchPaneV2::on_query_finished received {} flat results", data.len());
                 if let Some(first) = data.first() {
                     use crate::domain::media_item::Displayable;
                     log::info!("[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
@@ -1211,9 +1273,24 @@ impl NavigatorPane for SearchPaneV2 {
     ) -> Result<()> {
         // Delegate to the Pane implementation's logic
         match (id, data) {
+            // NEW: Handle sectioned search results (ADR-section-as-container)
+            (SEARCH_ID, crate::QueryResult::SearchResultSectioned(results)) => {
+                log::debug!("NavigatorPane::on_query_finished received sectioned results with {} sections",
+                    results.sections.len());
+
+                // Apply config ordering (presentation concern - UI layer only)
+                let ordered_sections = Self::apply_config_order(results.sections, &ctx.config.search.sections);
+
+                // Convert sections to DetailItems for existing SearchResultsContent
+                let items = Self::sections_to_detail_items(ordered_sections);
+
+                self.view.clear();
+                self.view.push(SearchableContent::results("Results", items));
+                self.phase = Phase::BrowseResults;
+            }
+            // LEGACY: Handle flat search results (backward compatibility)
             ("search_v2", crate::QueryResult::SearchResult { data }) => {
-                log::debug!("SearchPaneV2::on_query_finished received {} results", data.len());
-                // MediaItem provides type-safe access to all fields
+                log::debug!("NavigatorPane::on_query_finished received {} flat results", data.len());
                 if let Some(first) = data.first() {
                     use crate::domain::media_item::Displayable;
                     log::info!("[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",

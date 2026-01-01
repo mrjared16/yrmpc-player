@@ -13,7 +13,7 @@ use anyhow::{Context, Result, anyhow};
 
 use super::protocol::{BrowseEntry, ServerCommand, ServerResponse, SongData, framing};
 use crate::{
-    domain::{PlaybackState, QueuePosition, Song, Status},
+    domain::{MediaItem, PlaybackState, QueuePosition, Song, Status},
     mpd::{
         commands::{
             Decoder, LsInfoEntry, Output, Playlist, SaveMode, SeekPosition, ValueChange,
@@ -25,6 +25,7 @@ use crate::{
     },
     backends::traits::{MusicBackend, QueueOperations},
     backends::LibraryCategory,
+    backends::api::{SearchSection, Item},
 };
 
 fn song_from_playable(p: &super::protocol::PlayableData, item_type: &str) -> Song {
@@ -65,6 +66,60 @@ fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> S
         metadata,
         last_modified: None,
         added: None,
+    }
+}
+
+/// Parse a flat list of MediaItems (with Header markers) into structured sections.
+///
+/// This implements the Section-as-Container pattern from ADR-section-as-container.md:
+/// Headers in the protocol are converted to section containers, not kept as markers.
+fn parse_media_items_to_sections(items: Vec<MediaItem>) -> Vec<SearchSection> {
+    let mut sections: Vec<SearchSection> = Vec::new();
+    let mut current_section: Option<SearchSection> = None;
+
+    for item in items {
+        match item {
+            MediaItem::Header { ref title } => {
+                // Save previous section if exists
+                if let Some(section) = current_section.take() {
+                    if !section.items.is_empty() {
+                        sections.push(section);
+                    }
+                }
+                // Start new section
+                let key = header_title_to_key(title);
+                current_section = Some(SearchSection::new(key, title.clone(), Vec::new()));
+            }
+            _ => {
+                // Add item to current section (or create unknown section)
+                let section = current_section.get_or_insert_with(|| {
+                    SearchSection::new("unknown", "Unknown", Vec::new())
+                });
+                section.items.push(Item::from(item));
+            }
+        }
+    }
+
+    // Don't forget the last section
+    if let Some(section) = current_section {
+        if !section.items.is_empty() {
+            sections.push(section);
+        }
+    }
+
+    sections
+}
+
+/// Convert header display title to config key
+fn header_title_to_key(title: &str) -> String {
+    match title.to_lowercase().as_str() {
+        "top result" | "top results" => "top_results".to_string(),
+        "songs" => "songs".to_string(),
+        "artists" => "artists".to_string(),
+        "albums" => "albums".to_string(),
+        "playlists" | "featured playlists" | "community playlists" => "playlists".to_string(),
+        "videos" => "videos".to_string(),
+        other => other.to_lowercase().replace(' ', "_"),
     }
 }
 
@@ -579,7 +634,7 @@ impl MusicBackend for YouTubeProxy {
 // These traits provide a clean, MPD-free interface for the TUI.
 // They wrap the existing MusicBackend methods with simpler types.
 
-use crate::backends::api::{self, Item, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
+use crate::backends::api::{self, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
 
 impl api::Playback for YouTubeProxy {
     fn play(&mut self) -> Result<()> {
@@ -774,11 +829,14 @@ impl api::Discovery for YouTubeProxy {
 
         match self.request(ServerCommand::Search { query: query.text })? {
             ServerResponse::SearchResults(items) => {
-                // MediaItem comes directly from protocol - just convert to api::Item
-                let items = items.into_iter()
-                    .map(Item::from)
-                    .collect();
-                Ok(SearchResults { items })
+                // Parse flat MediaItem list (with Header markers) into structured sections
+                // This implements the Section-as-Container pattern from ADR-section-as-container.md
+                let sections = parse_media_items_to_sections(items);
+                let mut results = SearchResults::default();
+                for section in sections {
+                    results.add_section(section);
+                }
+                Ok(results)
             }
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),

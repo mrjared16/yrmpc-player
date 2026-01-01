@@ -86,7 +86,9 @@ pub enum QueueAction {
 /// without mixing header metadata into the domain item types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchSection {
-    /// Section title (e.g., "Top Result", "Songs", "Artists")
+    /// Section key for config ordering (e.g., "top_results", "songs", "artists")
+    pub key: String,
+    /// Section title for display (e.g., "Top Result", "Songs", "Artists")
     pub title: String,
     /// Items in this section
     pub items: Vec<SearchItem>,
@@ -94,8 +96,9 @@ pub struct SearchSection {
 
 impl SearchSection {
     /// Create a new search section
-    pub fn new(title: impl Into<String>, items: Vec<SearchItem>) -> Self {
+    pub fn new(key: impl Into<String>, title: impl Into<String>, items: Vec<SearchItem>) -> Self {
         Self {
+            key: key.into(),
             title: title.into(),
             items,
         }
@@ -221,5 +224,78 @@ impl BrowsableItem {
     /// Queue capability if this item can be queued
     pub fn queue_capability(&self) -> Option<QueueCapability> {
         self.content_ref().map(QueueCapability::Fetchable)
+    }
+}
+
+// ============ Conversions from API types ============
+
+/// Convert api::Item to SearchItem
+impl From<crate::backends::api::Item> for SearchItem {
+    fn from(item: crate::backends::api::Item) -> Self {
+        use crate::domain::ContentType;
+        use items::{SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
+
+        match item.content_type {
+            ContentType::Track => SearchItem::Playable(PlayableItem::Song(SongItem {
+                video_id: item.id,
+                title: item.title,
+                artist: item.subtitle.unwrap_or_default(),
+                album: None,
+                duration: item.duration,
+                thumbnail: item.thumbnail,
+                explicit: false,
+            })),
+            ContentType::Artist => SearchItem::Browsable(BrowsableItem::Artist(ArtistItem {
+                name: item.title,
+                browse_id: Some(item.id),
+                thumbnail: item.thumbnail,
+                subscribers: item.subtitle,
+            })),
+            ContentType::Album => SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
+                album_id: item.id,
+                title: item.title,
+                artist: item.subtitle.unwrap_or_default(),
+                year: None,
+                album_type: None,
+                thumbnail: item.thumbnail,
+                explicit: false,
+            })),
+            ContentType::Playlist => SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
+                playlist_id: item.id,
+                title: item.title,
+                author: item.subtitle.unwrap_or_default(),
+                track_count: None,
+                thumbnail: item.thumbnail,
+            })),
+            // Directory and other types default to video (can't be easily mapped)
+            _ => SearchItem::Playable(PlayableItem::Video(VideoItem {
+                video_id: item.id,
+                title: item.title,
+                channel: item.subtitle.unwrap_or_default(),
+                views: None,
+                duration: item.duration,
+                thumbnail: item.thumbnail,
+            })),
+        }
+    }
+}
+
+/// Convert api::SearchSection to domain SearchSection
+impl From<crate::backends::api::SearchSection> for SearchSection {
+    fn from(section: crate::backends::api::SearchSection) -> Self {
+        SearchSection {
+            key: section.key,
+            title: section.title,
+            items: section.items.into_iter().map(SearchItem::from).collect(),
+        }
+    }
+}
+
+/// Convert api::SearchResults to domain SearchResults
+impl From<crate::backends::api::SearchResults> for SearchResults {
+    fn from(results: crate::backends::api::SearchResults) -> Self {
+        SearchResults {
+            sections: results.sections.into_iter().map(SearchSection::from).collect(),
+        }
     }
 }

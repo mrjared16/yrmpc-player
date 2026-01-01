@@ -136,7 +136,7 @@ impl YouTubeApi {
                     Err(e) => log::warn!("  TopResult[{}] conversion failed: {}", idx, e),
                 }
             }
-            search_results.add_section(SearchSection::new("Top Result", items));
+            search_results.add_section(SearchSection::new("top_results", "Top Result", items));
         } else {
             log::warn!("search_items: No top_results from API for '{}'", query_for_log);
         }
@@ -144,19 +144,19 @@ impl YouTubeApi {
         // Artists
         if !results.artists.is_empty() {
             let items: Vec<_> = results.artists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("Artists", items));
+            search_results.add_section(SearchSection::new("artists", "Artists", items));
         }
 
         // Albums
         if !results.albums.is_empty() {
             let items: Vec<_> = results.albums.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("Albums", items));
+            search_results.add_section(SearchSection::new("albums", "Albums", items));
         }
 
         // Songs
         if !results.songs.is_empty() {
             let items: Vec<_> = results.songs.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("Songs", items));
+            search_results.add_section(SearchSection::new("songs", "Songs", items));
         }
 
         // Videos
@@ -165,19 +165,19 @@ impl YouTubeApi {
                 .into_iter()
                 .filter_map(|v| SearchItem::try_from(v).ok())
                 .collect();
-            search_results.add_section(SearchSection::new("Videos", items));
+            search_results.add_section(SearchSection::new("videos", "Videos", items));
         }
 
         // Featured playlists (curated by YouTube Music)
         if !results.featured_playlists.is_empty() {
             let items: Vec<_> = results.featured_playlists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("Featured Playlists", items));
+            search_results.add_section(SearchSection::new("featured_playlists", "Featured Playlists", items));
         }
 
         // Community playlists (user-created)
         if !results.community_playlists.is_empty() {
             let items: Vec<_> = results.community_playlists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("Playlists", items));
+            search_results.add_section(SearchSection::new("playlists", "Playlists", items));
         }
 
         log::info!("search_items returned {} items in {} sections for '{}'", 
