@@ -1,18 +1,22 @@
 //! Playback service - manages MPV process and playback control
 
+use std::{
+    path::{Path, PathBuf},
+    process::{Child, Command},
+    sync::{
+        Arc,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::Duration,
+};
+
 use anyhow::{Context, Result, bail};
 use crossbeam::channel::Sender;
 use parking_lot::Mutex;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
-use std::time::Duration;
-use crate::backends::youtube::mpv::{MpvIpc, MpvEvent};
-use super::super::url_resolver::UrlResolver;
-use super::super::config::ExtractorType;
-use super::super::audio_cache::AudioCache;
+
+use super::super::{audio_cache::AudioCache, config::ExtractorType, url_resolver::UrlResolver};
+use crate::backends::youtube::mpv::{MpvEvent, MpvIpc};
 
 /// Observer IDs for MPV properties
 const OBSERVER_PLAYLIST_POS: u64 = 1;
@@ -21,6 +25,10 @@ const OBSERVER_IDLE: u64 = 3;
 
 /// Default prefetch duration for audio cache (seconds)
 const DEFAULT_AUDIO_PREFETCH_SECS: f64 = 10.0;
+
+fn escape_edl_segment(s: &str) -> String {
+    s.replace('%', "%25").replace(';', "%3B").replace(',', "%2C")
+}
 
 /// Playback service manages MPV process and URL resolution
 pub struct PlaybackService {
@@ -60,31 +68,27 @@ impl PlaybackService {
 
     /// Start the MPV event loop in a background thread
     ///
-    /// This sets up property observation and spawns a thread that reads MPV events.
-    /// Events are sent via the provided channel.
+    /// This sets up property observation and spawns a thread that reads MPV
+    /// events. Events are sent via the provided channel.
     ///
     /// # Arguments
-    /// * `socket_path` - Path to the MPV socket (for creating dedicated event reader)
-    /// * `event_tx` - Channel sender for broadcasting events ("player", "playlist")
+    /// * `socket_path` - Path to the MPV socket (for creating dedicated event
+    ///   reader)
+    /// * `event_tx` - Channel sender for broadcasting events ("player",
+    ///   "playlist")
     pub fn start_event_loop(&self, socket_path: &Path, event_tx: Sender<String>) -> Result<()> {
-        // Don't start if already running
         if self.event_loop_running.swap(true, Ordering::SeqCst) {
             log::warn!("Event loop already running");
             return Ok(());
         }
 
-        // Set up property observation on main connection
-        {
-            let mut mpv = self.mpv.lock();
-            mpv.observe_property(OBSERVER_PLAYLIST_POS, "playlist-pos")?;
-            mpv.observe_property(OBSERVER_PAUSE, "pause")?;
-            mpv.observe_property(OBSERVER_IDLE, "idle-active")?;
-            log::info!("MPV property observation set up");
-        }
+        let mut event_reader =
+            MpvIpc::connect(socket_path).context("Failed to create event reader connection")?;
 
-        // Create dedicated connection for event reading
-        let mut event_reader = MpvIpc::connect(socket_path)
-            .context("Failed to create event reader connection")?;
+        event_reader.observe_property(OBSERVER_PLAYLIST_POS, "playlist-pos")?;
+        event_reader.observe_property(OBSERVER_PAUSE, "pause")?;
+        event_reader.observe_property(OBSERVER_IDLE, "idle-active")?;
+        log::info!("MPV property observation set up on event reader connection");
 
         let running = self.event_loop_running.clone();
 
@@ -106,9 +110,16 @@ impl PlaybackService {
                                 log::debug!("Pause state: {}", paused);
                                 let _ = event_tx.send("player".to_string());
                             }
-                            MpvEvent::EndFile { reason } => {
-                                log::info!("Track ended: {}", reason);
-                                // Send special event for end-of-file handling
+                            MpvEvent::EndFile { reason, file_error } => {
+                                if let Some(ref err) = file_error {
+                                    log::warn!(
+                                        "Track ended with error: reason={}, file_error={}",
+                                        reason,
+                                        err
+                                    );
+                                } else {
+                                    log::info!("Track ended: {}", reason);
+                                }
                                 let _ = event_tx.send(format!("end-file:{}", reason));
                             }
                             MpvEvent::IdleChanged { idle } => {
@@ -123,8 +134,9 @@ impl PlaybackService {
                         }
                     }
                     Ok(None) => {
-                        // Timeout - no events, just continue checking running flag
-                        // The 500ms timeout in MpvIpc prevents busy-spinning
+                        // Timeout - no events, just continue checking running
+                        // flag The 500ms timeout in
+                        // MpvIpc prevents busy-spinning
                     }
                     Err(e) => {
                         if running.load(Ordering::SeqCst) {
@@ -155,7 +167,10 @@ impl PlaybackService {
         if socket_path.exists() {
             log::info!("Socket file exists, attempting connection...");
             if let Ok(mpv) = MpvIpc::connect(socket_path) {
-                log::info!("✓ Connected to EXISTING MPV at {} (reusing process)", socket_path.display());
+                log::info!(
+                    "✓ Connected to EXISTING MPV at {} (reusing process)",
+                    socket_path.display()
+                );
                 log::warn!("⚠ Note: MPV may have old playlist state from previous session");
                 return Ok((mpv, None));
             } else {
@@ -169,21 +184,27 @@ impl PlaybackService {
         log::info!("Spawning NEW MPV process with socket: {}", socket_path.display());
         let socket_str = socket_path.to_string_lossy();
 
-        let mut child = Command::new("mpv")
-            .args([
-                "--idle=yes",
-                "--vo=null",
-                "--no-terminal",
-                "--gapless-audio=yes",
-                "--prefetch-playlist=yes",
-                "--cache=yes",
-                "--demuxer-max-bytes=50M",
-                "--demuxer-readahead-secs=30",
-                "--audio-buffer=1",
-                &format!("--input-ipc-server={}", socket_str),
-            ])
-            .spawn()
-            .context("Failed to spawn MPV")?;
+        let mut args = vec![
+            "--idle=yes".to_string(),
+            "--vo=null".to_string(),
+            "--no-terminal".to_string(),
+            "--gapless-audio=yes".to_string(),
+            "--prefetch-playlist=yes".to_string(),
+            "--cache=yes".to_string(),
+            "--demuxer-max-bytes=50M".to_string(),
+            "--demuxer-readahead-secs=30".to_string(),
+            "--audio-buffer=1".to_string(),
+            format!("--input-ipc-server={}", socket_str),
+        ];
+
+        // Add verbose MPV logging only at TRACE level
+        if log::log_enabled!(log::Level::Trace) {
+            args.push("--log-file=/tmp/mpv-debug.log".to_string());
+            args.push("--msg-level=all=v".to_string());
+            log::trace!("MPV verbose logging enabled: /tmp/mpv-debug.log");
+        }
+
+        let mut child = Command::new("mpv").args(&args).spawn().context("Failed to spawn MPV")?;
 
         // Wait for socket to become available
         let start = std::time::Instant::now();
@@ -204,21 +225,18 @@ impl PlaybackService {
     /// Sets force-media-title BEFORE loadfile so MPRIS shows proper metadata
     pub fn play(&self, url: &str, title: &str, artist: &str) -> Result<()> {
         // MPRIS fix: Set force-media-title before loadfile
-        // This ensures MPRIS (playerctl, KDE Connect, etc.) shows song title instead of URL
-        let media_title = if artist.is_empty() {
-            title.to_string()
-        } else {
-            format!("{} - {}", artist, title)
-        };
-        
+        // This ensures MPRIS (playerctl, KDE Connect, etc.) shows song title instead of
+        // URL
+        let media_title =
+            if artist.is_empty() { title.to_string() } else { format!("{} - {}", artist, title) };
+
         log::debug!("Setting force-media-title to: {}", media_title);
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
-        
+
         self.mpv.lock().send_command(vec!["loadfile", url, "replace"])?;
         self.mpv.lock().set_property("pause", serde_json::json!(false))?;
         Ok(())
     }
-
 
     /// Pause playback
     pub fn pause(&self) -> Result<()> {
@@ -352,11 +370,8 @@ impl PlaybackService {
     /// Set the media title that MPRIS will display.
     /// Call this before `playlist_play_index()` to ensure proper metadata.
     pub fn set_media_title(&self, title: &str, artist: &str) -> Result<()> {
-        let media_title = if artist.is_empty() {
-            title.to_string()
-        } else {
-            format!("{} - {}", artist, title)
-        };
+        let media_title =
+            if artist.is_empty() { title.to_string() } else { format!("{} - {}", artist, title) };
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
         Ok(())
     }
@@ -365,7 +380,8 @@ impl PlaybackService {
 
     /// Build optimal playback URL for a video ID.
     ///
-    /// If audio cache has the first 10s cached, builds an EDL URL for instant playback:
+    /// If audio cache has the first 10s cached, builds an EDL URL for instant
+    /// playback:
     /// - First 10s from local cache (instant, no network latency)
     /// - Remainder from network stream (seamless transition)
     ///
@@ -377,15 +393,15 @@ impl PlaybackService {
         // Check if we have cached audio
         if let Some(ref cache) = self.audio_cache {
             if let Some(cache_path) = cache.get_path(video_id) {
-                let cached_duration = cache.get_cached_duration(video_id).unwrap_or(DEFAULT_AUDIO_PREFETCH_SECS);
+                let cached_duration =
+                    cache.get_cached_duration(video_id).unwrap_or(DEFAULT_AUDIO_PREFETCH_SECS);
 
-                // Build EDL URL: local cache first, then network
+                let cache_path_str = escape_edl_segment(&cache_path.display().to_string());
+                let stream_url_escaped = escape_edl_segment(&stream_url);
+
                 let edl_url = format!(
                     "edl://{},0,{};{},{},",
-                    cache_path.display(),
-                    cached_duration,
-                    stream_url,
-                    cached_duration
+                    cache_path_str, cached_duration, stream_url_escaped, cached_duration
                 );
 
                 log::debug!("Built EDL URL for {}: cache {}s + network", video_id, cached_duration);
@@ -450,6 +466,8 @@ impl PlaybackService {
 
 impl Drop for PlaybackService {
     fn drop(&mut self) {
+        self.event_loop_running.store(false, Ordering::SeqCst);
+
         if let Some(mut child) = self.mpv_process.take() {
             log::info!("Killing MPV process");
             let _ = child.kill();

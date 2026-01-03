@@ -27,6 +27,10 @@ pub struct MpvResponse {
     pub name: Option<String>,
     /// For end-file events, the reason (eof, error, stop, etc.)
     pub reason: Option<String>,
+    /// For end-file error events, the actual error string (e.g., "loading
+    /// failed")
+    #[serde(rename = "file-error")]
+    pub file_error: Option<String>,
 }
 
 /// Parsed MPV event for easier handling
@@ -37,7 +41,7 @@ pub enum MpvEvent {
     /// Pause state changed
     PauseChanged { paused: bool },
     /// File ended (eof = natural end, error = playback failed)
-    EndFile { reason: String },
+    EndFile { reason: String, file_error: Option<String> },
     /// Idle state changed
     IdleChanged { idle: bool },
     /// Some other event we don't care about
@@ -75,16 +79,12 @@ impl MpvIpc {
         let request_id = self.request_id;
         self.request_id += 1;
 
-        // Construct the command list directly
-        let cmd_vec: Vec<Value> = args.iter().map(|&s| Value::String(s.to_string())).collect();
+        let cmd = MpvCommand {
+            command: args.iter().map(|&s| Value::String(s.to_string())).collect(),
+            request_id: Some(request_id),
+        };
 
-        let cmd_obj = serde_json::json!({
-            "command": cmd_vec,
-            "request_id": request_id
-        });
-
-        let mut json_str =
-            serde_json::to_string(&cmd_obj).context("Failed to serialize command")?;
+        let mut json_str = serde_json::to_string(&cmd).context("Failed to serialize command")?;
         json_str.push('\n');
 
         self.writer.write_all(json_str.as_bytes()).context("Failed to write to MPV socket")?;
@@ -130,19 +130,20 @@ impl MpvIpc {
         let request_id = self.request_id;
         self.request_id += 1;
 
-        let cmd_obj = serde_json::json!({
-            "command": ["set_property", property, value],
-            "request_id": request_id
-        });
+        let cmd = MpvCommand {
+            command: vec![
+                Value::String("set_property".to_string()),
+                Value::String(property.to_string()),
+                value,
+            ],
+            request_id: Some(request_id),
+        };
 
-        let mut json_str = serde_json::to_string(&cmd_obj)
-            .context("Failed to serialize command")?;
+        let mut json_str = serde_json::to_string(&cmd).context("Failed to serialize command")?;
         json_str.push('\n');
 
-        self.writer.write_all(json_str.as_bytes())
-            .context("Failed to write to MPV socket")?;
-        self.writer.flush()
-            .context("Failed to flush MPV socket")?;
+        self.writer.write_all(json_str.as_bytes()).context("Failed to write to MPV socket")?;
+        self.writer.flush().context("Failed to flush MPV socket")?;
 
         // Read response
         loop {
@@ -186,18 +187,20 @@ impl MpvIpc {
     /// Observe a property - MPV will send events when it changes
     /// Returns the observer ID for later unobserving
     pub fn observe_property(&mut self, observer_id: u64, property: &str) -> Result<()> {
-        let cmd_obj = serde_json::json!({
-            "command": ["observe_property", observer_id, property],
-        });
+        let cmd = MpvCommand {
+            command: vec![
+                Value::String("observe_property".to_string()),
+                Value::Number(observer_id.into()),
+                Value::String(property.to_string()),
+            ],
+            request_id: None,
+        };
 
-        let mut json_str = serde_json::to_string(&cmd_obj)
-            .context("Failed to serialize command")?;
+        let mut json_str = serde_json::to_string(&cmd).context("Failed to serialize command")?;
         json_str.push('\n');
 
-        self.writer.write_all(json_str.as_bytes())
-            .context("Failed to write to MPV socket")?;
-        self.writer.flush()
-            .context("Failed to flush MPV socket")?;
+        self.writer.write_all(json_str.as_bytes()).context("Failed to write to MPV socket")?;
+        self.writer.flush().context("Failed to flush MPV socket")?;
 
         // Read and discard response (we just need success)
         loop {
@@ -252,8 +255,9 @@ impl MpvIpc {
                     // Continue reading for actual events
                 }
                 Err(e) => {
-                    if e.kind() == std::io::ErrorKind::WouldBlock ||
-                       e.kind() == std::io::ErrorKind::TimedOut {
+                    if e.kind() == std::io::ErrorKind::WouldBlock
+                        || e.kind() == std::io::ErrorKind::TimedOut
+                    {
                         // Timeout - return None so caller can sleep/check running flag
                         // This prevents busy-spinning when no events are available
                         return Ok(None);
@@ -271,24 +275,20 @@ impl MpvIpc {
                 if let Some(name) = &resp.name {
                     match name.as_str() {
                         "playlist-pos" => {
-                            let pos = resp.data.as_ref()
-                                .and_then(|v| v.as_i64())
-                                .unwrap_or(-1);
+                            let pos = resp.data.as_ref().and_then(|v| v.as_i64()).unwrap_or(-1);
                             MpvEvent::TrackChanged { position: pos }
                         }
                         "pause" => {
-                            let paused = resp.data.as_ref()
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
+                            let paused =
+                                resp.data.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                             MpvEvent::PauseChanged { paused }
                         }
                         "idle-active" => {
-                            let idle = resp.data.as_ref()
-                                .and_then(|v| v.as_bool())
-                                .unwrap_or(false);
+                            let idle =
+                                resp.data.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                             MpvEvent::IdleChanged { idle }
                         }
-                        _ => MpvEvent::Other(format!("property-change: {}", name))
+                        _ => MpvEvent::Other(format!("property-change: {}", name)),
                     }
                 } else {
                     MpvEvent::Other("property-change: unknown".to_string())
@@ -296,9 +296,10 @@ impl MpvIpc {
             }
             "end-file" => {
                 let reason = resp.reason.clone().unwrap_or_else(|| "unknown".to_string());
-                MpvEvent::EndFile { reason }
+                let file_error = resp.file_error.clone();
+                MpvEvent::EndFile { reason, file_error }
             }
-            other => MpvEvent::Other(other.to_string())
+            other => MpvEvent::Other(other.to_string()),
         }
     }
 }
