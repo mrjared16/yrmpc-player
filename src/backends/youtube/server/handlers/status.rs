@@ -38,6 +38,14 @@ pub fn handle_get_status(
     };
     let shuffle = queue.shuffle_enabled();
 
+    let next_queue_pos =
+        if shuffle {
+            queue.get_prefetched_at(1).map(|idx| idx as u32)
+        } else {
+            current_queue_idx
+                .and_then(|idx| if idx + 1 < queue_len { Some((idx + 1) as u32) } else { None })
+        };
+
     ServerResponse::Status(StatusData {
         state,
         volume,
@@ -48,6 +56,7 @@ pub fn handle_get_status(
         current_id,
         repeat: repeat.to_string(),
         shuffle,
+        next_queue_pos,
     })
 }
 

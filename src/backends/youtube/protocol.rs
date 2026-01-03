@@ -5,8 +5,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::{PlaybackState, Song, Status, MediaItem};
-use crate::domain::status::OnOffOneshot;
+use crate::domain::{MediaItem, PlaybackState, Song, Status, status::OnOffOneshot};
 
 /// Commands sent from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -23,12 +22,21 @@ pub enum ServerCommand {
     PlayId(u32),
 
     // Queue management
-    Add { uri: String, position: Option<u32> },
+    Add {
+        uri: String,
+        position: Option<u32>,
+    },
     /// Add song with full metadata (preferred over Add for preserving metadata)
-    AddSong { song: SongData, position: Option<u32> },
+    AddSong {
+        song: SongData,
+        position: Option<u32>,
+    },
     DeleteId(u32),
     Clear,
-    MoveId { from: u32, to: u32 },
+    MoveId {
+        from: u32,
+        to: u32,
+    },
 
     // Volume
     GetVolume,
@@ -47,29 +55,45 @@ pub enum ServerCommand {
     GetPlaylist,
 
     // Search/browse
-    Search { query: String },
-    Browse { path: String },
+    Search {
+        query: String,
+    },
+    Browse {
+        path: String,
+    },
     /// Get search suggestions for autocomplete
-    GetSearchSuggestions { query: String },
-    
+    GetSearchSuggestions {
+        query: String,
+    },
+
     // Rich browse details (YouTube-specific)
     /// Get detailed playlist info with tracks and metadata
-    BrowsePlaylistDetails { playlist_id: String },
+    BrowsePlaylistDetails {
+        playlist_id: String,
+    },
     /// Get detailed album info with tracks and metadata
-    BrowseAlbumDetails { album_id: String },
+    BrowseAlbumDetails {
+        album_id: String,
+    },
     /// Get detailed artist info with discography
-    BrowseArtistDetails { artist_id: String },
+    BrowseArtistDetails {
+        artist_id: String,
+    },
 
     // Library
-    GetLibrary { category: String },
+    GetLibrary {
+        category: String,
+    },
 
     // Lifecycle
     Ping,
     Shutdown,
-    
+
     /// Subscribe to events (like MPD idle)
     /// Client blocks until server sends events
-    Idle { subsystems: Vec<String> },
+    Idle {
+        subsystems: Vec<String>,
+    },
 }
 
 /// Responses from server to client
@@ -80,7 +104,8 @@ pub enum ServerResponse {
     Status(StatusData),
     Song(Option<SongData>),
     Playlist(Vec<SongData>),
-    /// Type-safe search results using MediaItem directly (no intermediate types)
+    /// Type-safe search results using MediaItem directly (no intermediate
+    /// types)
     SearchResults(Vec<MediaItem>),
     BrowseResults(Vec<BrowseEntry>),
     Library(Vec<BrowseEntry>),
@@ -88,11 +113,11 @@ pub enum ServerResponse {
     Suggestions(Vec<String>),
     Volume(u8),
     Pong,
-    
+
     /// Idle events - sent when subscribed subsystems change
     /// Subsystems: "playlist", "player", "mixer", "options"
     IdleEvents(Vec<String>),
-    
+
     // Rich browse details responses
     /// Detailed playlist info
     PlaylistDetails(PlaylistDetailsData),
@@ -116,6 +141,9 @@ pub struct StatusData {
     pub repeat: String,
     /// Shuffle enabled
     pub shuffle: bool,
+    /// Next queue position (for shuffle mode UI indicator)
+    #[serde(default)]
+    pub next_queue_pos: Option<u32>,
 }
 
 impl From<Status> for StatusData {
@@ -132,9 +160,9 @@ impl From<Status> for StatusData {
             playlist_length: s.playlistlength,
             current_pos: s.song_position,
             current_id: s.songid,
-            // Default values - server should override these with actual state
             repeat: "off".into(),
             shuffle: false,
+            next_queue_pos: None,
         }
     }
 }
@@ -152,17 +180,10 @@ impl StatusData {
             duration: self.duration_ms.map(Duration::from_millis),
             playlistlength: self.playlist_length,
             song_position: self.current_pos,
+            next_song_position: self.next_queue_pos,
             songid: self.current_id,
-            // Map repeat mode to MPD-style repeat/single flags
-            // "all" → repeat=true, single=off
-            // "one" → repeat=true, single=on  
-            // "off" → repeat=false
             repeat: self.repeat != "off",
-            single: if self.repeat == "one" {
-                OnOffOneshot::On
-            } else {
-                OnOffOneshot::Off
-            },
+            single: if self.repeat == "one" { OnOffOneshot::On } else { OnOffOneshot::Off },
             random: self.shuffle,
             ..Default::default()
         }
@@ -186,7 +207,7 @@ impl From<Song> for SongData {
     fn from(s: Song) -> Self {
         Self {
             id: s.id,
-            file: s.uri,  // Domain Song uses 'uri', protocol uses 'file'
+            file: s.uri, // Domain Song uses 'uri', protocol uses 'file'
             title: s.metadata.get("title").and_then(|v| v.first()).cloned(),
             artist: s.metadata.get("artist").and_then(|v| v.first()).cloned(),
             album: s.metadata.get("album").and_then(|v| v.first()).cloned(),
@@ -217,7 +238,7 @@ impl SongData {
         }
         Song {
             id: self.id,
-            uri: self.file.clone(),  // SongData uses 'file', domain Song uses 'uri'
+            uri: self.file.clone(), // SongData uses 'file', domain Song uses 'uri'
             duration: self.duration_ms.map(Duration::from_millis),
             metadata,
             ..Default::default()
@@ -233,8 +254,11 @@ pub enum SearchItemData {
     Artist(BrowsableData),
     Album(BrowsableData),
     Playlist(BrowsableData),
-    /// Section header for grouping search results (e.g., "Top Results", "Songs")
-    Header { title: String },
+    /// Section header for grouping search results (e.g., "Top Results",
+    /// "Songs")
+    Header {
+        title: String,
+    },
 }
 
 /// Data for playable items (songs/videos)
@@ -261,8 +285,8 @@ pub struct BrowsableData {
 
 impl From<crate::domain::search::SearchItem> for SearchItemData {
     fn from(item: crate::domain::search::SearchItem) -> Self {
-        use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem, Displayable};
-        
+        use crate::domain::search::{BrowsableItem, Displayable, PlayableItem, SearchItem};
+
         match item {
             SearchItem::Playable(PlayableItem::Song(s)) => SearchItemData::Song(PlayableData {
                 video_id: s.video_id,
@@ -280,30 +304,47 @@ impl From<crate::domain::search::SearchItem> for SearchItemData {
                 duration_ms: v.duration.map(|d| d.as_millis() as u64),
                 thumbnail: v.thumbnail,
             }),
-            SearchItem::Browsable(BrowsableItem::Artist(a)) => SearchItemData::Artist(BrowsableData {
-                browse_id: a.browse_id.clone(),
-                browse_path: format!("artist:{}", a.browse_id.as_ref().unwrap_or(&a.name)),
-                title: a.name,
-                subtitle: a.subscribers,
-                thumbnail: a.thumbnail,
-                can_queue: false,
-            }),
-            SearchItem::Browsable(BrowsableItem::Album(a)) => SearchItemData::Album(BrowsableData {
-                browse_id: Some(a.album_id.clone()),
-                browse_path: format!("album:{}", a.album_id),
-                title: a.title,
-                subtitle: Some(format!("{}{}", a.artist, a.year.as_ref().map(|y| format!(" · {}", y)).unwrap_or_default())),
-                thumbnail: a.thumbnail,
-                can_queue: true,
-            }),
-            SearchItem::Browsable(BrowsableItem::Playlist(p)) => SearchItemData::Playlist(BrowsableData {
-                browse_id: Some(p.playlist_id.clone()),
-                browse_path: format!("playlist:{}", p.playlist_id),
-                title: p.title,
-                subtitle: Some(format!("{}{}", p.author, p.track_count.as_ref().map(|c| format!(" · {} tracks", c)).unwrap_or_default())),
-                thumbnail: p.thumbnail,
-                can_queue: true,
-            }),
+            SearchItem::Browsable(BrowsableItem::Artist(a)) => {
+                SearchItemData::Artist(BrowsableData {
+                    browse_id: a.browse_id.clone(),
+                    browse_path: format!("artist:{}", a.browse_id.as_ref().unwrap_or(&a.name)),
+                    title: a.name,
+                    subtitle: a.subscribers,
+                    thumbnail: a.thumbnail,
+                    can_queue: false,
+                })
+            }
+            SearchItem::Browsable(BrowsableItem::Album(a)) => {
+                SearchItemData::Album(BrowsableData {
+                    browse_id: Some(a.album_id.clone()),
+                    browse_path: format!("album:{}", a.album_id),
+                    title: a.title,
+                    subtitle: Some(format!(
+                        "{}{}",
+                        a.artist,
+                        a.year.as_ref().map(|y| format!(" · {}", y)).unwrap_or_default()
+                    )),
+                    thumbnail: a.thumbnail,
+                    can_queue: true,
+                })
+            }
+            SearchItem::Browsable(BrowsableItem::Playlist(p)) => {
+                SearchItemData::Playlist(BrowsableData {
+                    browse_id: Some(p.playlist_id.clone()),
+                    browse_path: format!("playlist:{}", p.playlist_id),
+                    title: p.title,
+                    subtitle: Some(format!(
+                        "{}{}",
+                        p.author,
+                        p.track_count
+                            .as_ref()
+                            .map(|c| format!(" · {} tracks", c))
+                            .unwrap_or_default()
+                    )),
+                    thumbnail: p.thumbnail,
+                    can_queue: true,
+                })
+            }
         }
     }
 }
@@ -320,7 +361,9 @@ impl SearchItemData {
                 album: p.album.clone(),
                 duration_ms: p.duration_ms,
                 thumbnail: p.thumbnail.clone(),
-                item_type: Some(if matches!(self, SearchItemData::Song(_)) { "song" } else { "video" }.into()),
+                item_type: Some(
+                    if matches!(self, SearchItemData::Song(_)) { "song" } else { "video" }.into(),
+                ),
             }),
             _ => None,
         }
@@ -409,7 +452,8 @@ pub struct ArtistDetailsData {
     pub related_artists: Vec<MediaItem>,
 }
 
-// Conversions from domain types to protocol types (using MediaItem as canonical type)
+// Conversions from domain types to protocol types (using MediaItem as canonical
+// type)
 
 impl From<crate::backends::youtube::details::ArtistRef> for MediaItem {
     fn from(a: crate::backends::youtube::details::ArtistRef) -> Self {
@@ -443,7 +487,7 @@ impl From<crate::backends::youtube::details::AlbumRef> for MediaItem {
 
 impl From<crate::backends::youtube::details::PlaylistRef> for MediaItem {
     fn from(p: crate::backends::youtube::details::PlaylistRef) -> Self {
-        use crate::domain::media_item::{Playlist, BackendExtension};
+        use crate::domain::media_item::{BackendExtension, Playlist};
         MediaItem::Playlist(Playlist {
             id: p.id,
             title: p.title,
@@ -511,8 +555,7 @@ fn media_item_to_song(m: &MediaItem) -> Song {
 
 // Helper to convert MediaItem to ArtistRef
 fn media_item_to_artist_ref(m: &MediaItem) -> crate::backends::youtube::details::ArtistRef {
-    use crate::backends::youtube::details::ArtistRef;
-    use crate::domain::media_item::Displayable;
+    use crate::{backends::youtube::details::ArtistRef, domain::media_item::Displayable};
     ArtistRef {
         id: m.id().to_string(),
         name: m.title().to_string(),
@@ -522,8 +565,7 @@ fn media_item_to_artist_ref(m: &MediaItem) -> crate::backends::youtube::details:
 
 // Helper to convert MediaItem to AlbumRef
 fn media_item_to_album_ref(m: &MediaItem) -> crate::backends::youtube::details::AlbumRef {
-    use crate::backends::youtube::details::AlbumRef;
-    use crate::domain::media_item::Displayable;
+    use crate::{backends::youtube::details::AlbumRef, domain::media_item::Displayable};
     AlbumRef {
         id: m.id().to_string(),
         title: m.title().to_string(),
@@ -537,8 +579,7 @@ fn media_item_to_album_ref(m: &MediaItem) -> crate::backends::youtube::details::
 
 // Helper to convert MediaItem to PlaylistRef
 fn media_item_to_playlist_ref(m: &MediaItem) -> crate::backends::youtube::details::PlaylistRef {
-    use crate::backends::youtube::details::PlaylistRef;
-    use crate::domain::media_item::Displayable;
+    use crate::{backends::youtube::details::PlaylistRef, domain::media_item::Displayable};
     PlaylistRef {
         id: m.id().to_string(),
         title: m.title().to_string(),
@@ -560,7 +601,11 @@ impl PlaylistDetailsData {
             duration_text: self.duration_text.clone(),
             tracks: self.tracks.iter().map(media_item_to_song).collect(),
             featured_artists: self.featured_artists.iter().map(media_item_to_artist_ref).collect(),
-            related_playlists: self.related_playlists.iter().map(media_item_to_playlist_ref).collect(),
+            related_playlists: self
+                .related_playlists
+                .iter()
+                .map(media_item_to_playlist_ref)
+                .collect(),
         }
     }
 }
@@ -662,6 +707,7 @@ mod tests {
             current_id: Some(1),
             repeat: "off".into(),
             shuffle: false,
+            next_queue_pos: None,
         });
         let json = serde_json::to_string(&resp).unwrap();
         let parsed: ServerResponse = serde_json::from_str(&json).unwrap();

@@ -1,15 +1,17 @@
 //! Queue management handlers.
 
 use std::sync::Arc;
+
 use crossbeam::channel::Sender;
 
-use crate::backends::youtube::{
-    protocol::{ServerResponse, SongData},
-    services::{PlaybackService, QueueService},
-};
-use crate::domain::Song;
-
 use super::super::orchestrator::PREFETCH_WINDOW_SIZE;
+use crate::{
+    backends::youtube::{
+        protocol::{ServerResponse, SongData},
+        services::{PlaybackService, QueueService},
+    },
+    domain::Song,
+};
 
 /// Handle Add command (URI only, legacy)
 pub fn handle_add(
@@ -50,11 +52,11 @@ pub fn handle_add_song(
     // 2. Calculate where the song was inserted
     let insert_pos = position.map(|p| (p as usize).min(queue_len)).unwrap_or(queue_len);
 
-    // 3. If inserted within the rolling window AND we're currently playing,
-    //    resolve URL and add to MPV buffer for seamless playback
+    // 3. If inserted within the rolling window AND we're currently playing, resolve
+    //    URL and add to MPV buffer for seamless playback
     if queue.current_index().is_some()
-       && insert_pos >= base
-       && insert_pos < base + PREFETCH_WINDOW_SIZE
+        && insert_pos >= base
+        && insert_pos < base + PREFETCH_WINDOW_SIZE
     {
         match playback.build_playback_url(&video_id) {
             Ok(url) => {
@@ -65,7 +67,8 @@ pub fn handle_add_song(
                     let mpv_insert_pos = insert_pos.saturating_sub(base);
                     let mpv_current_end = playback.get_playlist_count().unwrap_or(1);
                     if mpv_current_end > 1 && mpv_insert_pos < mpv_current_end - 1 {
-                        if let Err(e) = playback.playlist_move(mpv_current_end - 1, mpv_insert_pos) {
+                        if let Err(e) = playback.playlist_move(mpv_current_end - 1, mpv_insert_pos)
+                        {
                             log::warn!("Failed to reorder MPV buffer: {}", e);
                         }
                     }
@@ -76,8 +79,7 @@ pub fn handle_add_song(
                 log::warn!("Failed to resolve URL for window insert: {}", e);
             }
         }
-    } else {
-        // 4. Song is outside rolling window - prefetch URL in background
+    } else if queue.current_index().is_some() {
         playback.prefetch(vec![video_id.clone()]);
         log::debug!("Triggered background URL prefetch for {}", video_id);
     }

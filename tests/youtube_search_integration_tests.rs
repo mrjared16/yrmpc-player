@@ -10,12 +10,12 @@ mod integration_tests {
     fn test_search_result_structure() {
         // This test verifies that our Song objects created from search results
         // have all the required metadata fields
-        
+
         let mut metadata = HashMap::new();
         metadata.insert("type".to_string(), vec!["artist".to_string()]);
         metadata.insert("title".to_string(), vec!["Test Artist".to_string()]);
         metadata.insert("artist".to_string(), vec!["Test Artist".to_string()]);
-        
+
         // Verify all required fields exist
         assert!(metadata.contains_key("type"));
         assert!(metadata.contains_key("title"));
@@ -37,14 +37,20 @@ mod integration_tests {
         for (content_type, expected_file_format) in test_cases {
             match content_type {
                 "artist" | "album" | "playlist" | "podcast" => {
-                    assert!(expected_file_format.contains(':'), 
-                    "Content type {} should have prefixed ID", content_type);
+                    assert!(
+                        expected_file_format.contains(':'),
+                        "Content type {} should have prefixed ID",
+                        content_type
+                    );
                     let prefix = expected_file_format.split(':').next().unwrap();
                     assert_eq!(prefix, content_type);
                 }
                 "song" | "video" => {
-                    assert!(!expected_file_format.contains(':'),
-                    "Content type {} should NOT have prefixed ID", content_type);
+                    assert!(
+                        !expected_file_format.contains(':'),
+                        "Content type {} should NOT have prefixed ID",
+                        content_type
+                    );
                 }
                 _ => panic!("Unknown content type: {}", content_type),
             }
@@ -82,30 +88,29 @@ mod integration_tests {
         for (duration_str, expected_seconds) in test_cases {
             let parsed: u64 = duration_str
                 .split(':')
-                .try_fold(0u64, |acc, part| {
-                    part.parse::<u64>().map(|v| acc * 60 + v)
-                })
+                .try_fold(0u64, |acc, part| part.parse::<u64>().map(|v| acc * 60 + v))
                 .expect(&format!("Failed to parse: {}", duration_str));
-            
-            assert_eq!(parsed, expected_seconds, 
-                "Duration '{}' should be {} seconds", duration_str, expected_seconds);
+
+            assert_eq!(
+                parsed, expected_seconds,
+                "Duration '{}' should be {} seconds",
+                duration_str, expected_seconds
+            );
         }
     }
 
     /// Test metadata type detection
     #[test]
     fn test_metadata_type_detection() {
-        let content_types = vec!["artist", "album", "song", "video", "playlist", "podcast", "episode"];
-        
+        let content_types =
+            vec!["artist", "album", "song", "video", "playlist", "podcast", "episode"];
+
         for content_type in content_types {
             let mut metadata = HashMap::new();
             metadata.insert("type".to_string(), vec![content_type.to_string()]);
-            
-            let detected_type = metadata
-                .get("type")
-                .and_then(|v| v.first())
-                .map(|s| s.as_str());
-            
+
+            let detected_type = metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
+
             assert_eq!(detected_type, Some(content_type));
         }
     }
@@ -117,14 +122,14 @@ mod integration_tests {
         // - type
         // - title
         // - artist (or publisher/channel_name)
-        
+
         let required_fields = vec!["type", "title", "artist"];
-        
+
         let mut metadata = HashMap::new();
         metadata.insert("type".to_string(), vec!["song".to_string()]);
         metadata.insert("title".to_string(), vec!["Test Song".to_string()]);
         metadata.insert("artist".to_string(), vec!["Test Artist".to_string()]);
-        
+
         for field in required_fields {
             assert!(metadata.contains_key(field), "Missing required field: {}", field);
             assert!(!metadata[field].is_empty(), "Field {} is empty", field);
@@ -138,6 +143,7 @@ mod enum_variant_tests {
     #[test]
     fn test_video_enum_variants() {
         // Verify we handle both Video and VideoEpisode variants
+        #[allow(dead_code)]
         enum SearchResultVideo {
             Video { title: String, channel_name: String, video_id: String },
             VideoEpisode { title: String, channel_name: String, episode_id: String },
@@ -177,6 +183,7 @@ mod enum_variant_tests {
     /// Test handling of BasicSearchResultCommunityPlaylist enum variants
     #[test]
     fn test_playlist_enum_variants() {
+        #[allow(dead_code)]
         enum BasicSearchResultCommunityPlaylist {
             Playlist { title: String, author: String, playlist_id: String },
             Podcast { title: String, publisher: String, podcast_id: String },
@@ -216,6 +223,7 @@ mod enum_variant_tests {
     /// Test wildcard pattern for non-exhaustive enums
     #[test]
     fn test_non_exhaustive_enum_handling() {
+        #[allow(dead_code)]
         #[non_exhaustive]
         enum TestEnum {
             VariantA,
@@ -223,8 +231,9 @@ mod enum_variant_tests {
         }
 
         let test = TestEnum::VariantA;
-        
+
         // Should compile with wildcard pattern
+        #[allow(unreachable_patterns)]
         match test {
             TestEnum::VariantA => { /* handled */ }
             TestEnum::VariantB => { /* handled */ }
@@ -238,10 +247,22 @@ mod enum_variant_tests {
 /// NOTE: Headers are now in UI layer (ListItem::Header), NOT in domain types
 #[cfg(test)]
 mod search_display_e2e_tests {
-    use rmpc::domain::search::{SearchItem, PlayableItem, BrowsableItem, SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
-    use rmpc::domain::detail_item::DetailItem;
-    use rmpc::domain::display::ListItemDisplay;
     use std::time::Duration;
+
+    use rmpc::domain::{
+        detail_item::DetailItem,
+        display::ListItemDisplay,
+        search::{
+            AlbumItem,
+            ArtistItem,
+            BrowsableItem,
+            PlayableItem,
+            PlaylistItem,
+            SearchItem,
+            SongItem,
+            VideoItem,
+        },
+    };
 
     /// Helper: Create mock search results simulating "kim long" query
     /// Based on actual YouTube Music API response structure
@@ -255,7 +276,6 @@ mod search_display_e2e_tests {
                 subscribers: Some("10K subscribers".into()),
                 thumbnail: Some("https://lh3.googleusercontent.com/kimlong.jpg".into()),
             })),
-
             // Song result (would be in "Songs" section)
             SearchItem::Playable(PlayableItem::Song(SongItem {
                 video_id: "abc123song".into(),
@@ -266,7 +286,6 @@ mod search_display_e2e_tests {
                 thumbnail: Some("https://i.ytimg.com/vi/abc123/sddefault.jpg".into()),
                 explicit: false,
             })),
-
             // Album result (would be in "Albums" section)
             SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
                 album_id: "MPREb_kimlong123".into(),
@@ -277,7 +296,6 @@ mod search_display_e2e_tests {
                 thumbnail: Some("https://lh3.googleusercontent.com/album.jpg".into()),
                 explicit: false,
             })),
-
             // Playlist result (would be in "Playlists" section)
             SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
                 playlist_id: "PLkimlong456".into(),
@@ -286,7 +304,6 @@ mod search_display_e2e_tests {
                 track_count: Some("25 songs".into()),
                 thumbnail: Some("https://lh3.googleusercontent.com/playlist.jpg".into()),
             })),
-
             // Video result (would be in "Videos" section)
             SearchItem::Playable(PlayableItem::Video(VideoItem {
                 video_id: "xyz789video".into(),
@@ -300,16 +317,15 @@ mod search_display_e2e_tests {
     }
 
     /// E2E Test: Verify SearchItem → DetailItem preserves types correctly
-    /// This is the NEW flow - no more Song intermediate step for browsable items
+    /// This is the NEW flow - no more Song intermediate step for browsable
+    /// items
     #[test]
     fn e2e_search_to_detail_item_preserves_types() {
         let search_results = mock_kim_long_search_results();
 
         // Convert SearchItem → DetailItem directly (new type-safe conversion)
-        let detail_items: Vec<DetailItem> = search_results
-            .into_iter()
-            .map(DetailItem::from)
-            .collect();
+        let detail_items: Vec<DetailItem> =
+            search_results.into_iter().map(DetailItem::from).collect();
 
         // === ASSERTIONS: Verify the flow preserves types correctly ===
 
@@ -336,7 +352,8 @@ mod search_display_e2e_tests {
         assert!(detail_items[4].is_playable(), "Video should be playable");
     }
 
-    /// Test: All DetailItems are focusable (headers are in ListItem, not DetailItem)
+    /// Test: All DetailItems are focusable (headers are in ListItem, not
+    /// DetailItem)
     #[test]
     fn all_detail_items_are_focusable() {
         let items = mock_kim_long_search_results();
