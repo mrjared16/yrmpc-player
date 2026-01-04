@@ -10,6 +10,8 @@ use super::{
     mouse_event::MouseEvent,
     ytdlp::{SearchItem, YtDlpHostKind},
 };
+// Re-export ClientRequest from backends::messaging for internal use
+pub(crate) use crate::backends::messaging::ClientRequest;
 use crate::{
     backends::messaging::{PlayerCommand, Query, QueryResult, QuerySync},
     config::{
@@ -22,9 +24,6 @@ use crate::{
     mpd::{QueuePosition, commands::IdleEvent},
     ui::UiAppEvent,
 };
-
-// Re-export ClientRequest from backends::messaging for internal use
-pub(crate) use crate::backends::messaging::ClientRequest;
 
 #[derive(Debug)]
 #[allow(unused)]
@@ -43,7 +42,7 @@ pub(crate) enum WorkRequest {
         interactive: bool,
         position: Option<QueuePosition>,
     },
-    Command(Command),  // cli::Command for remote commands
+    Command(Command), // cli::Command for remote commands
 }
 
 #[derive(Debug)]

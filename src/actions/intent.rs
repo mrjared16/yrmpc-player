@@ -3,8 +3,10 @@
 //!
 //! ## Terminology
 //!
-//! - `IntentKind` (this module): What the user **wants to do** (Play, Queue, Remove, etc.)
-//! - `domain::ActionKind`: What actions a content item **supports** (for UI action buttons)
+//! - `IntentKind` (this module): What the user **wants to do** (Play, Queue,
+//!   Remove, etc.)
+//! - `domain::ActionKind`: What actions a content item **supports** (for UI
+//!   action buttons)
 //!
 //! ## Architecture
 //!
@@ -21,7 +23,8 @@
 //! ActionDispatcher routes to Handler
 //! ```
 //!
-//! Selection provides query methods for type validation without extra abstraction.
+//! Selection provides query methods for type validation without extra
+//! abstraction.
 
 use std::collections::HashSet;
 
@@ -158,10 +161,7 @@ impl Selection {
 
     /// Get all songs, cloned.
     pub fn songs_cloned(&self) -> Vec<Song> {
-        self.items
-            .iter()
-            .filter_map(|i| i.as_song().cloned())
-            .collect()
+        self.items.iter().filter_map(|i| i.as_song().cloned()).collect()
     }
 
     /// Get all content refs in the selection.
@@ -183,9 +183,7 @@ impl Selection {
     ///
     /// Useful for "play all starting from clicked song" patterns.
     pub fn find_song_index(&self, uri: &str) -> Option<usize> {
-        self.songs()
-            .iter()
-            .position(|s| s.uri == uri)
+        self.songs().iter().position(|s| s.uri == uri)
     }
 }
 

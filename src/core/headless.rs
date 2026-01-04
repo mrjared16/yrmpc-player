@@ -10,21 +10,15 @@ use crate::shared::events::AppEvent;
 #[derive(Debug, Deserialize)]
 #[serde(tag = "type", rename_all = "camelCase")]
 pub enum ScriptEvent {
-    Key {
-        code: String,
-        modifiers: Option<String>,
-    },
-    Sleep {
-        ms: u64,
-    },
-    Comment {
-        text: String,
-    },
+    Key { code: String, modifiers: Option<String> },
+    Sleep { ms: u64 },
+    Comment { text: String },
 }
 
 pub(crate) fn run_script(path: PathBuf, tx: Sender<AppEvent>) -> Result<()> {
     let content = std::fs::read_to_string(&path).context("Failed to read script file")?;
-    let events: Vec<ScriptEvent> = serde_json::from_str(&content).context("Failed to parse script file")?;
+    let events: Vec<ScriptEvent> =
+        serde_json::from_str(&content).context("Failed to parse script file")?;
 
     thread::spawn(move || {
         log::info!("Starting headless script execution");

@@ -12,7 +12,8 @@ pub struct Search {
     pub mode: FilterKind,
     pub tags: Vec<SearchableTag>,
     /// Order and visibility of search result sections
-    /// Valid values: "top_results", "songs", "artists", "albums", "playlists", "videos"
+    /// Valid values: "top_results", "songs", "artists", "albums", "playlists",
+    /// "videos"
     pub sections: Vec<String>,
 }
 
@@ -79,11 +80,7 @@ impl TryFrom<SearchFile> for Search {
                     .map(|SearchableTagFile { value, label }| SearchableTag { label, value })
                     .collect_vec()
             },
-            sections: if value.sections.is_empty() {
-                default_sections()
-            } else {
-                value.sections
-            },
+            sections: if value.sections.is_empty() { default_sections() } else { value.sections },
         })
     }
 }

@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use crate::{
     actions::{
-        intent::{IntentKind, Intent},
         handler::{HandleResult, Handler},
+        intent::{Intent, IntentKind},
     },
     ctx::Ctx,
     domain::ContentType,
@@ -39,35 +39,24 @@ impl Handler for QueueHandler {
                 }
 
                 let songs = intent.selection.songs_cloned();
-                for song in songs {
-                    let uri = song.uri.clone();
-                    ctx.command(move |client| {
-                        client.add(&uri, None)?;
-                        Ok(())
-                    });
+                if songs.is_empty() {
+                    return Ok(HandleResult::NotApplicable("No songs to add"));
                 }
-
+                ctx.queue_store().add(songs);
                 Ok(HandleResult::Done)
             }
 
             IntentKind::RemoveFromQueue => {
-                let songs = intent.selection.songs_cloned();
-                for song in songs {
-                    if let Some(id) = song.id {
-                        ctx.command(move |client| {
-                            client.delete_id(id)?;
-                            Ok(())
-                        });
-                    }
+                let ids: Vec<u32> =
+                    intent.selection.songs_cloned().iter().filter_map(|s| s.id).collect();
+                if ids.is_empty() {
+                    return Ok(HandleResult::NotApplicable("No songs to remove"));
                 }
+                ctx.queue_store().remove_ids(&ids);
                 Ok(HandleResult::Done)
             }
 
-            IntentKind::MoveUp | IntentKind::MoveDown => {
-                // Queue move operations - handled by Navigator for now
-                // as they need position calculations
-                Ok(HandleResult::Skip)
-            }
+            IntentKind::MoveUp | IntentKind::MoveDown => Ok(HandleResult::Skip),
 
             _ => Ok(HandleResult::Skip),
         }

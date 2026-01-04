@@ -98,10 +98,12 @@ pub struct YouTubeConfig {
 }
 
 /// Configuration for legacy pane implementations
-/// When enabled=true, uses legacy panes. When false (default), uses new Navigator architecture.
+/// When enabled=true, uses legacy panes. When false (default), uses new
+/// Navigator architecture.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct LegacyPanes {
-    /// Enable legacy pane system (default: false = use new Navigator architecture)
+    /// Enable legacy pane system (default: false = use new Navigator
+    /// architecture)
     #[serde(default = "defaults::bool::<false>")]
     pub enabled: bool,
 }

@@ -1,5 +1,7 @@
 use std::{
     collections::HashSet,
+    io::Cursor,
+    num::NonZeroUsize,
     sync::{Arc, Mutex},
 };
 
@@ -8,13 +10,7 @@ use crossbeam::channel::Sender;
 use image::{DynamicImage, ImageReader};
 use lru::LruCache;
 use ratatui::layout::Rect;
-use ratatui_image::{
-    picker::Picker,
-    protocol::Protocol,
-    Resize,
-};
-use std::io::Cursor;
-use std::num::NonZeroUsize;
+use ratatui_image::{Resize, picker::Picker, protocol::Protocol};
 
 use crate::AppEvent;
 
@@ -78,11 +74,7 @@ impl ImageCache {
             pending_protocol: HashSet::new(),
         };
 
-        Self {
-            inner: Arc::new(Mutex::new(inner)),
-            picker,
-            app_event_sender,
-        }
+        Self { inner: Arc::new(Mutex::new(inner)), picker, app_event_sender }
     }
 
     /// Get a Protocol for the given URL and size.
@@ -184,7 +176,7 @@ impl ImageCache {
 
         std::thread::spawn(move || {
             let key = (url.clone(), size);
-            
+
             // Get raw image from cache
             let img = {
                 let inner = inner.lock().unwrap();
@@ -192,21 +184,18 @@ impl ImageCache {
             };
 
             if let Some(img) = img {
-                let protocol_result = picker.new_protocol(
-                    img.as_ref().clone(),
-                    size.to_rect(),
-                    Resize::Fit(None),
-                );
+                let protocol_result =
+                    picker.new_protocol(img.as_ref().clone(), size.to_rect(), Resize::Fit(None));
 
                 {
                     let mut inner = inner.lock().unwrap();
                     inner.pending_protocol.remove(&key);
-                    
+
                     if let Ok(protocol) = protocol_result {
                         inner.protocols.put(key, Arc::new(Mutex::new(protocol)));
                     }
                 }
-                
+
                 let _ = sender.send(AppEvent::UiEvent(crate::ui::UiAppEvent::Redraw));
             } else {
                 let mut inner = inner.lock().unwrap();
@@ -219,8 +208,6 @@ impl ImageCache {
 /// Fetch and decode image synchronously (called from background thread)
 fn fetch_image_sync(url: &str) -> Result<DynamicImage> {
     let bytes = reqwest::blocking::get(url)?.bytes()?;
-    let img = ImageReader::new(Cursor::new(bytes))
-        .with_guessed_format()?
-        .decode()?;
+    let img = ImageReader::new(Cursor::new(bytes)).with_guessed_format()?.decode()?;
     Ok(img)
 }

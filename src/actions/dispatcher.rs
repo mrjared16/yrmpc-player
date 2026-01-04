@@ -6,8 +6,8 @@
 use anyhow::Result;
 
 use super::{
+    handler::{BoxedHandler, HandleResult},
     intent::Intent,
-    handler::{HandleResult, BoxedHandler},
 };
 use crate::ctx::Ctx;
 
@@ -20,9 +20,7 @@ pub struct ActionDispatcher {
 impl ActionDispatcher {
     /// Create a new dispatcher.
     pub fn new() -> Self {
-        Self {
-            handlers: Vec::new(),
-        }
+        Self { handlers: Vec::new() }
     }
 
     /// Register a handler (mutable).
@@ -46,27 +44,15 @@ impl ActionDispatcher {
         let mut last_reason: Option<&'static str> = None;
 
         for handler in &self.handlers {
-            log::trace!(
-                "ActionDispatcher: trying {} for {:?}",
-                handler.name(),
-                intent.action
-            );
+            log::trace!("ActionDispatcher: trying {} for {:?}", handler.name(), intent.action);
 
             match handler.execute(intent, ctx)? {
                 HandleResult::Done => {
-                    log::debug!(
-                        "ActionDispatcher: {} handled {:?}",
-                        handler.name(),
-                        intent.action
-                    );
+                    log::debug!("ActionDispatcher: {} handled {:?}", handler.name(), intent.action);
                     return Ok(HandleResult::Done);
                 }
                 HandleResult::NotApplicable(reason) => {
-                    log::trace!(
-                        "ActionDispatcher: {} not applicable: {}",
-                        handler.name(),
-                        reason
-                    );
+                    log::trace!("ActionDispatcher: {} not applicable: {}", handler.name(), reason);
                     last_reason = Some(reason);
                 }
                 HandleResult::Skip => {
@@ -86,8 +72,6 @@ impl ActionDispatcher {
 
 impl std::fmt::Debug for ActionDispatcher {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ActionDispatcher")
-            .field("handler_count", &self.handlers.len())
-            .finish()
+        f.debug_struct("ActionDispatcher").field("handler_count", &self.handlers.len()).finish()
     }
 }

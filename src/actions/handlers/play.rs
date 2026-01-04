@@ -15,7 +15,10 @@ use crate::{
         handler::{HandleResult, Handler},
         intent::{Intent, IntentKind, Selection},
     },
-    backends::{BackendDispatcher, interaction::{BackendActions, Enqueue}},
+    backends::{
+        BackendDispatcher,
+        interaction::{BackendActions, Enqueue},
+    },
     config::keys::actions::{AutoplayKind, Position},
     ctx::Ctx,
     domain::ContentType,
@@ -65,17 +68,12 @@ impl Handler for PlayHandler {
 
         if songs.is_empty() {
             // TODO: Handle albums/playlists by expanding to songs
-            return Ok(HandleResult::NotApplicable(
-                "Album/playlist expansion not yet implemented",
-            ));
+            return Ok(HandleResult::NotApplicable("Album/playlist expansion not yet implemented"));
         }
 
         // Convert songs to Enqueue items
         // Use Enqueue::Song for full metadata support (required for YouTube)
-        let items: Vec<Enqueue> = songs
-            .into_iter()
-            .map(|song| Enqueue::Song { song })
-            .collect();
+        let items: Vec<Enqueue> = songs.into_iter().map(|song| Enqueue::Song { song }).collect();
 
         // Use resolve_and_enqueue for proper YouTube support:
         // - Resolves song URIs to stream URLs
@@ -84,10 +82,10 @@ impl Handler for PlayHandler {
         BackendDispatcher::resolve_and_enqueue(
             ctx,
             items,
-            Position::Replace,    // Clear queue and replace
-            AutoplayKind::First,  // Play the first song
+            Position::Replace,   // Clear queue and replace
+            AutoplayKind::First, // Play the first song
             ctx.find_current_song_in_queue().map(|(i, _)| i),
-            Some(0),              // Start from first song in selection
+            Some(0), // Start from first song in selection
         );
 
         Ok(HandleResult::Done)

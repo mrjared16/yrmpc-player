@@ -4,6 +4,7 @@ use anyhow::{Result, bail};
 use itertools::Itertools;
 
 use crate::{
+    backends::{BackendActions, BackendDispatcher},
     config::{
         cli::{AddRandom, Command, Provider, StickerCmd},
         cli_config::CliConfig,
@@ -15,7 +16,6 @@ use crate::{
         mpd_client::{Filter, Tag},
         version::Version,
     },
-    backends::{BackendDispatcher, BackendActions},
     shared::{
         ext::duration::DurationExt,
         lrc::{LrcIndex, get_lrc_path},
@@ -70,8 +70,7 @@ impl Command {
                         loop {
                             client.idle(Some(IdleEvent::Update))?;
                             log::trace!("issuing update");
-                            let crate::domain::Status { updating_db, .. } =
-                                client.get_status()?;
+                            let crate::domain::Status { updating_db, .. } = client.get_status()?;
                             log::trace!("update done");
                             match updating_db {
                                 Some(current_id) if current_id > job_id => {
@@ -121,10 +120,13 @@ impl Command {
                     all_entries
                 };
 
-                result.into_iter().filter_map(|e| match e {
-                    crate::mpd::commands::LsInfoEntry::File(song, ..) => Some(song.uri),
-                    _ => None,
-                }).for_each(|file| println!("{file}"));
+                result
+                    .into_iter()
+                    .filter_map(|e| match e {
+                        crate::mpd::commands::LsInfoEntry::File(song, ..) => Some(song.uri),
+                        _ => None,
+                    })
+                    .for_each(|file| println!("{file}"));
                 Ok(())
             })),
             Command::Play { position: None } => Ok(Box::new(|client| Ok(client.play()?))),
@@ -134,7 +136,10 @@ impl Command {
             Command::Pause => Ok(Box::new(|client| Ok(client.pause()?))),
             Command::TogglePause => Ok(Box::new(|client| {
                 let status = client.get_status()?;
-                if matches!(status.state, crate::domain::PlaybackState::Play | crate::domain::PlaybackState::Pause) {
+                if matches!(
+                    status.state,
+                    crate::domain::PlaybackState::Play | crate::domain::PlaybackState::Pause
+                ) {
                     client.pause_toggle()?;
                 } else {
                     client.play()?;
@@ -208,16 +213,14 @@ impl Command {
                 }
                 Ok(())
             })),
-            Command::Seek { value } => {
-                Ok(Box::new(move |client| {
-                    let pos: SeekPosition = if value.starts_with('+') || value.starts_with('-') {
-                        SeekPosition::Relative(value.parse()?)
-                    } else {
-                        SeekPosition::Absolute(value.parse()?)
-                    };
-                    Ok(client.seek_current(pos)?)
-                }))
-            }
+            Command::Seek { value } => Ok(Box::new(move |client| {
+                let pos: SeekPosition = if value.starts_with('+') || value.starts_with('-') {
+                    SeekPosition::Relative(value.parse()?)
+                } else {
+                    SeekPosition::Absolute(value.parse()?)
+                };
+                Ok(client.seek_current(pos)?)
+            })),
             Command::Clear => Ok(Box::new(|client| Ok(client.clear()?))),
             Command::Add { files, skip_ext_check, position }
                 if files.iter().any(|path| path.is_absolute()) =>
@@ -277,7 +280,12 @@ impl Command {
                 }))
             }
             Command::Add { mut files, position, .. } => Ok(Box::new(move |client| {
-                if let Some(crate::mpd::QueuePosition::Absolute(_) | crate::mpd::QueuePosition::RelativeAdd(_) | crate::mpd::QueuePosition::RelativeSub(_)) = position {
+                if let Some(
+                    crate::mpd::QueuePosition::Absolute(_)
+                    | crate::mpd::QueuePosition::RelativeAdd(_)
+                    | crate::mpd::QueuePosition::RelativeSub(_),
+                ) = position
+                {
                     files.reverse();
                 }
                 for file in files {
@@ -528,9 +536,9 @@ pub fn create_env<'a>(
 
     if let Some((_, current)) = ctx.find_current_song_in_queue() {
         result.push(("CURRENT_SONG".to_owned(), current.uri.clone()));
-        result.extend(
-            current.metadata.iter().map(|(k, v)| (k.to_ascii_uppercase(), v.last().map(|s| s.to_string()).unwrap_or_default())),
-        );
+        result.extend(current.metadata.iter().map(|(k, v)| {
+            (k.to_ascii_uppercase(), v.last().map(|s| s.to_string()).unwrap_or_default())
+        }));
         let lrc_path = ctx
             .config
             .lyrics_dir

@@ -4,8 +4,8 @@ use anyhow::Result;
 
 use crate::{
     actions::{
-        intent::{IntentKind, Intent},
         handler::{HandleResult, Handler},
+        intent::{Intent, IntentKind},
     },
     ctx::Ctx,
     domain::ContentType,

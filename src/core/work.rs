@@ -4,9 +4,9 @@ use anyhow::Result;
 use crossbeam::channel::{Receiver, Sender};
 
 use crate::{
+    backends::PlayerCommand as QueryCmd,
     config::{Config, cli_config::CliConfig},
     mpd::{mpd_client::Command, proto_client::ProtoClient},
-    backends::PlayerCommand as QueryCmd,
     shared::{
         events::{AppEvent, ClientRequest, WorkDone, WorkRequest},
         lrc::LrcIndex,

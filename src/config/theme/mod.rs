@@ -231,8 +231,13 @@ pub struct ListDisplayConfig {
 }
 
 impl ListDisplayConfig {
-    fn default_thumbnail_width() -> u16 { 6 }
-    fn default_row_height() -> u16 { 3 }
+    fn default_thumbnail_width() -> u16 {
+        6
+    }
+
+    fn default_row_height() -> u16 {
+        3
+    }
 }
 
 #[derive(Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -320,12 +325,18 @@ impl TagResolutionStrategy {
         }
     }
 
-    pub fn resolve_vec<'a>(self, values: &'a [String], separator: &str) -> std::borrow::Cow<'a, str> {
+    pub fn resolve_vec<'a>(
+        self,
+        values: &'a [String],
+        separator: &str,
+    ) -> std::borrow::Cow<'a, str> {
         match self {
             TagResolutionStrategy::First => values.first().map(|s| s.as_str()).unwrap_or("").into(),
             TagResolutionStrategy::Last => values.last().map(|s| s.as_str()).unwrap_or("").into(),
             TagResolutionStrategy::All => std::borrow::Cow::Owned(values.join(separator)),
-            TagResolutionStrategy::Nth(idx) => values.get(idx).map(|s| s.as_str()).unwrap_or("").into(),
+            TagResolutionStrategy::Nth(idx) => {
+                values.get(idx).map(|s| s.as_str()).unwrap_or("").into()
+            }
         }
     }
 }

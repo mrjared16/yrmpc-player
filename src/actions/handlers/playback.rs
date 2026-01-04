@@ -2,8 +2,8 @@
 //!
 //! ## Responsibility (SRP)
 //!
-//! This handler has a single responsibility: toggle play/pause on the current playback.
-//! It does NOT:
+//! This handler has a single responsibility: toggle play/pause on the current
+//! playback. It does NOT:
 //! - Play new content (that's PlayHandler)
 //! - Manage queue (that's QueueHandler)
 //!
@@ -18,8 +18,8 @@ use anyhow::Result;
 
 use crate::{
     actions::{
-        intent::{IntentKind, Intent},
         handler::{HandleResult, Handler},
+        intent::{Intent, IntentKind},
     },
     ctx::Ctx,
 };

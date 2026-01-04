@@ -40,7 +40,7 @@ fn init_release(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> 
             .basename(format!("rmpc_{}", uid.as_raw()))
             .suppress_timestamp()
     };
-    
+
     flexi_logger::Logger::try_with_env_or_str("debug")?
         .log_to_file(file_spec)
         .add_writer("status_bar", Box::new(StatusBarWriter::new(tx)))
@@ -54,7 +54,11 @@ fn init_debug(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
     let file_spec = if let Ok(custom_path) = std::env::var("RMPC_LOG_FILE") {
         // Use custom log file path (for E2E tests)
         FileSpec::default()
-            .directory(std::path::PathBuf::from(&custom_path).parent().unwrap_or(std::path::Path::new("/tmp")))
+            .directory(
+                std::path::PathBuf::from(&custom_path)
+                    .parent()
+                    .unwrap_or(std::path::Path::new("/tmp")),
+            )
             .basename(std::path::PathBuf::from(&custom_path).file_stem().unwrap().to_string_lossy())
             .suppress_timestamp()
     } else {
@@ -65,12 +69,9 @@ fn init_debug(tx: Sender<AppEvent>) -> Result<LoggerHandle, FlexiLoggerError> {
             .basename(format!("rmpc_{}", uid.as_raw()))
             .suppress_timestamp()
     };
-    
+
     flexi_logger::Logger::try_with_env_or_str("debug")?
-        .log_to_file_and_writer(
-            file_spec,
-            Box::new(AppEventChannelWriter::new(tx.clone())),
-        )
+        .log_to_file_and_writer(file_spec, Box::new(AppEventChannelWriter::new(tx.clone())))
         .add_writer("status_bar", Box::new(StatusBarWriter::new(tx)))
         .format_for_writer(structured_detailed_format)
         .format_for_files(structured_detailed_format)

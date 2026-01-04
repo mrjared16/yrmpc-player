@@ -17,12 +17,9 @@ use crossbeam::{
 use drop_guard::ClientDropGuard;
 
 use crate::{
-    config::Config,
-    mpd::{
-        commands::idle::IdleEvent,
-        errors::MpdError,
-    },
     backends::BackendDispatcher,
+    config::Config,
+    mpd::{commands::idle::IdleEvent, errors::MpdError},
     shared::{
         events::{AppEvent, ClientRequest, WorkDone},
         macros::{status_error, try_break, try_skip},
@@ -304,7 +301,10 @@ mod drop_guard {
     }
 
     impl<'sender, 'client> ClientDropGuard<'sender, 'client> {
-        pub fn new(tx: &'sender Sender<BackendDispatcher<'client>>, client: BackendDispatcher<'client>) -> Self {
+        pub fn new(
+            tx: &'sender Sender<BackendDispatcher<'client>>,
+            client: BackendDispatcher<'client>,
+        ) -> Self {
             Self { tx, client: Some(client) }
         }
     }
@@ -363,7 +363,10 @@ fn check_connection(
     }
 }
 
-fn handle_client_request(client: &mut BackendDispatcher<'_>, request: ClientRequest) -> Result<WorkDone> {
+fn handle_client_request(
+    client: &mut BackendDispatcher<'_>,
+    request: ClientRequest,
+) -> Result<WorkDone> {
     match request {
         ClientRequest::Query(query) => Ok(WorkDone::QueryFinished {
             id: query.id,

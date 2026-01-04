@@ -2,9 +2,9 @@
 //!
 //! ## Overview
 //!
-//! The action system provides a unified way to handle user actions across panes.
-//! Instead of each pane implementing its own action logic, they build an Intent
-//! and let the ActionDispatcher dispatch to appropriate handlers.
+//! The action system provides a unified way to handle user actions across
+//! panes. Instead of each pane implementing its own action logic, they build an
+//! Intent and let the ActionDispatcher dispatch to appropriate handlers.
 //!
 //! ## Architecture
 //!
@@ -49,12 +49,12 @@
 //! }
 //! ```
 
-pub mod intent;
 pub mod dispatcher;
 pub mod handler;
 pub mod handlers;
+pub mod intent;
 
-pub use intent::{IntentKind, Intent, Selection};
 pub use dispatcher::ActionDispatcher;
-pub use handler::{HandleResult, BoxedHandler, Handler};
+pub use handler::{BoxedHandler, HandleResult, Handler};
 pub use handlers::{PlayHandler, QueueHandler, SaveHandler, TogglePlaybackHandler};
+pub use intent::{Intent, IntentKind, Selection};

@@ -50,7 +50,7 @@ fn input_poll_task(event_tx: &Sender<AppEvent>) {
 }
 
 // fn drain_crossterm_events() {
-//     while crossterm::event::poll(std::time::Duration::from_millis(0)).unwrap_or(false) {
-//         let _ = crossterm::event::read();
+//     while crossterm::event::poll(std::time::Duration::from_millis(0)).
+// unwrap_or(false) {         let _ = crossterm::event::read();
 //     }
 // }
