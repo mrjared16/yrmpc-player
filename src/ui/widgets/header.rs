@@ -41,15 +41,15 @@ impl Widget for Header<'_> {
                 return;
             };
             let template = PropertyTemplates(&config.theme.header.rows[row].left);
-            let widget = template.format(song, self.ctx, &self.ctx.config).left_aligned();
+            let widget = template.format(song.as_ref(), self.ctx, &self.ctx.config).left_aligned();
             widget.render(left, buf);
 
             let template = PropertyTemplates(&config.theme.header.rows[row].center);
-            let widget = template.format(song, self.ctx, &self.ctx.config).centered();
+            let widget = template.format(song.as_ref(), self.ctx, &self.ctx.config).centered();
             widget.render(center, buf);
 
             let template = PropertyTemplates(&config.theme.header.rows[row].right);
-            let widget = template.format(song, self.ctx, &self.ctx.config).right_aligned();
+            let widget = template.format(song.as_ref(), self.ctx, &self.ctx.config).right_aligned();
             widget.render(right, buf);
         }
     }

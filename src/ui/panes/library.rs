@@ -4,15 +4,12 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::{BackendDispatcher, LibraryCategory},
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::commands::lsinfo::LsInfoEntry,
-    backends::{BackendDispatcher, LibraryCategory},
-    shared::{
-        key_event::KeyEvent,
-        mouse_event::MouseEvent,
-    },
+    shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
         browser::BrowserPane,
@@ -63,7 +60,7 @@ impl Pane for LibraryPane {
             ctx.query().id(INIT).replace_id(INIT).target(target).query(move |_client| {
                 let categories = vec![
                     "library:playlists".to_string(),
-                    "library:albums".to_string(), 
+                    "library:albums".to_string(),
                     "library:artists".to_string(),
                     "library:songs".to_string(),
                 ];
@@ -158,15 +155,20 @@ impl BrowserPane<DirOrSong> for LibraryPane {
             Ok(match item {
                 DirOrSong::Dir { name, .. } => {
                     if let Some(category) = LibraryCategory::from_path(&name) {
-                        client.get_library(category)?
+                        client
+                            .get_library(category)?
                             .into_iter()
                             .filter_map(|entry| match entry {
                                 LsInfoEntry::File(song) => Some(song.into()),
                                 _ => None,
                             })
                             .collect()
-                    } else if name.starts_with("playlist:") || name.starts_with("album:") || name.starts_with("artist:") {
-                        client.lsinfo(Some(&name))?
+                    } else if name.starts_with("playlist:")
+                        || name.starts_with("album:")
+                        || name.starts_with("artist:")
+                    {
+                        client
+                            .lsinfo(Some(&name))?
                             .into_iter()
                             .filter_map(|entry| match entry {
                                 LsInfoEntry::File(song) => Some(song.into()),
@@ -186,32 +188,40 @@ impl BrowserPane<DirOrSong> for LibraryPane {
         let _current_path = self.stack.path().to_owned();
 
         if let DirOrSong::Dir { name, .. } = selected {
-            if name.starts_with("library:") || name.starts_with("playlist:") || name.starts_with("album:") || name.starts_with("artist:") {
+            if name.starts_with("library:")
+                || name.starts_with("playlist:")
+                || name.starts_with("album:")
+                || name.starts_with("artist:")
+            {
                 let name_clone = name.clone();
                 let target = PaneType::Library;
                 let next_path = self.stack.path().join(name.clone());
 
-                ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
-                    let result = if let Some(category) = LibraryCategory::from_path(&name_clone) {
-                        client.get_library(category)?
-                    } else {
-                        client.lsinfo(Some(&name_clone))?
-                    };
+                ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(
+                    move |client| {
+                        let result = if let Some(category) = LibraryCategory::from_path(&name_clone)
+                        {
+                            client.get_library(category)?
+                        } else {
+                            client.lsinfo(Some(&name_clone))?
+                        };
 
-                    let mapped: Vec<DirOrSong> = result.into_iter().filter_map(|entry| {
-                        match entry {
-                            LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
-                            LsInfoEntry::Dir(dir) => Some(DirOrSong::Dir {
-                                name: dir.name.clone(),
-                                full_path: dir.full_path,
-                                playlist: false,
-                                last_modified: dir.last_modified,
-                            }),
-                            _ => None,
-                        }
-                    }).collect();
-                    Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
-                });
+                        let mapped: Vec<DirOrSong> = result
+                            .into_iter()
+                            .filter_map(|entry| match entry {
+                                LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
+                                LsInfoEntry::Dir(dir) => Some(DirOrSong::Dir {
+                                    name: dir.name.clone(),
+                                    full_path: dir.full_path,
+                                    playlist: false,
+                                    last_modified: dir.last_modified,
+                                }),
+                                _ => None,
+                            })
+                            .collect();
+                        Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                    },
+                );
                 return Ok(());
             }
         }

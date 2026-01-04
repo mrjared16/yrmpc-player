@@ -25,8 +25,8 @@ use crate::{
 mod on_idle_event {
     use super::*;
     use crate::{
-        ctx::Ctx,
         backends::messaging::QueryResult,
+        ctx::Ctx,
         ui::panes::playlists::{INIT, REINIT},
     };
 
@@ -173,7 +173,10 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(
+                work_request_channel,
+                client_request_channel,
+            );
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             // init playlists
             screen
@@ -247,7 +250,10 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(
+                work_request_channel,
+                client_request_channel,
+            );
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
@@ -316,7 +322,10 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(
+                work_request_channel,
+                client_request_channel,
+            );
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
@@ -384,7 +393,10 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(
+                work_request_channel,
+                client_request_channel,
+            );
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             screen
                 .on_query_finished(
@@ -452,7 +464,10 @@ mod on_idle_event {
             client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
         ) {
             let rx = client_request_channel.1.clone();
-            let ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+            let ctx = crate::tests::fixtures::ctx_with_channels(
+                work_request_channel,
+                client_request_channel,
+            );
             let initial_songs = [song("s1"), song("s2"), song("s3"), song("s4")];
             let initial_playlists = vec![dir("pl1"), dir("pl2"), dir("pl3"), dir("pl4")];
             screen

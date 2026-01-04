@@ -11,7 +11,7 @@ use modals::{
     menu::modal::MenuModal,
     outputs::OutputsModal,
 };
-use panes::{PaneContainer, Panes, pane_call, navigator::Navigator};
+use panes::{PaneContainer, Panes, navigator::Navigator, pane_call};
 use ratatui::{
     Frame,
     layout::Rect,
@@ -24,6 +24,7 @@ use tab_screen::TabScreen;
 use self::{modals::Modal, panes::Pane};
 use crate::{
     QueryResult,
+    backends::{BackendActions, Capability, Enqueue, GLOBAL_STATUS_UPDATE},
     config::{
         Config,
         cli::{Args, Command},
@@ -43,7 +44,6 @@ use crate::{
         mpd_client::ValueChange,
         version::Version,
     },
-    backends::{Capability, Enqueue, BackendActions},
     shared::{
         events::{Level, WorkRequest},
         id::Id,
@@ -100,11 +100,8 @@ macro_rules! active_tab_call {
 impl<'ui> Ui<'ui> {
     pub fn new(ctx: &Ctx) -> Result<Ui<'ui>> {
         // Initialize Navigator when new architecture is enabled (legacy disabled)
-        let navigator = if !ctx.config.legacy_panes.enabled {
-            Some(Navigator::new(ctx))
-        } else {
-            None
-        };
+        let navigator =
+            if !ctx.config.legacy_panes.enabled { Some(Navigator::new(ctx)) } else { None };
 
         Ok(Self {
             panes: PaneContainer::new(ctx)?,
@@ -165,16 +162,16 @@ impl<'ui> Ui<'ui> {
         // Calculate layout: if queue panel visible, split area BEFORE rendering panes
         let (main_area, panel_area) = if ctx.queue_panel_visible && self.modals.is_empty() {
             use ratatui::layout::{Constraint, Layout};
-            
+
             let total_width = full_area.width;
             let panel_percent: u16 = match total_width {
-                0..=79 => 0,    // Too narrow, don't show
-                80..=99 => 40,  // Narrow: 40%
+                0..=79 => 0,   // Too narrow, don't show
+                80..=99 => 40, // Narrow: 40%
                 100..=119 => 35,
                 120..=159 => 30,
-                _ => 25,        // Wide: 25%
+                _ => 25, // Wide: 25%
             };
-            
+
             if panel_percent > 0 {
                 let areas = Layout::horizontal([
                     Constraint::Percentage(100 - panel_percent),
@@ -243,7 +240,10 @@ impl<'ui> Ui<'ui> {
     fn debug_log_ui(&mut self, ctx: &mut Ctx) {
         if let Some(path) = &ctx.debug_ui_log {
             let mut state = serde_json::Map::new();
-            state.insert("active_tab".to_string(), serde_json::json!(format!("{:?}", ctx.active_tab)));
+            state.insert(
+                "active_tab".to_string(),
+                serde_json::json!(format!("{:?}", ctx.active_tab)),
+            );
 
             if let Ok(Panes::Search(p)) = self.panes.get_mut(&PaneType::Search, ctx) {
                 state.insert("search".to_string(), p.debug_dump());
@@ -285,9 +285,7 @@ impl<'ui> Ui<'ui> {
         // Route through Navigator when enabled (new architecture)
         if let Some(ref mut navigator) = self.navigator {
             navigator.handle_key(key, ctx)?;
-            // Navigator handles its own key events; fall through to check global actions
         } else {
-            // Legacy path: use tab-based pane system
             active_tab_call!(self, ctx, handle_action(key, ctx))?;
         }
 
@@ -299,18 +297,16 @@ impl<'ui> Ui<'ui> {
                     ctx.command(move |client| {
                         match client.switch_to_partition(&name) {
                             Ok(()) => {}
-                            Err(e) if autocreate => {
-                                match e.downcast_ref::<MpdError>() {
-                                    Some(MpdError::Mpd(MpdFailureResponse {
-                                        code: ErrorCode::NoExist,
-                                        ..
-                                    })) => {
-                                        client.new_partition(&name)?;
-                                        client.switch_to_partition(&name)?;
-                                    }
-                                    _ => return Err(e),
+                            Err(e) if autocreate => match e.downcast_ref::<MpdError>() {
+                                Some(MpdError::Mpd(MpdFailureResponse {
+                                    code: ErrorCode::NoExist,
+                                    ..
+                                })) => {
+                                    client.new_partition(&name)?;
+                                    client.switch_to_partition(&name)?;
                                 }
-                            }
+                                _ => return Err(e),
+                            },
                             err @ Err(_) => err?,
                         }
                         Ok(())
@@ -450,7 +446,8 @@ impl<'ui> Ui<'ui> {
                         client.next_keep_state(keep_state, state.into())?;
                         Ok(())
                     });
-                    // Status update handled by continuous polling for YouTube backend
+                    // Status update handled by continuous polling for YouTube
+                    // backend
                 }
                 GlobalAction::PreviousTrack if ctx.status.state != State::Stop => {
                     let rewind_to_start = ctx.config.rewind_to_start_sec;
@@ -472,67 +469,106 @@ impl<'ui> Ui<'ui> {
                         }
                         Ok(())
                     });
-                    // Status update handled by continuous polling for YouTube backend
+                    // Status update handled by continuous polling for YouTube
+                    // backend
                 }
                 GlobalAction::Stop if matches!(ctx.status.state, State::Play | State::Pause) => {
                     ctx.command(move |client| {
                         client.playback().stop()?;
                         Ok(())
                     });
-                    // Status update handled by continuous polling for YouTube backend
+                    // Status update handled by continuous polling for YouTube
+                    // backend
                 }
                 GlobalAction::ToggleRepeat => {
                     let repeat = !ctx.status.repeat;
+                    // Optimistic UI update: immediately reflect the change
+                    ctx.status.repeat = repeat;
                     ctx.command(move |client| {
                         client.repeat(repeat)?;
                         Ok(())
                     });
-                    // Status update handled by continuous polling for YouTube backend
+                    // Force immediate render for responsive UI
+                    let _ = ctx.render();
                 }
                 GlobalAction::ToggleRandom => {
                     let random = !ctx.status.random;
+                    ctx.status.random = random;
                     ctx.command(move |client| {
                         client.random(random)?;
                         Ok(())
                     });
-                    // Status update handled by continuous polling for YouTube backend
+                    let _ = ctx.render();
                 }
                 GlobalAction::ToggleSingle => {
                     let single = ctx.status.single;
-                    ctx.command(move |client| {
-                        if client.version() < Version::new(0, 21, 0) {
-                            client.single(single.cycle_skip_oneshot().into())?;
+                    let new_single =
+                        if matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube) {
+                            single.cycle_skip_oneshot()
                         } else {
-                            client.single(single.cycle().into())?;
-                        }
-                        Ok(())
-                    });
-                    // Status update handled by continuous polling for YouTube backend
+                            single.cycle()
+                        };
+                    ctx.status.single = new_single;
+                    ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(
+                        move |client| {
+                            client.single(new_single.into())?;
+                            Ok(QueryResult::Status {
+                                data: client.get_status()?,
+                                source_event: None,
+                            })
+                        },
+                    );
+                    let _ = ctx.render();
                 }
                 GlobalAction::ToggleConsume => {
                     let consume = ctx.status.consume;
-                    ctx.command(move |client| {
-                        if client.version() < Version::new(0, 24, 0) {
-                            client.consume(consume.cycle_skip_oneshot().into())?;
+                    let new_consume =
+                        if matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube) {
+                            consume.cycle_skip_oneshot()
                         } else {
-                            client.consume(consume.cycle().into())?;
-                        }
-                        Ok(())
-                    });
+                            consume.cycle()
+                        };
+                    ctx.status.consume = new_consume;
+                    ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(
+                        move |client| {
+                            client.consume(new_consume.into())?;
+                            Ok(QueryResult::Status {
+                                data: client.get_status()?,
+                                source_event: None,
+                            })
+                        },
+                    );
+                    let _ = ctx.render();
                 }
                 GlobalAction::ToggleSingleOnOff => {
                     let single = ctx.status.single;
-                    ctx.command(move |client| {
-                        client.single(single.cycle_skip_oneshot().into())?;
-                        Ok(())
-                    });
+                    let new_single = single.cycle_skip_oneshot();
+                    ctx.status.single = new_single;
+                    ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(
+                        move |client| {
+                            client.single(new_single.into())?;
+                            Ok(QueryResult::Status {
+                                data: client.get_status()?,
+                                source_event: None,
+                            })
+                        },
+                    );
+                    let _ = ctx.render();
                 }
                 GlobalAction::ToggleConsumeOnOff => {
                     let consume = ctx.status.consume;
-                    ctx.command(move |client| {
-                        client.consume(consume.cycle_skip_oneshot().into())?;
-                        Ok(())
-                    });
+                    let new_consume = consume.cycle_skip_oneshot();
+                    ctx.status.consume = new_consume;
+                    ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(
+                        move |client| {
+                            client.consume(new_consume.into())?;
+                            Ok(QueryResult::Status {
+                                data: client.get_status()?,
+                                source_event: None,
+                            })
+                        },
+                    );
+                    let _ = ctx.render();
                 }
                 GlobalAction::TogglePause => {
                     if matches!(ctx.status.state, State::Play | State::Pause) {
@@ -546,7 +582,8 @@ impl<'ui> Ui<'ui> {
                             Ok(())
                         });
                     }
-                    // Status update handled by continuous polling for YouTube backend
+                    // Status update handled by continuous polling for YouTube
+                    // backend
                 }
                 GlobalAction::VolumeUp => {
                     let step = ctx.config.volume_step;
@@ -660,7 +697,8 @@ impl<'ui> Ui<'ui> {
                         let current_partition = ctx.status.partition.clone();
                         ctx.query().id(OPEN_OUTPUTS_MODAL).replace_id(OPEN_OUTPUTS_MODAL).query(
                             move |client| {
-                                let outputs = client.list_partitioned_outputs(&current_partition)?;
+                                let outputs =
+                                    client.list_partitioned_outputs(&current_partition)?;
                                 Ok(QueryResult::Outputs(outputs))
                             },
                         );
@@ -683,7 +721,7 @@ impl<'ui> Ui<'ui> {
                         modal!(
                             ctx,
                             InfoListModal::builder()
-                                .items(current_song)
+                                .items(&current_song)
                                 .title("Song info")
                                 .column_widths(&[30, 70])
                                 .build()
@@ -781,6 +819,19 @@ impl<'ui> Ui<'ui> {
             }
         }
 
+        if let crossterm::event::KeyCode::Char(c) = key.code() {
+            if let Some(idx) = c.to_digit(10) {
+                let idx = idx as usize;
+                if idx >= 1 && idx <= 9 {
+                    if let Some(tab_name) = ctx.config.tabs.names.get(idx - 1) {
+                        self.change_tab(tab_name.clone(), ctx)?;
+                        key.stop_propagation();
+                        ctx.render()?;
+                    }
+                }
+            }
+        }
+
         Ok(KeyHandleResult::None)
     }
 
@@ -849,184 +900,204 @@ impl<'ui> Ui<'ui> {
             }
             UiAppEvent::OpenAlbum(album_id) => {
                 // Switch to Albums tab
-                // We assume there is a tab named "Albums" or similar where AlbumsPane is located.
-                // If not, we might need to find where AlbumsPane is.
+                // We assume there is a tab named "Albums" or similar where AlbumsPane is
+                // located. If not, we might need to find where AlbumsPane is.
                 // For now, let's assume "Albums" tab exists.
                 // Or we can iterate to find which tab has AlbumsPane.
-                
-                let albums_tab_name = ctx.config.tabs.tabs.iter()
+
+                let albums_tab_name = ctx
+                    .config
+                    .tabs
+                    .tabs
+                    .iter()
                     .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Albums))
                     .map(|(name, _)| name.clone());
-                
+
                 if let Some(tab_name) = albums_tab_name {
                     self.change_tab(tab_name, ctx)?;
-                    
+
                     // Now we need to tell AlbumsPane to open this album.
                     // We can use `get_mut` to access AlbumsPane.
-                    if let Ok(Panes::Albums(albums_pane)) = self.panes.get_mut(&PaneType::Albums, ctx) {
-                         // We need to push the album ID to the stack.
-                         // The stack path is Vec<String>.
-                         // We want to push the album ID.
-                         // But we also need to trigger a fetch.
-                         
-                         // We can manually insert the path and trigger fetch.
-                         use crate::ui::dirstack::Path;
-                         let _path = Path::from(album_id.clone());
-                         
-                         // Clear stack and set root? No, we want to keep history if possible, 
-                         // but since we are jumping from search, maybe just set it as current?
-                         // AlbumsPane usually starts with root (list of albums).
-                         // If we push album_id, it will be root -> album_id.
-                         
-                         // But AlbumsPane stack is initialized with list of albums.
-                         // If we just push, it might work if the stack logic allows.
-                         
-                         // Let's try to just push it.
-                         // But we need to make sure the stack is initialized?
-                         // AlbumsPane initializes in `before_show`.
-                         // We just called `change_tab` which calls `before_show`.
-                         
-                         // However, `before_show` is async-ish (sends query).
-                         // So the stack might not be ready.
-                         
-                         // But we can force it.
-                         // Let's just set the stack to have this album as the next item?
-                         // Or we can use `ctx.query` to trigger `FETCH_DATA` with this path.
-                         
-                         // AlbumsPane::fetch_data uses `self.stack().next_path()`.
-                         // So we need to insert the path into the stack first.
-                         
-                         // Wait, `AlbumsPane` has `stack` field.
-                         // We can modify it directly.
-                         
-                         // But `DirStack` doesn't have a simple "push and go" method that also fetches.
-                         // We need to simulate user entering a directory.
-                         
-                         // Let's try:
-                         // 1. Ensure stack has root (maybe empty root is fine).
-                         // 2. Insert the album path.
-                         // 3. Trigger fetch.
-                         
-                         // But we don't know the album name, only ID.
-                         // `lsinfo` uses ID.
-                         // `AlbumsPane` uses `Tag::Album` filter.
-                         
-                         // If we push "album:ID" as path.
-                         // `AlbumsPane::fetch_data` will use it.
-                         
-                         // Let's see `AlbumsPane::fetch_data`:
-                         // let current = selected.as_path().to_owned();
-                         // client.find(&[Filter::new(Tag::Album, current)], None)?
-                         
-                         // So if we push "album:ID", it will search for Tag::Album = "album:ID".
-                         // The YouTube backend's find method handles this!
-                         
-                         albums_pane.stack_mut().push(album_id.clone());
-                         
-                         // Now trigger fetch.
-                         // We can call `fetch_data` manually?
-                         // `AlbumsPane` implements `BrowserPane`.
-                         // `BrowserPane` has `fetch_data`.
-                         // But `fetch_data` takes `selected` item.
-                         
-                         // We can construct a fake `DirOrSong` representing the album.
-                         use crate::ui::dir_or_song::DirOrSong;
-                         let fake_item = DirOrSong::Dir { 
-                             name: album_id.clone(), 
-                             full_path: album_id.clone(), 
-                             playlist: false,
-                             last_modified: chrono::Utc::now(),
-                         };
-                         
-                         use crate::ui::browser::BrowserPane;
-                         albums_pane.fetch_data(&fake_item, ctx)?;
+                    if let Ok(Panes::Albums(albums_pane)) =
+                        self.panes.get_mut(&PaneType::Albums, ctx)
+                    {
+                        // We need to push the album ID to the stack.
+                        // The stack path is Vec<String>.
+                        // We want to push the album ID.
+                        // But we also need to trigger a fetch.
+
+                        // We can manually insert the path and trigger fetch.
+                        use crate::ui::dirstack::Path;
+                        let _path = Path::from(album_id.clone());
+
+                        // Clear stack and set root? No, we want to keep history if possible,
+                        // but since we are jumping from search, maybe just set it as current?
+                        // AlbumsPane usually starts with root (list of albums).
+                        // If we push album_id, it will be root -> album_id.
+
+                        // But AlbumsPane stack is initialized with list of albums.
+                        // If we just push, it might work if the stack logic allows.
+
+                        // Let's try to just push it.
+                        // But we need to make sure the stack is initialized?
+                        // AlbumsPane initializes in `before_show`.
+                        // We just called `change_tab` which calls `before_show`.
+
+                        // However, `before_show` is async-ish (sends query).
+                        // So the stack might not be ready.
+
+                        // But we can force it.
+                        // Let's just set the stack to have this album as the next item?
+                        // Or we can use `ctx.query` to trigger `FETCH_DATA` with this path.
+
+                        // AlbumsPane::fetch_data uses `self.stack().next_path()`.
+                        // So we need to insert the path into the stack first.
+
+                        // Wait, `AlbumsPane` has `stack` field.
+                        // We can modify it directly.
+
+                        // But `DirStack` doesn't have a simple "push and go" method that also
+                        // fetches. We need to simulate user entering a
+                        // directory.
+
+                        // Let's try:
+                        // 1. Ensure stack has root (maybe empty root is fine).
+                        // 2. Insert the album path.
+                        // 3. Trigger fetch.
+
+                        // But we don't know the album name, only ID.
+                        // `lsinfo` uses ID.
+                        // `AlbumsPane` uses `Tag::Album` filter.
+
+                        // If we push "album:ID" as path.
+                        // `AlbumsPane::fetch_data` will use it.
+
+                        // Let's see `AlbumsPane::fetch_data`:
+                        // let current = selected.as_path().to_owned();
+                        // client.find(&[Filter::new(Tag::Album, current)], None)?
+
+                        // So if we push "album:ID", it will search for Tag::Album = "album:ID".
+                        // The YouTube backend's find method handles this!
+
+                        albums_pane.stack_mut().push(album_id.clone());
+
+                        // Now trigger fetch.
+                        // We can call `fetch_data` manually?
+                        // `AlbumsPane` implements `BrowserPane`.
+                        // `BrowserPane` has `fetch_data`.
+                        // But `fetch_data` takes `selected` item.
+
+                        // We can construct a fake `DirOrSong` representing the album.
+                        use crate::ui::dir_or_song::DirOrSong;
+                        let fake_item = DirOrSong::Dir {
+                            name: album_id.clone(),
+                            full_path: album_id.clone(),
+                            playlist: false,
+                            last_modified: chrono::Utc::now(),
+                        };
+
+                        use crate::ui::browser::BrowserPane;
+                        albums_pane.fetch_data(&fake_item, ctx)?;
                     }
                 }
-                
+
                 ctx.render()?;
             }
 
             UiAppEvent::OpenArtist(artist_id) => {
-                let artists_tab_name = ctx.config.tabs.tabs.iter()
+                let artists_tab_name = ctx
+                    .config
+                    .tabs
+                    .tabs
+                    .iter()
                     .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Artists))
                     .map(|(name, _)| name.clone());
 
                 if let Some(tab_name) = artists_tab_name {
                     self.change_tab(tab_name, ctx)?;
 
-                    if let Ok(Panes::Artists(artist_pane)) = self.panes.get_mut(&PaneType::Artists, ctx) {
-                         use crate::ui::dir_or_song::DirOrSong;
-                         // Construct a fake DirOrSong to trigger fetch
-                         // The name must start with "artist:" for our custom logic in ArtistPane
-                         let fake_item = DirOrSong::Dir {
-                             name: artist_id.clone(),
-                             full_path: artist_id.clone(),
-                             playlist: false,
-                             last_modified: chrono::Utc::now(),
-                         };
-                         
-                         // We push the path first?
-                         // ArtistPane::fetch_data expects the item to be selected or passed.
-                         // But we want to navigate TO it.
-                         // If we just push to stack, we need to make sure it's valid.
-                         
-                         // ArtistPane::fetch_data logic:
-                         // if current_path.is_empty() && name.starts_with("artist:") -> fetch lsinfo
-                         
-                         // So we need to be at root (which we are if we just switched tab, usually).
-                         // But if we were deep in another artist, we should probably reset?
-                         // Or just push?
-                         
-                         // If we are at root, we can call fetch_data directly with the fake item.
-                         // But we need to make sure we are at root.
-                         // artist_pane.stack_mut().clear(); // Maybe?
-                         
-                         // Let's assume we want to reset to root and then open the artist.
-                         // Or maybe we want to keep history?
-                         // If we are at root, we just call fetch_data.
-                         
-                         // If we are NOT at root, we might want to go back to root?
-                         // Or just push?
-                         
-                         // Our ArtistPane::fetch_data handles "artist:" ONLY if current_path is empty.
-                         // So we MUST be at root.
-                         
-                         // So let's clear the stack first?
-                         // artist_pane.stack_mut().clear(); // No clear method?
-                         // stack is DirStack. It has `pop` but maybe not clear.
-                         // We can set it to new?
-                         
-                         // Actually, let's just use `fetch_data` and hope it works or modify `ArtistPane` to handle it.
-                         // But `ArtistPane` logic I wrote:
-                         // if current_path.is_empty() { ... }
-                         
-                         // So I should ensure we are at root.
-                         // But `DirStack` doesn't expose `clear`.
-                         // I can pop until empty?
-                         
-                         // Let's just assume we are at root or the user wants to go to root.
-                         // But wait, `OpenArtist` implies "Go to this artist".
-                         
-                         // I'll add a `reset` method to `ArtistPane` or `DirStack` later if needed.
-                         // For now, I'll try to use `fetch_data` and if it fails because not at root, I'll fix it.
-                         // Actually, I can just manually set the stack if I had access.
-                         
-                         // Let's just call fetch_data.
-                         use crate::ui::browser::BrowserPane;
-                         artist_pane.fetch_data(&fake_item, ctx)?;
+                    if let Ok(Panes::Artists(artist_pane)) =
+                        self.panes.get_mut(&PaneType::Artists, ctx)
+                    {
+                        use crate::ui::dir_or_song::DirOrSong;
+                        // Construct a fake DirOrSong to trigger fetch
+                        // The name must start with "artist:" for our custom logic in ArtistPane
+                        let fake_item = DirOrSong::Dir {
+                            name: artist_id.clone(),
+                            full_path: artist_id.clone(),
+                            playlist: false,
+                            last_modified: chrono::Utc::now(),
+                        };
+
+                        // We push the path first?
+                        // ArtistPane::fetch_data expects the item to be selected or passed.
+                        // But we want to navigate TO it.
+                        // If we just push to stack, we need to make sure it's valid.
+
+                        // ArtistPane::fetch_data logic:
+                        // if current_path.is_empty() && name.starts_with("artist:") -> fetch lsinfo
+
+                        // So we need to be at root (which we are if we just switched tab, usually).
+                        // But if we were deep in another artist, we should probably reset?
+                        // Or just push?
+
+                        // If we are at root, we can call fetch_data directly with the fake item.
+                        // But we need to make sure we are at root.
+                        // artist_pane.stack_mut().clear(); // Maybe?
+
+                        // Let's assume we want to reset to root and then open the artist.
+                        // Or maybe we want to keep history?
+                        // If we are at root, we just call fetch_data.
+
+                        // If we are NOT at root, we might want to go back to root?
+                        // Or just push?
+
+                        // Our ArtistPane::fetch_data handles "artist:" ONLY if current_path is
+                        // empty. So we MUST be at root.
+
+                        // So let's clear the stack first?
+                        // artist_pane.stack_mut().clear(); // No clear method?
+                        // stack is DirStack. It has `pop` but maybe not clear.
+                        // We can set it to new?
+
+                        // Actually, let's just use `fetch_data` and hope it works or modify
+                        // `ArtistPane` to handle it. But `ArtistPane` logic
+                        // I wrote: if current_path.is_empty() { ... }
+
+                        // So I should ensure we are at root.
+                        // But `DirStack` doesn't expose `clear`.
+                        // I can pop until empty?
+
+                        // Let's just assume we are at root or the user wants to go to root.
+                        // But wait, `OpenArtist` implies "Go to this artist".
+
+                        // I'll add a `reset` method to `ArtistPane` or `DirStack` later if needed.
+                        // For now, I'll try to use `fetch_data` and if it fails because not at
+                        // root, I'll fix it. Actually, I can just manually
+                        // set the stack if I had access.
+
+                        // Let's just call fetch_data.
+                        use crate::ui::browser::BrowserPane;
+                        artist_pane.fetch_data(&fake_item, ctx)?;
                     }
                 }
                 ctx.render()?;
             }
             UiAppEvent::OpenPlaylist(playlist_id) => {
-                let playlists_tab_name = ctx.config.tabs.tabs.iter()
+                let playlists_tab_name = ctx
+                    .config
+                    .tabs
+                    .tabs
+                    .iter()
                     .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Playlists))
                     .map(|(name, _)| name.clone());
 
                 if let Some(tab_name) = playlists_tab_name {
                     self.change_tab(tab_name, ctx)?;
 
-                    if let Ok(Panes::Playlists(playlist_pane)) = self.panes.get_mut(&PaneType::Playlists, ctx) {
+                    if let Ok(Panes::Playlists(playlist_pane)) =
+                        self.panes.get_mut(&PaneType::Playlists, ctx)
+                    {
                         use crate::ui::dir_or_song::DirOrSong;
                         let fake_item = DirOrSong::Dir {
                             name: playlist_id.clone(),
@@ -1052,7 +1123,11 @@ impl<'ui> Ui<'ui> {
                 }
 
                 // 2. Find the Search tab and switch to it
-                let search_tab_name = ctx.config.tabs.tabs.iter()
+                let search_tab_name = ctx
+                    .config
+                    .tabs
+                    .tabs
+                    .iter()
                     .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Search))
                     .map(|(name, _)| name.clone());
 
@@ -1060,14 +1135,14 @@ impl<'ui> Ui<'ui> {
                     self.change_tab(tab_name, ctx)?;
 
                     // 3. Tell SearchPaneV2 to navigate to this content
-                    if let Ok(Panes::SearchV2(search_pane)) = self.panes.get_mut(&PaneType::Search, ctx) {
-                        let title_hint = title.unwrap_or_else(|| {
-                            match kind {
-                                ContentType::Artist => "Artist".to_string(),
-                                ContentType::Album => "Album".to_string(),
-                                ContentType::Playlist => "Playlist".to_string(),
-                                _ => "Content".to_string(),
-                            }
+                    if let Ok(Panes::SearchV2(search_pane)) =
+                        self.panes.get_mut(&PaneType::Search, ctx)
+                    {
+                        let title_hint = title.unwrap_or_else(|| match kind {
+                            ContentType::Artist => "Artist".to_string(),
+                            ContentType::Album => "Album".to_string(),
+                            ContentType::Playlist => "Playlist".to_string(),
+                            _ => "Content".to_string(),
                         });
                         search_pane.navigate_to(id, kind, title_hint, ctx);
                     }
@@ -1206,7 +1281,7 @@ impl<'ui> Ui<'ui> {
                 // when new architecture is enabled
                 if let Some(ref mut navigator) = self.navigator {
                     if matches!(pane_type, PaneType::Search | PaneType::Queue) {
-                        navigator.on_query_finished(id, data, ctx)?;
+                        navigator.on_query_finished(id, data, pane_type, ctx)?;
                         ctx.render()?;
                         return Ok(());
                     }
@@ -1287,7 +1362,8 @@ pub(crate) enum UiAppEvent {
     OpenArtist(String),
     OpenPlaylist(String),
     /// Navigate to content from anywhere (queue modal, etc.)
-    /// Unified alternative to OpenAlbum/OpenArtist/OpenPlaylist for the new architecture.
+    /// Unified alternative to OpenAlbum/OpenArtist/OpenPlaylist for the new
+    /// architecture.
     NavigateTo {
         id: String,
         kind: crate::domain::ContentType,

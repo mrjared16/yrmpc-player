@@ -4,15 +4,12 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::BackendDispatcher,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::commands::lsinfo::LsInfoEntry,
-    backends::BackendDispatcher,
-    shared::{
-        key_event::KeyEvent,
-        mouse_event::MouseEvent,
-    },
+    shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
         browser::BrowserPane,
@@ -60,7 +57,8 @@ impl Pane for PlaylistPane {
         if !self.initialized {
             let target = PaneType::Playlists;
             ctx.query().id(INIT).replace_id(INIT).target(target).query(move |_client| {
-                // For now, just return empty list - playlists will be populated from search or library
+                // For now, just return empty list - playlists will be populated from search or
+                // library
                 Ok(QueryResult::LsInfo { data: vec![], path: None })
             });
 
@@ -156,7 +154,8 @@ impl BrowserPane<DirOrSong> for PlaylistPane {
                 DirOrSong::Dir { name, .. } => {
                     // For YouTube Music playlists, use lsinfo with "playlist:ID" prefix
                     if name.starts_with("playlist:") {
-                        client.lsinfo(Some(&name))?
+                        client
+                            .lsinfo(Some(&name))?
                             .into_iter()
                             .filter_map(|entry| match entry {
                                 LsInfoEntry::File(song) => Some(song.into()),
@@ -184,40 +183,57 @@ impl BrowserPane<DirOrSong> for PlaylistPane {
                     let target = PaneType::Playlists;
                     let next_path = self.stack.path().join(name.clone());
 
-                    ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
-                        let result = client.lsinfo(Some(&name_clone))?;
-                        let mapped: Vec<DirOrSong> = result.into_iter().filter_map(|entry| {
-                            match entry {
-                                LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
-                                LsInfoEntry::Dir(dir) => {
-                                    // This line is syntactically incorrect as a field in a struct literal.
-                                    // Assuming it was meant to be a statement before the struct construction,
-                                    // but inserting it as requested by the user's provided diff.
-                                    // Note: `album_id` is not defined in this scope.
-                                    Some(DirOrSong::Dir {
-                                        // let _path = Path::from(album_id.clone());, // This line is commented out as it causes a syntax error.
-                                        name: dir.name.clone(),
-                                        full_path: dir.full_path,
-                                        playlist: false,
-                                        last_modified: dir.last_modified,
-                                    })
-                                }
-                                _ => None,
-                            }
-                        }).collect();
-                        Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
-                    });
+                    ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(
+                        move |client| {
+                            let result = client.lsinfo(Some(&name_clone))?;
+                            let mapped: Vec<DirOrSong> = result
+                                .into_iter()
+                                .filter_map(|entry| {
+                                    match entry {
+                                        LsInfoEntry::File(song) => {
+                                            Some(DirOrSong::Song(song.into()))
+                                        }
+                                        LsInfoEntry::Dir(dir) => {
+                                            // This line is syntactically incorrect as a field in a
+                                            // struct literal.
+                                            // Assuming it was meant to be a statement before the
+                                            // struct construction,
+                                            // but inserting it as requested by the user's provided
+                                            // diff.
+                                            // Note: `album_id` is not defined in this scope.
+                                            Some(DirOrSong::Dir {
+                                                // let _path = Path::from(album_id.clone());, //
+                                                // This line is commented out as it causes a syntax
+                                                // error.
+                                                name: dir.name.clone(),
+                                                full_path: dir.full_path,
+                                                playlist: false,
+                                                last_modified: dir.last_modified,
+                                            })
+                                        }
+                                        _ => None,
+                                    }
+                                })
+                                .collect();
+                            Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                        },
+                    );
                 } else {
                     // MPD playlist - use listplaylistinfo
                     let name_clone = name.clone();
                     let target = PaneType::Playlists;
                     let next_path = self.stack.path().join(name.clone());
 
-                    ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
-                        let songs = client.list_playlist_info(&name_clone, None)?;
-                        let mapped: Vec<DirOrSong> = songs.into_iter().map(|song| DirOrSong::Song(song.into())).collect();
-                        Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
-                    });
+                    ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(
+                        move |client| {
+                            let songs = client.list_playlist_info(&name_clone, None)?;
+                            let mapped: Vec<DirOrSong> = songs
+                                .into_iter()
+                                .map(|song| DirOrSong::Song(song.into()))
+                                .collect();
+                            Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                        },
+                    );
                 }
                 return Ok(());
             }

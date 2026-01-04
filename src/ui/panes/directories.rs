@@ -6,13 +6,11 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::{BackendDispatcher, Enqueue},
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
-    mpd::{
-        mpd_client::{Filter, FilterKind, Tag},
-    },
-    backends::{BackendDispatcher, Enqueue},
+    mpd::mpd_client::{Filter, FilterKind, Tag},
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
@@ -174,10 +172,14 @@ impl BrowserPane<DirOrSong> for DirectoriesPane {
         move |client| {
             Ok(match item {
                 // Convert MediaItem to Song for legacy pane compatibility
-                DirOrSong::Dir { full_path, playlist: false, .. } => client.find(
-                    &[Filter::new_with_kind(Tag::File, &full_path, FilterKind::StartsWith)],
-                    None,
-                )?.into_iter().map(Song::from).collect(),
+                DirOrSong::Dir { full_path, playlist: false, .. } => client
+                    .find(
+                        &[Filter::new_with_kind(Tag::File, &full_path, FilterKind::StartsWith)],
+                        None,
+                    )?
+                    .into_iter()
+                    .map(Song::from)
+                    .collect(),
                 DirOrSong::Dir { name, playlist: true, .. } => {
                     client.list_playlist_info(&name, None)?
                 }

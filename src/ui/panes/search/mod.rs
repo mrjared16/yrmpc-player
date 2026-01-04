@@ -1,5 +1,4 @@
-use std::collections::HashSet;
-use std::time::Instant;
+use std::{collections::HashSet, time::Instant};
 
 use anyhow::Result;
 use crossterm::event::KeyCode;
@@ -15,6 +14,7 @@ use ratatui::{
 use super::{CommonAction, Pane};
 use crate::{
     QueryResult,
+    backends::{BackendActions as _, BackendDispatcher},
     config::{
         keys::{
             GlobalAction,
@@ -25,12 +25,7 @@ use crate::{
     core::command::{create_env, run_external},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    ui::panes::browser::SongExt,
-    mpd::{
-        mpd_client::Filter,
-        version::Version,
-    },
-    backends::{BackendDispatcher, BackendActions as _},
+    mpd::{mpd_client::Filter, version::Version},
     shared::{
         events::AppEvent,
         key_event::KeyEvent,
@@ -55,7 +50,10 @@ use crate::{
             },
             select_modal::SelectModal,
         },
-        panes::search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
+        panes::{
+            browser::SongExt,
+            search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
+        },
         widgets::browser::BrowserArea,
     },
 };
@@ -106,15 +104,15 @@ pub struct SearchPane {
     songs_dir: Dir<Song, ListState>,
     previous_dir_stack: Vec<Dir<Song, ListState>>,
     search_results_backup: Option<Dir<Song, ListState>>,
-    
+
     // Section focus for detail views
     focused_section: FocusSection,
     featured_artists_state: ListState,
     related_content_state: ListState,
-    
+
     // Visual selection mode
     selection_mode: SelectionMode,
-    
+
     // Hybrid UI: layout control
     layout_mode: LayoutMode,
     detail_view: Option<DetailView>,
@@ -157,15 +155,15 @@ impl SearchPane {
             last_query: String::new(),
             previous_dir_stack: Vec::new(),
             search_results_backup: None,
-            
+
             // Section focus for detail views
             focused_section: FocusSection::Tracks,
             featured_artists_state: ListState::default(),
             related_content_state: ListState::default(),
-           
+
             // Visual selection mode
             selection_mode: SelectionMode::Normal,
-            
+
             // Hybrid UI: layout control
             layout_mode: LayoutMode::ThreeColumn,
             detail_view: None,
@@ -198,7 +196,8 @@ impl SearchPane {
             .items(all)
             .filter_map(|(_, item)| {
                 // Only enqueue actual songs/videos, not playlists/albums/artists
-                let item_type = item.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
+                let item_type =
+                    item.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
                 match item_type {
                     Some("song" | "video") | None => {
                         // Songs, videos, or items without type (assume playable)
@@ -222,12 +221,10 @@ impl SearchPane {
             items
                 .iter()
                 .enumerate()
-                .filter_map(|(idx, item)| {
-                    match item {
-                        Enqueue::Song { song } => Some((idx, song.uri.as_str())),
-                        Enqueue::File { path } => Some((idx, path.as_str())),
-                        _ => None,
-                    }
+                .filter_map(|(idx, item)| match item {
+                    Enqueue::Song { song } => Some((idx, song.uri.as_str())),
+                    Enqueue::File { path } => Some((idx, path.as_str())),
+                    _ => None,
                 })
                 .find(|(_, path)| *path == hovered)
                 .map(|(idx, _)| idx)
@@ -239,14 +236,18 @@ impl SearchPane {
     }
 
     fn get_current_query_string(&self) -> String {
-        self.inputs.inputs.iter().find_map(|input| match input {
-            InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
-                if !value.is_empty() && !key.is_empty() =>
-            {
-                Some(value.clone())
-            }
-            _ => None,
-        }).unwrap_or_default()
+        self.inputs
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
+                    if !value.is_empty() && !key.is_empty() =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     fn render_suggestions(
@@ -259,15 +260,13 @@ impl SearchPane {
             .borders(Borders::ALL)
             .title("Suggestions")
             .style(ctx.config.theme.borders_style);
-        
-        let items: Vec<ListItem> = self.suggestions.iter().map(|s| {
-            ListItem::new(Span::raw(s))
-        }).collect();
 
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(ctx.config.theme.current_item_style);
-        
+        let items: Vec<ListItem> =
+            self.suggestions.iter().map(|s| ListItem::new(Span::raw(s))).collect();
+
+        let list =
+            List::new(items).block(block).highlight_style(ctx.config.theme.current_item_style);
+
         frame.render_stateful_widget(list, area, &mut self.suggestions_state);
     }
 
@@ -277,30 +276,35 @@ impl SearchPane {
         area: ratatui::prelude::Rect,
         ctx: &Ctx,
     ) {
-        use crate::ui::widgets::item_list::{ItemListWidget, ItemListConfig, ListRenderMode};
-        
+        use crate::ui::widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode};
+
         let config = &ctx.config;
         let column_right_padding: u16 = config.theme.scrollbar.is_some().into();
-        
+
         // Build title with filter and visual mode indicator
-        let title = self.songs_dir.filter().as_ref().map(|v| {
-            format!(
-                "[FILTER]: {v}{} ",
-                if matches!(self.phase, Phase::BrowseResults { filter_input_on: true }) {
-                    "█"
+        let title = self
+            .songs_dir
+            .filter()
+            .as_ref()
+            .map(|v| {
+                format!(
+                    "[FILTER]: {v}{} ",
+                    if matches!(self.phase, Phase::BrowseResults { filter_input_on: true }) {
+                        "█"
+                    } else {
+                        ""
+                    }
+                )
+            })
+            .or_else(|| {
+                // If no filter, show visual mode indicator
+                if matches!(self.selection_mode, SelectionMode::Visual { .. }) {
+                    let marked_count = self.songs_dir.marked().len();
+                    Some(format!("(VISUAL - {} selected)", marked_count))
                 } else {
-                    ""
+                    None
                 }
-            )
-        }).or_else(|| {
-            // If no filter, show visual mode indicator
-            if matches!(self.selection_mode, SelectionMode::Visual { .. }) {
-                let marked_count = self.songs_dir.marked().len();
-                Some(format!("(VISUAL - {} selected)", marked_count))
-            } else {
-                None
-            }
-        });
+            });
 
         let block = {
             let mut b = Block::default();
@@ -325,8 +329,9 @@ impl SearchPane {
 
         // CONDITIONAL RENDERING: Rich mode vs Compact mode
         if config.theme.list_display.rich_mode {
-            // Rich mode: use ItemListWidget with thumbnails + 2-line layout + filter highlighting
-            // Capture filter before creating widget to avoid borrow conflict
+            // Rich mode: use ItemListWidget with thumbnails + 2-line layout + filter
+            // highlighting Capture filter before creating widget to avoid
+            // borrow conflict
             let current_filter = directory.filter().map(|s| s.to_string());
             let list_config = ItemListConfig {
                 mode: ListRenderMode::Rich,
@@ -341,14 +346,22 @@ impl SearchPane {
             if let Some(ref filter_str) = current_filter {
                 widget = widget.filter(Some(filter_str.as_str()));
             }
-            frame.render_stateful_widget(widget, inner_block, directory.state.as_render_state_ref());
+            frame.render_stateful_widget(
+                widget,
+                inner_block,
+                directory.state.as_render_state_ref(),
+            );
         } else {
             // Compact mode: use existing ratatui List (text-only, backward compatible)
             let current = List::new(
                 directory.to_list_items(ctx.config.theme.browser_song_format.0.as_slice(), ctx),
             )
             .highlight_style(config.theme.current_item_style);
-            frame.render_stateful_widget(current, inner_block, directory.state.as_render_state_ref());
+            frame.render_stateful_widget(
+                current,
+                inner_block,
+                directory.state.as_render_state_ref(),
+            );
         }
 
         if let Some(scrollbar) = config.as_styled_scrollbar() {
@@ -366,14 +379,14 @@ impl SearchPane {
         area: ratatui::prelude::Rect,
         ctx: &Ctx,
     ) -> anyhow::Result<()> {
-        use ratatui::layout::Layout;
-        use ratatui::widgets::Paragraph;
-        
+        use ratatui::{layout::Layout, widgets::Paragraph};
+
         let chunks = Layout::vertical([
             Constraint::Length(1), // Breadcrumb
-            Constraint::Min(0),     // Content
-        ]).split(area);
-        
+            Constraint::Min(0),    // Content
+        ])
+        .split(area);
+
         // Render breadcrumb with visual mode indicator
         let breadcrumb_text = if let Some(detail) = &self.detail_view {
             let base = match detail {
@@ -381,7 +394,7 @@ impl SearchPane {
                 DetailView::Album(a) => format!("Search > Album: {} - {}", a.title, a.artist.name),
                 DetailView::Artist(a) => format!("Search > Artist: {}", a.name),
             };
-            
+
             // Add visual mode indicator if in visual mode
             if matches!(self.selection_mode, SelectionMode::Visual { .. }) {
                 let marked_count = self.songs_dir.marked().len();
@@ -392,14 +405,13 @@ impl SearchPane {
         } else {
             "Search > Detail".to_string()
         };
-        
-        let breadcrumb = Paragraph::new(breadcrumb_text)
-            .style(ctx.config.theme.borders_style);
+
+        let breadcrumb = Paragraph::new(breadcrumb_text).style(ctx.config.theme.borders_style);
         frame.render_widget(breadcrumb, chunks[0]);
-        
+
         // Render track list
         self.render_song_column(frame, chunks[1], ctx);
-        
+
         Ok(())
     }
 
@@ -408,103 +420,100 @@ impl SearchPane {
         if self.layout_mode == LayoutMode::ThreeColumn {
             self.search_results_backup = Some(self.songs_dir.clone());
         }
-        
+
         // Switch to detail mode immediately
-        self.layout_mode = LayoutMode::FullDetail;  
+        self.layout_mode = LayoutMode::FullDetail;
         self.previous_dir_stack.push(self.songs_dir.clone());
-        
+
         // Clear current songs while loading
         self.songs_dir = Dir::default();
-        
+
         // Fetch via async query
-        ctx.query()
-            .id("fetch_playlist")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: playlist_id.clone(),
-                    content_type: ContentType::Playlist,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
-                    _ => anyhow::bail!("Expected playlist details"),
-                }
-            });
+        ctx.query().id("fetch_playlist").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: playlist_id.clone(),
+                content_type: ContentType::Playlist,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
+                _ => anyhow::bail!("Expected playlist details"),
+            }
+        });
     }
-    
+
     fn fetch_album_detail(&mut self, ctx: &Ctx, album_id: String) {
         if self.layout_mode == LayoutMode::ThreeColumn {
             self.search_results_backup = Some(self.songs_dir.clone());
         }
-        
+
         self.layout_mode = LayoutMode::FullDetail;
         self.previous_dir_stack.push(self.songs_dir.clone());
         self.songs_dir = Dir::default();
-        
-        ctx.query()
-            .id("fetch_album")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: album_id.clone(),
-                    content_type: ContentType::Album,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
-                    _ => anyhow::bail!("Expected album details"),
-                }
-            });
+
+        ctx.query().id("fetch_album").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: album_id.clone(),
+                content_type: ContentType::Album,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
+                _ => anyhow::bail!("Expected album details"),
+            }
+        });
     }
-    
+
     fn fetch_artist_detail(&mut self, ctx: &Ctx, artist_id: String) {
         if self.layout_mode == LayoutMode::ThreeColumn {
             self.search_results_backup = Some(self.songs_dir.clone());
         }
-        
+
         self.layout_mode = LayoutMode::FullDetail;
         self.previous_dir_stack.push(self.songs_dir.clone());
         self.songs_dir = Dir::default();
-        
-        ctx.query()
-            .id("fetch_artist")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: artist_id.clone(),
-                    content_type: ContentType::Artist,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
-                    _ => anyhow::bail!("Expected artist details"),
-                }
-            });
+
+        ctx.query().id("fetch_artist").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: artist_id.clone(),
+                content_type: ContentType::Artist,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
+                _ => anyhow::bail!("Expected artist details"),
+            }
+        });
     }
 
     /// Trigger search if search should be done on any change. Does nothing when
@@ -592,9 +601,11 @@ impl SearchPane {
                         client.send_lsinfo(Some(&uri))?;
                     }
                     client.send_execute_cmd_list()?;
-                    let songs: Vec<Song> = client.read_songs_response()?.into_iter().map(Into::into).collect();
+                    let songs: Vec<Song> =
+                        client.read_songs_response()?.into_iter().map(Into::into).collect();
                     // Convert to MediaItem for unified QueryResult type
-                    let data: Vec<crate::domain::MediaItem> = songs.into_iter().map(crate::domain::MediaItem::from).collect();
+                    let data: Vec<crate::domain::MediaItem> =
+                        songs.into_iter().map(crate::domain::MediaItem::from).collect();
 
                     Ok(QueryResult::SearchResult { data })
                 },
@@ -615,7 +626,6 @@ impl SearchPane {
                         .collect_vec();
 
                     let data = if fold_case {
-
                         client.search(&filter)
                     } else {
                         client.find(&filter, None)
@@ -643,7 +653,8 @@ impl SearchPane {
                     };
 
                     // Convert back to MediaItem for unified QueryResult type
-                    let data: Vec<crate::domain::MediaItem> = data.into_iter().map(crate::domain::MediaItem::from).collect();
+                    let data: Vec<crate::domain::MediaItem> =
+                        data.into_iter().map(crate::domain::MediaItem::from).collect();
                     Ok(QueryResult::SearchResult { data })
                 },
             );
@@ -713,14 +724,14 @@ impl SearchPane {
                     if self.layout_mode == LayoutMode::FullDetail {
                         self.layout_mode = LayoutMode::ThreeColumn;
                         self.detail_view = None;
-                        
+
                         // Restore previous state or search results
                         if let Some(backup) = self.search_results_backup.take() {
                             self.songs_dir = backup;
                         } else if let Some(prev) = self.previous_dir_stack.pop() {
                             self.songs_dir = prev;
                         }
-                        
+
                         ctx.render()?;
                     }
                 }
@@ -1030,7 +1041,7 @@ impl SearchPane {
                         } else {
                             log::info!("No type metadata found");
                         }
-                        
+
                         // Default: play the selected song/video ONLY (not all songs)
                         // enqueue(false) = only selected item, enqueue(true) = all items
                         let (hovered_song_idx, items) = self.enqueue(false);
@@ -1047,7 +1058,8 @@ impl SearchPane {
                                 ctx,
                                 items,
                                 Position::Replace,
-                                AutoplayKind::First,  // Use First for single song - guarantees playback
+                                AutoplayKind::First, /* Use First for single song - guarantees
+                                                      * playback */
                                 current_song_idx,
                                 hovered_song_idx,
                             );
@@ -1272,8 +1284,11 @@ impl SearchPane {
                                     .title("Select a playlist")
                                     .on_confirm(move |ctx, selected, _idx| {
                                         ctx.command(move |client| {
-                                            client
-                                                .add_to_playlist_multiple(&selected, &song_files, None)?;
+                                            client.add_to_playlist_multiple(
+                                                &selected,
+                                                &song_files,
+                                                None,
+                                            )?;
                                             Ok(())
                                         });
                                         Ok(())
@@ -1322,7 +1337,11 @@ impl SearchPane {
                             .title("Select a playlist")
                             .on_confirm(move |ctx, selected, _idx| {
                                 ctx.command(move |client| {
-                                    client.add_to_playlist_multiple(&selected, &song_files, None)?;
+                                    client.add_to_playlist_multiple(
+                                        &selected,
+                                        &song_files,
+                                        None,
+                                    )?;
                                     Ok(())
                                 });
                                 Ok(())
@@ -1386,7 +1405,7 @@ impl Pane for SearchPane {
                 // Continue with existing three-column rendering
             }
         }
-        
+
         let widths = &ctx.config.theme.column_widths;
         let [previous_area, current_area_init, preview_area] = *Layout::horizontal([
             Constraint::Percentage(widths[0]),
@@ -1429,14 +1448,18 @@ impl Pane for SearchPane {
                 } else {
                     // Use rich mode rendering for preview if enabled
                     if ctx.config.theme.list_display.rich_mode {
-                        use crate::ui::widgets::item_list::{ItemListWidget, ItemListConfig, ListRenderMode};
+                        use crate::ui::widgets::item_list::{
+                            ItemListConfig,
+                            ItemListWidget,
+                            ListRenderMode,
+                        };
                         let list_config = ItemListConfig {
                             mode: ListRenderMode::Rich,
                             thumbnail_width: ctx.config.theme.list_display.thumbnail_width,
                             row_height: ctx.config.theme.list_display.row_height,
                         };
-                        let widget = ItemListWidget::new(&self.songs_dir.items, ctx)
-                            .config(list_config);
+                        let widget =
+                            ItemListWidget::new(&self.songs_dir.items, ctx).config(list_config);
                         // Render without selection state (preview doesn't track selection)
                         let mut preview_state = ListState::default();
                         frame.render_stateful_widget(widget, preview_area, &mut preview_state);
@@ -1529,7 +1552,7 @@ impl Pane for SearchPane {
 
                 let mut sections: HashMap<String, Vec<Song>> = HashMap::new();
                 let mut current_section = String::from("unknown");
-                
+
                 // Mapping from header titles to config section names
                 let header_to_section = |title: &str| -> String {
                     match title.to_lowercase().as_str() {
@@ -1537,16 +1560,23 @@ impl Pane for SearchPane {
                         "songs" => "songs".to_string(),
                         "artists" => "artists".to_string(),
                         "albums" => "albums".to_string(),
-                        "playlists" | "featured playlists" | "community playlists" => "playlists".to_string(),
+                        "playlists" | "featured playlists" | "community playlists" => {
+                            "playlists".to_string()
+                        }
                         "videos" => "videos".to_string(),
                         other => other.to_lowercase().replace(" ", "_"),
                     }
                 };
-                
+
                 // Process items, tracking current section
                 for song in data {
-                    let type_ = song.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
-                    
+                    let type_ = song
+                        .metadata
+                        .get("type")
+                        .and_then(|v| v.first())
+                        .map(|s| s.as_str())
+                        .unwrap_or("song");
+
                     if type_ == "header" {
                         // This is a section marker - remember it
                         if let Some(title) = song.metadata.get("title").and_then(|v| v.first()) {
@@ -1557,17 +1587,16 @@ impl Pane for SearchPane {
                         sections.entry(current_section.clone()).or_default().push(song);
                     }
                 }
-                
+
                 // Log what we found per section
-                let section_counts: Vec<String> = sections.iter()
-                    .map(|(k, v)| format!("{}:{}", k, v.len()))
-                    .collect();
+                let section_counts: Vec<String> =
+                    sections.iter().map(|(k, v)| format!("{}:{}", k, v.len())).collect();
                 log::info!("[SEARCH] Sections found: {}", section_counts.join(", "));
-                
+
                 // Build display list based on config order
                 let mut display_data = Vec::new();
                 let config_sections = &ctx.config.search.sections;
-                
+
                 fn section_display_name(section: &str) -> &'static str {
                     match section {
                         "top_results" => "Top Results",
@@ -1579,25 +1608,30 @@ impl Pane for SearchPane {
                         _ => "Other",
                     }
                 }
-                
+
                 for section in config_sections {
                     if let Some(items) = sections.get_mut(section) {
                         if !items.is_empty() {
                             // Add section header
                             let mut header = Song::default();
                             header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                            header.metadata.insert("title".to_string(), vec![section_display_name(section).to_string()]);
+                            header.metadata.insert("title".to_string(), vec![
+                                section_display_name(section).to_string(),
+                            ]);
                             display_data.push(header);
                             // Add items
                             display_data.extend(items.drain(..));
                         }
                     }
                 }
-                
+
                 status_info!("Found {} matching items", display_data.len());
                 self.songs_dir = Dir::new(display_data);
                 self.phase = Phase::BrowseResults { filter_input_on: false };
-                log::info!("[SEARCH] Phase set to BrowseResults, songs_dir has {} items", self.songs_dir.len());
+                log::info!(
+                    "[SEARCH] Phase set to BrowseResults, songs_dir has {} items",
+                    self.songs_dir.len()
+                );
                 ctx.render()?;
             }
             ("fetch_playlist", QueryResult::PlaylistDetail(details)) => {
@@ -1740,11 +1774,15 @@ impl Pane for SearchPane {
                             self.songs_dir.select_idx(idx, ctx.config.scrolloff);
                             self.songs_dir.select_idx(idx, ctx.config.scrolloff);
                             if let Some(song) = self.songs_dir.selected() {
-                                use crate::backends::api::{Item, InsertAt, AfterAdd};
+                                use crate::backends::api::{AfterAdd, InsertAt, Item};
                                 let item: Item = song.into();
                                 let title = item.title.clone();
                                 ctx.command(move |client| {
-                                    client.queue().add(&[item], InsertAt::End, AfterAdd::Nothing)?;
+                                    client.queue().add(
+                                        &[item],
+                                        InsertAt::End,
+                                        AfterAdd::Nothing,
+                                    )?;
                                     status_info!("Added '{title}' to queue");
                                     Ok(())
                                 });
@@ -1827,17 +1865,17 @@ impl Pane for SearchPane {
                     }
                     Some(CommonAction::Confirm) => {
                         if self.showing_suggestions {
-                             if let Some(idx) = self.suggestions_state.selected() {
-                                 if let Some(suggestion) = self.suggestions.get(idx) {
-                                     if let InputType::Textbox(input) = self.inputs.focused_mut() {
-                                         input.value = suggestion.clone();
-                                     }
-                                     self.showing_suggestions = false;
-                                     self.search(ctx);
-                                     ctx.render()?;
-                                     return Ok(());
-                                 }
-                             }
+                            if let Some(idx) = self.suggestions_state.selected() {
+                                if let Some(suggestion) = self.suggestions.get(idx) {
+                                    if let InputType::Textbox(input) = self.inputs.focused_mut() {
+                                        input.value = suggestion.clone();
+                                    }
+                                    self.showing_suggestions = false;
+                                    self.search(ctx);
+                                    ctx.render()?;
+                                    return Ok(());
+                                }
+                            }
                         }
 
                         self.phase = Phase::Search;
@@ -1854,12 +1892,20 @@ impl Pane for SearchPane {
                         ctx.render()?;
                     }
                     Some(CommonAction::Down) if self.showing_suggestions => {
-                        let next = self.suggestions_state.selected().map_or(0, |i| (i + 1) % self.suggestions.len());
+                        let next = self
+                            .suggestions_state
+                            .selected()
+                            .map_or(0, |i| (i + 1) % self.suggestions.len());
                         self.suggestions_state.select(Some(next));
                         ctx.render()?;
                     }
                     Some(CommonAction::Up) if self.showing_suggestions => {
-                        let prev = self.suggestions_state.selected().map_or(self.suggestions.len() - 1, |i| (i + self.suggestions.len() - 1) % self.suggestions.len());
+                        let prev = self
+                            .suggestions_state
+                            .selected()
+                            .map_or(self.suggestions.len() - 1, |i| {
+                                (i + self.suggestions.len() - 1) % self.suggestions.len()
+                            });
                         self.suggestions_state.select(Some(prev));
                         ctx.render()?;
                     }
@@ -1896,18 +1942,20 @@ impl Pane for SearchPane {
                 if new_query != old_query {
                     self.last_query = new_query.clone();
                     if !new_query.is_empty() && new_query.len() > 1 {
-                         ctx.query().id(SEARCH).replace_id("search_suggestions").target(PaneType::Search).query(
-                            move |client| {
+                        ctx.query()
+                            .id(SEARCH)
+                            .replace_id("search_suggestions")
+                            .target(PaneType::Search)
+                            .query(move |client| {
                                 let suggestions = client.get_search_suggestions(new_query)?;
                                 Ok(QueryResult::SearchSuggestions(suggestions))
-                            }
-                        );
+                            });
                     } else {
                         self.showing_suggestions = false;
                         self.suggestions.clear();
                     }
                 }
-            },
+            }
             Phase::Search => {
                 self.handle_search_phase_action(event, ctx)?;
             }
@@ -1918,7 +1966,7 @@ impl Pane for SearchPane {
                 self.handle_result_phase_action(event, ctx)?;
             }
         }
-        
+
         // Handle visual selection mode
         if matches!(self.phase, Phase::BrowseResults { filter_input_on: false }) {
             match event.code() {
@@ -1941,7 +1989,7 @@ impl Pane for SearchPane {
                 }
                 _ => {}
             }
-            
+
             // Visual mode operations
             if let SelectionMode::Visual { anchor } = self.selection_mode {
                 match event.code() {
@@ -1978,7 +2026,7 @@ impl Pane for SearchPane {
                 }
             }
         }
-        
+
         Ok(())
     }
 }

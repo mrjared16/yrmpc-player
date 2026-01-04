@@ -14,7 +14,7 @@ use crate::domain::display::ListItemDisplay;
 /// Enables efficient O(1) navigation between matches.
 ///
 /// ## Terminology
-/// - **Find mode**: Active text entry (like vim / mode)  
+/// - **Find mode**: Active text entry (like vim / mode)
 /// - **Filtering**: Has active matches but not in edit mode
 #[derive(Debug, Clone)]
 pub struct FindState {
@@ -28,11 +28,7 @@ pub struct FindState {
 
 impl Default for FindState {
     fn default() -> Self {
-        Self {
-            find_text: String::new(),
-            matched_indices: Vec::new(),
-            current_match: 0,
-        }
+        Self { find_text: String::new(), matched_indices: Vec::new(), current_match: 0 }
     }
 }
 
@@ -44,11 +40,7 @@ impl FindState {
 
     /// Create with initial find text
     pub fn with_text(text: &str) -> Self {
-        Self {
-            find_text: text.to_string(),
-            matched_indices: Vec::new(),
-            current_match: 0,
-        }
+        Self { find_text: text.to_string(), matched_indices: Vec::new(), current_match: 0 }
     }
 
     // ========== TEXT EDITING ==========
@@ -197,8 +189,9 @@ impl FindState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::borrow::Cow;
+
+    use super::*;
 
     #[derive(Debug)]
     struct TestItem {
@@ -210,6 +203,7 @@ mod tests {
         fn primary_text(&self) -> Cow<'_, str> {
             Cow::Borrowed(&self.text)
         }
+
         fn is_focusable(&self) -> bool {
             self.focusable
         }
@@ -234,10 +228,10 @@ mod tests {
 
     #[test]
     fn skips_unfocusable_items() {
-        let items = vec![
-            TestItem { text: "Header: Hello".into(), focusable: false },
-            TestItem { text: "Hello World".into(), focusable: true },
-        ];
+        let items = vec![TestItem { text: "Header: Hello".into(), focusable: false }, TestItem {
+            text: "Hello World".into(),
+            focusable: true,
+        }];
 
         let mut find = FindState::with_text("hello");
         find.apply(&items);

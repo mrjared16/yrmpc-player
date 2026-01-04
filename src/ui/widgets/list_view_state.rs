@@ -80,10 +80,8 @@ impl ListViewState {
     pub fn set_content_and_viewport_len(&mut self, content_len: usize, viewport_len: usize) {
         self.content_len = content_len;
         self.viewport_len = viewport_len;
-        self.scrollbar = self
-            .scrollbar
-            .content_length(content_len)
-            .viewport_content_length(viewport_len);
+        self.scrollbar =
+            self.scrollbar.content_length(content_len).viewport_content_length(viewport_len);
 
         // Clamp offset if content shrunk
         if self.offset > 0 && self.offset + viewport_len > content_len {
@@ -132,11 +130,7 @@ impl ListViewState {
         }
 
         let current = self.selected.unwrap_or(0);
-        let next = if current + 1 >= len {
-            if wrap { 0 } else { len - 1 }
-        } else {
-            current + 1
-        };
+        let next = if current + 1 >= len { if wrap { 0 } else { len - 1 } } else { current + 1 };
 
         self.select(Some(next), scrolloff);
     }
@@ -149,11 +143,7 @@ impl ListViewState {
         }
 
         let current = self.selected.unwrap_or(0);
-        let prev = if current == 0 {
-            if wrap { len - 1 } else { 0 }
-        } else {
-            current - 1
-        };
+        let prev = if current == 0 { if wrap { len - 1 } else { 0 } } else { current - 1 };
 
         self.select(Some(prev), scrolloff);
     }
@@ -205,11 +195,7 @@ impl ListViewState {
     /// Map a rendered row to content index
     pub fn get_at_rendered_row(&self, row: usize) -> Option<usize> {
         let idx = self.offset + row;
-        if idx < self.content_len {
-            Some(idx)
-        } else {
-            None
-        }
+        if idx < self.content_len { Some(idx) } else { None }
     }
 
     // ========== MARKS ==========
@@ -283,11 +269,8 @@ impl ListViewState {
         self.marked.remove(&idx);
 
         // Shift marks above the removed index
-        let shifted: BTreeSet<usize> = self
-            .marked
-            .iter()
-            .map(|&i| if i > idx { i - 1 } else { i })
-            .collect();
+        let shifted: BTreeSet<usize> =
+            self.marked.iter().map(|&i| if i > idx { i - 1 } else { i }).collect();
         self.marked = shifted;
 
         // Update content length

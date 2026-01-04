@@ -18,12 +18,7 @@ pub struct AsyncImage<'a> {
 
 impl<'a> AsyncImage<'a> {
     pub fn new(cache: &'a ImageCache, url: Option<String>) -> Self {
-        Self {
-            cache,
-            url,
-            size: ThumbnailSize::ListItem,
-            placeholder_char: '⣿',
-        }
+        Self { cache, url, size: ThumbnailSize::ListItem, placeholder_char: '⣿' }
     }
 
     /// Set the thumbnail size for this image

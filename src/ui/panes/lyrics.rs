@@ -8,14 +8,9 @@ use ratatui::{
 
 use super::Pane;
 use crate::{
-    ctx::Ctx,
     backends::run_status_update,
-    shared::{
-        ext::duration::DurationExt,
-        key_event::KeyEvent,
-        lrc::Lrc,
-        macros::status_error,
-    },
+    ctx::Ctx,
+    shared::{ext::duration::DurationExt, key_event::KeyEvent, lrc::Lrc, macros::status_error},
     ui::UiEvent,
 };
 
@@ -44,7 +39,9 @@ impl Pane for LyricsPane {
             .enumerate()
             .filter(|line| ctx.status.elapsed.unwrap_or_default() >= line.1.time(offset))
             .min_by(|a, b| {
-                a.1.time(offset).abs_diff(ctx.status.elapsed.unwrap_or_default()).cmp(&b.1.time(offset).abs_diff(ctx.status.elapsed.unwrap_or_default()))
+                a.1.time(offset)
+                    .abs_diff(ctx.status.elapsed.unwrap_or_default())
+                    .cmp(&b.1.time(offset).abs_diff(ctx.status.elapsed.unwrap_or_default()))
             })
             .map_or((0, false), |result| (result.0, true));
 
@@ -136,8 +133,10 @@ impl Pane for LyricsPane {
             && let Some(line) = lrc.lines.get(current_line_idx + 1)
         {
             self.last_requested_line_idx = current_line_idx + 1;
-            ctx.scheduler
-                .schedule(line.time(offset).saturating_sub(ctx.status.elapsed.unwrap_or_default()), run_status_update);
+            ctx.scheduler.schedule(
+                line.time(offset).saturating_sub(ctx.status.elapsed.unwrap_or_default()),
+                run_status_update,
+            );
         }
 
         Ok(())

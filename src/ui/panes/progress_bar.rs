@@ -7,9 +7,7 @@ use super::Pane;
 use crate::{
     ctx::Ctx,
     domain::PlaybackState as State,
-    mpd::{
-        commands::SeekPosition,
-    },
+    mpd::commands::SeekPosition,
     shared::{
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},

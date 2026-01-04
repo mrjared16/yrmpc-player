@@ -12,6 +12,7 @@ use ratatui::{
 };
 
 use crate::{
+    backends::{BackendActions as _, Enqueue},
     config::keys::actions::{AddOpts, DuplicateStrategy},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     mpd::{
@@ -19,7 +20,6 @@ use crate::{
         errors::{ErrorCode, MpdError, MpdFailureResponse},
         mpd_client::SingleOrRange,
     },
-    backends::{Enqueue, BackendActions as _},
     shared::{
         cmp::StringCompare,
         key_event::KeyEvent,
@@ -518,7 +518,11 @@ fn create_duplicate_songs_modal<'a>(
                     "Add non duplicates",
                     Box::new(|ctx| {
                         ctx.command(move |client| {
-                            client.add_to_playlist_multiple(&playlist_name, &non_duplicate_songs, None)?;
+                            client.add_to_playlist_multiple(
+                                &playlist_name,
+                                &non_duplicate_songs,
+                                None,
+                            )?;
                             Ok(())
                         });
                         Ok(())
@@ -575,7 +579,10 @@ pub fn delete_from_playlist_or_show_confirmation(
         ctx.query_sync(move |client| match client.list_playlist_info(&pl_name, None) {
             Ok(val) => Ok(Some(val.into_iter().map(|s| s.uri).collect_vec())),
             Err(e) => {
-                if let Some(MpdError::Mpd(MpdFailureResponse { code: ErrorCode::NoExist, .. })) = e.downcast_ref::<MpdError>() {
+                if let Some(MpdError::Mpd(MpdFailureResponse {
+                    code: ErrorCode::NoExist, ..
+                })) = e.downcast_ref::<MpdError>()
+                {
                     status_warn!("Cannot remove song(s) from playlist, playlist does not exist");
                     Ok(None)
                 } else {

@@ -18,14 +18,27 @@ use ratatui::{
 use crate::{
     config::keys::CommonAction,
     ctx::Ctx,
-    domain::{DetailItem, Song},
-    domain::content::{ContentRef, ContentType},
-    shared::key_event::KeyEvent,
-    ui::panes::navigator_types::{
-        BackspaceResult, DetailId, EntityRef, EscResult, InputMode,
-        NavigatorPane, PaneAction, PaneId, TabId, TabPane,
+    domain::{
+        DetailItem,
+        Song,
+        content::{ContentRef, ContentType},
     },
-    ui::widgets::selectable_list::{SelectableList, NavConfig},
+    shared::key_event::KeyEvent,
+    ui::{
+        panes::navigator_types::{
+            BackspaceResult,
+            DetailId,
+            EntityRef,
+            EscResult,
+            InputMode,
+            NavigatorPane,
+            PaneAction,
+            PaneId,
+            TabId,
+            TabPane,
+        },
+        widgets::selectable_list::{NavConfig, SelectableList},
+    },
 };
 
 // =============================================================================
@@ -43,10 +56,7 @@ pub struct LibraryTabPane {
 
 impl LibraryTabPane {
     pub fn new(_ctx: &Ctx) -> Self {
-        Self {
-            list_view: SelectableList::new(),
-            playlists: Vec::new(),
-        }
+        Self { list_view: SelectableList::new(), playlists: Vec::new() }
     }
 
     /// Set playlists to display
@@ -115,11 +125,7 @@ impl NavigatorPane for LibraryTabPane {
     }
 
     fn mode(&self) -> InputMode {
-        if self.list_view.is_find_mode() {
-            InputMode::Find
-        } else {
-            InputMode::Normal
-        }
+        if self.list_view.is_find_mode() { InputMode::Find } else { InputMode::Normal }
     }
 
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {

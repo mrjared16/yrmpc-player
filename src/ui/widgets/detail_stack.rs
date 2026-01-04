@@ -1,4 +1,5 @@
-//! DetailStack - Composable detail view component for ContentDetails navigation.
+//! DetailStack - Composable detail view component for ContentDetails
+//! navigation.
 //!
 //! Per ARCHITECTURE.md, DetailStack uses a **sectioned design**:
 //! - `DetailView` holds `Vec<SectionView>` (structure preserved)
@@ -7,8 +8,9 @@
 //!
 //! ## Why Sectioned?
 //!
-//! The original `flatten_content()` approach lost structure, making it impossible
-//! to render different sections with different layouts (e.g., albums as grid).
+//! The original `flatten_content()` approach lost structure, making it
+//! impossible to render different sections with different layouts (e.g., albums
+//! as grid).
 //!
 //! The sectioned design:
 //! - Preserves structure for flexible rendering
@@ -19,7 +21,7 @@
 //!
 //! ```ignore
 //! let view = DetailView::new(content_details);
-//! 
+//!
 //! // Navigation: flat iteration
 //! for item in view.items() { ... }
 //!
@@ -33,11 +35,13 @@
 //! }
 //! ```
 
+use super::selectable_list::SelectableList;
 use crate::domain::{
-    ContentDetails, DetailItem, Song,
+    ContentDetails,
+    DetailItem,
+    Song,
     content::{Extensions, Section, SectionData, SectionKey},
 };
-use super::selectable_list::SelectableList;
 
 // =============================================================================
 // LOAD STATE
@@ -91,12 +95,7 @@ pub struct SectionView {
 impl SectionView {
     /// Create a new section.
     pub fn new(key: SectionKey, title: impl Into<String>, items: Vec<DetailItem>) -> Self {
-        Self {
-            key,
-            title: title.into(),
-            layout: LayoutKind::default(),
-            items,
-        }
+        Self { key, title: title.into(), layout: LayoutKind::default(), items }
     }
 
     /// Set layout hint.
@@ -111,44 +110,28 @@ impl SectionView {
     }
 }
 
-
 /// Adapter: Convert domain Section to UI SectionView.
 /// This is the UI-side of the adapter pattern.
 impl From<Section> for SectionView {
     fn from(section: Section) -> Self {
         let items = match section.content {
-            SectionData::Items(refs) => refs
-                .into_iter()
-                .map(DetailItem::Ref)
-                .collect(),
-            SectionData::Tracks(songs) => songs
-                .into_iter()
-                .map(DetailItem::Song)
-                .collect(),
+            SectionData::Items(refs) => refs.into_iter().map(DetailItem::Ref).collect(),
+            SectionData::Tracks(songs) => songs.into_iter().map(DetailItem::Song).collect(),
             SectionData::Stats(_) => Vec::new(), // TODO: Stats rendering
             SectionData::Actions(_) => Vec::new(), // TODO: Actions rendering
-            SectionData::Paginated { items, .. } => items
-                .into_iter()
-                .map(DetailItem::Ref)
-                .collect(),
+            SectionData::Paginated { items, .. } => {
+                items.into_iter().map(DetailItem::Ref).collect()
+            }
             SectionData::Error(msg) => {
                 // Create a Song with header metadata for error display
                 let mut metadata = std::collections::HashMap::new();
                 metadata.insert("type".into(), vec!["header".into()]);
                 metadata.insert("title".into(), vec![format!("Error: {}", msg)]);
-                vec![DetailItem::Song(crate::domain::Song {
-                    metadata,
-                    ..Default::default()
-                })]
+                vec![DetailItem::Song(crate::domain::Song { metadata, ..Default::default() })]
             }
         };
 
-        Self {
-            key: section.key,
-            title: section.title,
-            layout: LayoutKind::default(),
-            items,
-        }
+        Self { key: section.key, title: section.title, layout: LayoutKind::default(), items }
     }
 }
 
@@ -180,20 +163,14 @@ impl DetailView {
         let title = content.title().to_string();
         let sections = build_sections(&content);
         let mut view = SelectableList::new();
-        
+
         // Select first focusable item
         let items: Vec<_> = sections.iter().flat_map(|s| s.items.iter()).collect();
         if let Some(first_focusable) = items.iter().position(|item| item.is_focusable()) {
             view.select(Some(first_focusable));
         }
-        
-        Self {
-            content,
-            sections,
-            view,
-            load_state: LoadState::Loaded,
-            title,
-        }
+
+        Self { content, sections, view, load_state: LoadState::Loaded, title }
     }
 
     /// Iterate all items as flat list (for navigation).
@@ -280,11 +257,7 @@ impl DetailStack {
 
     /// Get breadcrumb path.
     pub fn breadcrumb(&self) -> String {
-        self.views
-            .iter()
-            .map(|v| v.title.as_str())
-            .collect::<Vec<_>>()
-            .join(" > ")
+        self.views.iter().map(|v| v.title.as_str()).collect::<Vec<_>>().join(" > ")
     }
 
     /// Get breadcrumb segments.
@@ -306,7 +279,7 @@ fn section_key_from_name(name: &str) -> SectionKey {
         "playlists" | "featured playlists" | "community playlists" => SectionKey::Playlists,
         "videos" => SectionKey::Videos,
         "top result" | "top results" => SectionKey::Stats, // Using Stats for Top Results
-        _ => SectionKey::Actions, // Default fallback
+        _ => SectionKey::Actions,                          // Default fallback
     }
 }
 
@@ -337,10 +310,11 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
             use crate::domain::ContentType;
 
             // Check if items are pre-sectioned (contain Header markers)
-            // This implements ADR-section-as-container: if headers exist, preserve that structure
-            let has_headers = search.items.iter().any(|item| {
-                matches!(item, DetailItem::Ref(r) if r.content_type == ContentType::Header)
-            });
+            // This implements ADR-section-as-container: if headers exist, preserve that
+            // structure
+            let has_headers = search.items.iter().any(
+                |item| matches!(item, DetailItem::Ref(r) if r.content_type == ContentType::Header),
+            );
 
             if has_headers {
                 // Pre-sectioned data: parse headers and their following items into SectionViews
@@ -471,7 +445,8 @@ pub fn build_sections(content: &ContentDetails) -> Vec<SectionView> {
                         ));
 
                         // Up Next: songs after current
-                        let up_next: Vec<DetailItem> = queue.songs
+                        let up_next: Vec<DetailItem> = queue
+                            .songs
                             .iter()
                             .skip(current_idx + 1)
                             .cloned()
@@ -530,10 +505,7 @@ fn build_extension_sections(extensions: &Extensions, sections: &mut Vec<SectionV
             _ => LayoutKind::List,
         };
 
-        sections.push(
-            SectionView::new(section.key, &section.title, items)
-                .with_layout(layout)
-        );
+        sections.push(SectionView::new(section.key, &section.title, items).with_layout(layout));
     }
 }
 
@@ -549,7 +521,9 @@ fn build_extension_sections(extensions: &Extensions, sections: &mut Vec<SectionV
 ///
 /// This is the correct architecture: headers in UI layer (ListItem),
 /// actionable content in domain layer (DetailItem).
-pub fn sections_to_list_items(sections: &[SectionView]) -> Vec<crate::ui::widgets::list_item::ListItem> {
+pub fn sections_to_list_items(
+    sections: &[SectionView],
+) -> Vec<crate::ui::widgets::list_item::ListItem> {
     use crate::ui::widgets::list_item::ListItem;
 
     let mut items = Vec::new();
@@ -568,7 +542,9 @@ pub fn sections_to_list_items(sections: &[SectionView]) -> Vec<crate::ui::widget
 ///
 /// Returns `Vec<ListItem>` for UI rendering. To extract actionable items,
 /// use `item.as_content()` or `item.into_content()`.
-pub fn flatten_to_list_items(content: &ContentDetails) -> Vec<crate::ui::widgets::list_item::ListItem> {
+pub fn flatten_to_list_items(
+    content: &ContentDetails,
+) -> Vec<crate::ui::widgets::list_item::ListItem> {
     sections_to_list_items(&build_sections(content))
 }
 
@@ -576,11 +552,9 @@ pub fn flatten_to_list_items(content: &ContentDetails) -> Vec<crate::ui::widgets
 /// This function exists only for compatibility during migration.
 #[deprecated(note = "Use sections_to_list_items() which returns Vec<ListItem>")]
 pub fn sections_to_items(sections: &[SectionView]) -> Vec<DetailItem> {
-    // Convert by stripping headers - callers should migrate to sections_to_list_items
-    sections
-        .iter()
-        .flat_map(|s| s.items.iter().cloned())
-        .collect()
+    // Convert by stripping headers - callers should migrate to
+    // sections_to_list_items
+    sections.iter().flat_map(|s| s.items.iter().cloned()).collect()
 }
 
 /// DEPRECATED: Use flatten_to_list_items instead.
@@ -687,18 +661,16 @@ mod tests {
                     ContentRef::album("alb1", "Album 1"),
                     ContentRef::album("alb2", "Album 2"),
                 ])
-                .singles("Singles", vec![
-                    ContentRef::album("sin1", "Single 1"),
-                ])
+                .singles("Singles", vec![ContentRef::album("sin1", "Single 1")])
                 .build(),
             ..Default::default()
         });
 
         let view = DetailView::new(artist);
-        
+
         // Should have 2 sections
         assert_eq!(view.sections.len(), 2);
-        
+
         // Flat iteration should yield 3 items total
         assert_eq!(view.item_count(), 3);
         assert_eq!(view.items().count(), 3);

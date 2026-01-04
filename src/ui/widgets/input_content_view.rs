@@ -40,11 +40,15 @@
 use crossterm::event::KeyCode;
 use ratatui::{Frame, layout::Rect};
 
-use crate::ctx::Ctx;
-use crate::domain::ContentViewable;
-use crate::shared::key_event::KeyEvent;
-use crate::ui::panes::navigator_types::InputMode;
-use crate::ui::widgets::content_view::{ContentAction, ContentView};
+use crate::{
+    ctx::Ctx,
+    domain::ContentViewable,
+    shared::key_event::KeyEvent,
+    ui::{
+        panes::navigator_types::InputMode,
+        widgets::content_view::{ContentAction, ContentView},
+    },
+};
 
 // =============================================================================
 // INPUT ZONE TRAIT
@@ -142,20 +146,12 @@ pub struct InputContentView<I: InputZone, C: ContentViewable> {
 impl<I: InputZone, C: ContentViewable> InputContentView<I, C> {
     /// Create a new InputContentView.
     pub fn new(input: I) -> Self {
-        Self {
-            input,
-            content: ContentView::new(),
-            focus: FocusZone::Input,
-        }
+        Self { input, content: ContentView::new(), focus: FocusZone::Input }
     }
 
     /// Create with existing content.
     pub fn with_content(input: I, content: ContentView<C>) -> Self {
-        Self {
-            input,
-            content,
-            focus: FocusZone::Input,
-        }
+        Self { input, content, focus: FocusZone::Input }
     }
 
     // =========================================================================
@@ -348,10 +344,10 @@ mod tests {
     #[test]
     fn test_input_content_view_creation() {
         use crate::domain::content::ArtistContent;
-        
+
         let input = MockInputZone::default();
         let view: InputContentView<_, ArtistContent> = InputContentView::new(input);
-        
+
         assert_eq!(view.focus(), FocusZone::Input);
         assert!(!view.content.has_content());
     }
@@ -359,13 +355,13 @@ mod tests {
     #[test]
     fn test_focus_switching() {
         use crate::domain::content::ArtistContent;
-        
+
         let input = MockInputZone::default();
         let mut view: InputContentView<_, ArtistContent> = InputContentView::new(input);
-        
+
         view.focus_content();
         assert_eq!(view.focus(), FocusZone::Content);
-        
+
         view.focus_input();
         assert_eq!(view.focus(), FocusZone::Input);
     }

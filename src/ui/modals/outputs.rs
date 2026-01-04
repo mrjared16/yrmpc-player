@@ -9,9 +9,9 @@ use ratatui::{
 use super::{Modal, RectExt};
 use crate::{
     QueryResult,
+    backends::{PartitionedOutput, PartitionedOutputKind},
     config::keys::CommonAction,
     ctx::Ctx,
-    backends::{PartitionedOutput, PartitionedOutputKind},
     shared::{
         id::{self, Id},
         key_event::KeyEvent,

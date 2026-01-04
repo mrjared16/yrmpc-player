@@ -38,7 +38,7 @@ impl Pane for PropertyPane<'_> {
 
         let line = Line::from(self.content.iter().fold(Vec::new(), |mut acc, val| {
             match val.as_span(
-                song,
+                song.as_ref(),
                 ctx,
                 &ctx.config.theme.format_tag_separator,
                 ctx.config.theme.multiple_tag_resolution_strategy,

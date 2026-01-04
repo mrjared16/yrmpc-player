@@ -21,11 +21,7 @@ pub struct FilterState {
 
 impl Default for FilterState {
     fn default() -> Self {
-        Self {
-            filter_text: String::new(),
-            matched_indices: Vec::new(),
-            current_match: 0,
-        }
+        Self { filter_text: String::new(), matched_indices: Vec::new(), current_match: 0 }
     }
 }
 
@@ -37,11 +33,7 @@ impl FilterState {
 
     /// Create with initial filter text
     pub fn with_text(text: &str) -> Self {
-        Self {
-            filter_text: text.to_string(),
-            matched_indices: Vec::new(),
-            current_match: 0,
-        }
+        Self { filter_text: text.to_string(), matched_indices: Vec::new(), current_match: 0 }
     }
 
     // ========== TEXT EDITING ==========
@@ -190,8 +182,9 @@ impl FilterState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::borrow::Cow;
+
+    use super::*;
 
     #[derive(Debug)]
     struct TestItem {
@@ -203,6 +196,7 @@ mod tests {
         fn primary_text(&self) -> Cow<'_, str> {
             Cow::Borrowed(&self.text)
         }
+
         fn is_focusable(&self) -> bool {
             self.focusable
         }
@@ -227,10 +221,10 @@ mod tests {
 
     #[test]
     fn skips_unfocusable_items() {
-        let items = vec![
-            TestItem { text: "Header: Hello".into(), focusable: false },
-            TestItem { text: "Hello World".into(), focusable: true },
-        ];
+        let items = vec![TestItem { text: "Header: Hello".into(), focusable: false }, TestItem {
+            text: "Hello World".into(),
+            focusable: true,
+        }];
 
         let mut filter = FilterState::with_text("hello");
         filter.apply(&items);

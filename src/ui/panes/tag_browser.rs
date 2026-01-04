@@ -8,6 +8,7 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::BackendDispatcher,
     config::{
         artists::{AlbumDisplayMode, AlbumSortMode},
         tabs::PaneType,
@@ -15,7 +16,6 @@ use crate::{
     ctx::Ctx,
     domain::Song,
     mpd::mpd_client::{Filter, FilterKind, Tag},
-    backends::BackendDispatcher,
     shared::{
         cmp::StringCompare,
         key_event::KeyEvent,
@@ -317,10 +317,14 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
                 DirOrSong::Dir { name, .. } => match path.as_slice() {
                     [_artist] => album_songs,
                     // Convert MediaItem to Song for legacy pane compatibility
-                    [] => client.find(
-                        &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
-                        None,
-                    )?.into_iter().map(Song::from).collect(),
+                    [] => client
+                        .find(
+                            &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
+                            None,
+                        )?
+                        .into_iter()
+                        .map(Song::from)
+                        .collect(),
                     _ => Vec::new(),
                 },
                 DirOrSong::Song(song) => vec![song.clone()],
@@ -350,11 +354,10 @@ impl BrowserPane<DirOrSong> for TagBrowserPane {
                         // Convert MediaItem to Song for legacy pane compatibility
                         let all_songs: Vec<Song> = client
                             .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?
-                            .into_iter().map(Song::from).collect();
-                        Ok(QueryResult::SongsList {
-                            data: all_songs,
-                            path: Some(current.into()),
-                        })
+                            .into_iter()
+                            .map(Song::from)
+                            .collect();
+                        Ok(QueryResult::SongsList { data: all_songs, path: Some(current.into()) })
                     },
                 );
             }

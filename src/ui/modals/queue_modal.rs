@@ -23,7 +23,7 @@ use crate::{
         UiAppEvent,
         list_ops::{MoveDirection, QueueListBehavior},
         modals::{Modal, RectExt},
-        widgets::selectable_list::{SelectableList, NavConfig},
+        widgets::selectable_list::{NavConfig, SelectableList},
     },
 };
 
@@ -35,20 +35,18 @@ pub struct QueueModal {
 
 impl QueueModal {
     pub fn new() -> Self {
-        Self {
-            id: id::new(),
-            list_view: SelectableList::new(),
-        }
+        Self { id: id::new(), list_view: SelectableList::new() }
     }
 
     /// Navigate to artist details for the selected queue item.
     ///
-    /// Uses the artist_browse_id if available, otherwise falls back to artist name search.
+    /// Uses the artist_browse_id if available, otherwise falls back to artist
+    /// name search.
     fn navigate_to_artist(&self, ctx: &Ctx) {
         let Some(idx) = self.list_view.selected() else {
             return;
         };
-        let Some(song) = ctx.queue.get(idx) else {
+        let Some(song) = ctx.queue_store().get(idx) else {
             return;
         };
 
@@ -66,8 +64,9 @@ impl QueueModal {
             // Fallback: use artist name (less reliable, may not find exact match)
             log::warn!("No artist_browse_id for '{}', using name search", artist_name);
             // For now, just log - a future improvement could search by name
-            // For YouTube Music, we don't have a reliable artist ID in queue items
-            // unless they were added from search results with full metadata
+            // For YouTube Music, we don't have a reliable artist ID in queue
+            // items unless they were added from search results with
+            // full metadata
         }
     }
 }
@@ -81,9 +80,9 @@ impl QueueListBehavior for QueueModal {
     fn list_view_mut(&mut self) -> &mut SelectableList {
         &mut self.list_view
     }
-    // Uses default implementations for play_selected, delete_selected, move_selected
+    // Uses default implementations for play_selected, delete_selected,
+    // move_selected
 }
-
 
 impl Modal for QueueModal {
     fn id(&self) -> Id {
@@ -94,37 +93,35 @@ impl Modal for QueueModal {
         // Calculate responsive width
         let total_width = frame.area().width;
         let width_percent: u16 = match total_width {
-            0..=79 => 50,    // Narrow: take more space
+            0..=79 => 50, // Narrow: take more space
             80..=119 => 40,
             120..=159 => 35,
-            _ => 30,         // Wide: 30%
+            _ => 30, // Wide: 30%
         };
-        
+
         let area = frame.area().right_anchored(width_percent);
-        
+
         // Clear the modal area (removes content behind)
         frame.render_widget(Clear, area);
-        
+
         // Render solid background
         if let Some(bg_color) = ctx.config.theme.modal_background_color {
             frame.render_widget(Block::default().style(Style::default().bg(bg_color)), area);
         } else {
             frame.render_widget(Block::default().style(ctx.config.as_text_style()), area);
         }
-        
+
         // Find current song for highlight
         let current_song_id = ctx.find_current_song_in_queue().map(|(_, song)| song.id);
-        
+
+        // Get queue snapshot for rendering
+        let queue = ctx.queue_store().read();
+
         // Render using InteractiveListView
-        self.list_view.render(
-            frame,
-            area,
-            ctx,
-            &ctx.queue,
-            Some("Queue"),
-            |_idx, song| current_song_id.is_some_and(|id| id == song.id),
-        );
-        
+        self.list_view.render(frame, area, ctx, &*queue, Some("Queue"), |_idx, song| {
+            current_song_id.is_some_and(|id| id == song.id)
+        });
+
         Ok(())
     }
 
@@ -143,8 +140,8 @@ impl Modal for QueueModal {
                     return Ok(());
                 }
                 // Passthrough playback controls
-                GlobalAction::TogglePause 
-                | GlobalAction::NextTrack 
+                GlobalAction::TogglePause
+                | GlobalAction::NextTrack
                 | GlobalAction::PreviousTrack
                 | GlobalAction::VolumeUp
                 | GlobalAction::VolumeDown => {
@@ -153,17 +150,19 @@ impl Modal for QueueModal {
                 _ => {}
             }
         }
-        
+
         // Check for common navigation actions
         if let Some(action) = key.as_common_action(ctx) {
             match action {
                 CommonAction::Up => {
-                    self.list_view.select_prev(&ctx.queue, NavConfig::default());
+                    let queue = ctx.queue_store().read();
+                    self.list_view.select_prev(&*queue, NavConfig::default());
                     key.stop_propagation();
                     ctx.render()?;
                 }
                 CommonAction::Down => {
-                    self.list_view.select_next(&ctx.queue, NavConfig::default());
+                    let queue = ctx.queue_store().read();
+                    self.list_view.select_next(&*queue, NavConfig::default());
                     key.stop_propagation();
                     ctx.render()?;
                 }
@@ -182,12 +181,14 @@ impl Modal for QueueModal {
                     ctx.render()?;
                 }
                 CommonAction::Top => {
-                    self.list_view.select_first(&ctx.queue);
+                    let queue = ctx.queue_store().read();
+                    self.list_view.select_first(&*queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
                 CommonAction::Bottom => {
-                    self.list_view.select_last(&ctx.queue);
+                    let queue = ctx.queue_store().read();
+                    self.list_view.select_last(&*queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
@@ -233,19 +234,23 @@ impl Modal for QueueModal {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::config::keys::QueueActions;
-    use crate::config::Config;
-    use crate::ctx::Ctx;
-    use crate::domain::{Song, Status};
-    use crate::mpd::version::Version;
-    use crate::shared::image_cache::ImageCache;
-    use crate::shared::ring_vec::RingVec;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::{HashMap, HashSet},
+        sync::{Arc, RwLock},
+    };
+
     use crossbeam::channel::unbounded;
-    use crossterm::event::{KeyCode, KeyModifiers, KeyEvent as CKeyEvent};
-    use std::cell::{Cell, RefCell};
-    use std::collections::{HashMap, HashSet};
-    use std::sync::{Arc, RwLock};
+    use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+    use super::*;
+    use crate::{
+        config::{Config, keys::QueueActions},
+        ctx::Ctx,
+        domain::{Song, Status},
+        mpd::version::Version,
+        shared::{image_cache::ImageCache, ring_vec::RingVec},
+    };
 
     fn create_test_ctx() -> Ctx {
         let (tx, _rx) = unbounded();
@@ -257,18 +262,19 @@ mod tests {
         let key_config: crate::config::keys::KeyConfig = key_config_file.try_into().unwrap();
         let config = Config::default();
         // Replace empty keybinds with proper defaults
-        let config_with_keybinds = Config {
-            keybinds: key_config,
-            ..config
-        };
+        let config_with_keybinds = Config { keybinds: key_config, ..config };
 
         Ctx {
             backend_version: Version::new(0, 0, 0),
             config: Arc::new(config_with_keybinds),
             status: Status::default(),
-            queue: Vec::new(),
             image_cache: ImageCache::new(tx.clone()),
             app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
+            controllers: crate::core::controllers::Controllers::new(
+                vec![],
+                tx.clone(),
+                client_tx.clone(),
+            ),
             stickers: HashMap::new(),
             active_tab: crate::config::tabs::TabName::from("Queue"),
             supported_commands: HashSet::new(),
@@ -296,18 +302,14 @@ mod tests {
     ///
     /// This verifies that handle_key() correctly checks as_queue_action()
     /// and handles the delete action. Note: actual queue modification happens
-    /// asynchronously via backend commands, so we verify key handling, not queue state.
+    /// asynchronously via backend commands, so we verify key handling, not
+    /// queue state.
     #[test]
     fn pressing_d_key_should_trigger_delete_action() {
         let mut ctx = create_test_ctx();
 
-        // Add a song to the queue
-        let song = Song {
-            id: Some(1),
-            uri: "test_song_uri".to_string(),
-            ..Default::default()
-        };
-        ctx.queue = vec![song];
+        let song = Song { id: Some(1), uri: "test_song_uri".to_string(), ..Default::default() };
+        ctx.queue_store().reconcile(vec![song]);
 
         // Create modal and select first item
         let mut modal = QueueModal::new();
@@ -354,12 +356,8 @@ mod tests {
     fn pressing_shift_d_should_trigger_delete_via_common_action() {
         let mut ctx = create_test_ctx();
 
-        let song = Song {
-            id: Some(1),
-            uri: "test_song_uri".to_string(),
-            ..Default::default()
-        };
-        ctx.queue = vec![song];
+        let song = Song { id: Some(1), uri: "test_song_uri".to_string(), ..Default::default() };
+        ctx.queue_store().reconcile(vec![song]);
 
         let mut modal = QueueModal::new();
         modal.list_view.select(Some(0));
@@ -381,10 +379,9 @@ mod tests {
         let mut key = crate::shared::key_event::KeyEvent::from(crossterm_key);
         let _ = modal.handle_key(&mut key, &mut ctx);
 
-        // Shift+D should work - queue should be empty after delete
-        // Note: This might also fail if the delete_selected doesn't actually modify ctx.queue
-        // but that's a different issue. The key point is Shift+D IS handled.
-        // For now, just verify the key was recognized (we can't easily check queue modification
-        // without mocking the client command sender)
+        // Shift+D should work - queue modification happens asynchronously via
+        // backend. We verify the key was recognized (we can't easily
+        // check queue modification without mocking the client command
+        // sender)
     }
 }

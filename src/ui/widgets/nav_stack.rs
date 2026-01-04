@@ -1,7 +1,7 @@
 //! NavStack - Hierarchical navigation for list views
 //!
-//! Provides a stack-based navigation interface for entering/leaving nested content.
-//! Used by SearchPane for navigating into albums, artists, playlists.
+//! Provides a stack-based navigation interface for entering/leaving nested
+//! content. Used by SearchPane for navigating into albums, artists, playlists.
 //! Will be extended with DetailStack for Artist/Album/Playlist detail views.
 //!
 //! ## Design
@@ -33,11 +33,7 @@ impl<T> NavLevel<T> {
         if !items.is_empty() {
             view.select(Some(0));
         }
-        Self {
-            items,
-            view,
-            path_segment,
-        }
+        Self { items, view, path_segment }
     }
 
     /// Get selected item reference
@@ -64,10 +60,7 @@ pub struct NavStack<T> {
 
 impl<T> Default for NavStack<T> {
     fn default() -> Self {
-        Self {
-            levels: Vec::new(),
-            path_separator: " > ",
-        }
+        Self { levels: Vec::new(), path_separator: " > " }
     }
 }
 
@@ -142,9 +135,7 @@ impl<T> NavStack<T> {
 
     /// Get current items mutable
     pub fn current_items_mut(&mut self) -> &mut Vec<T> {
-        self.current_mut()
-            .map(|l| &mut l.items)
-            .expect("NavStack should have at least one level")
+        self.current_mut().map(|l| &mut l.items).expect("NavStack should have at least one level")
     }
 
     /// Get current view reference
@@ -196,10 +187,7 @@ mod tests {
 
     #[test]
     fn enter_and_leave_navigation() {
-        let mut stack: NavStack<String> = NavStack::with_root(
-            vec!["a".into(), "b".into()],
-            "Root",
-        );
+        let mut stack: NavStack<String> = NavStack::with_root(vec!["a".into(), "b".into()], "Root");
 
         assert!(stack.is_at_root());
         assert_eq!(stack.depth(), 1);

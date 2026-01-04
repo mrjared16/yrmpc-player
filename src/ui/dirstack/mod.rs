@@ -1,8 +1,8 @@
 use std::borrow::Cow;
 
 use ratatui::{
-    text::{Line, Span},
     style::{Color, Style},
+    text::{Line, Span},
     widgets::{ListItem, ListState, TableState},
 };
 
@@ -19,10 +19,10 @@ pub(crate) use walk::WalkDirStackItem;
 
 use super::dir_or_song::DirOrSong;
 use crate::{
+    backends::messaging::PreviewGroup,
     config::theme::properties::{Property, SongProperty},
     ctx::Ctx,
     domain::Song,
-    backends::messaging::PreviewGroup,
     ui::panes::browser::SongExt,
 };
 
@@ -41,7 +41,7 @@ pub(crate) trait DirStackItem {
     fn to_list_item_simple<'a>(&self, ctx: &Ctx) -> ListItem<'a> {
         self.to_list_item(ctx, false, false, None)
     }
-    
+
     /// Whether this item can receive focus during navigation.
     /// Headers and other non-interactive items should return false.
     /// Navigation will skip non-focusable items.
@@ -156,7 +156,8 @@ impl DirStackItem for Song {
         if SongExt::matches(self, song_format, filter, ctx) {
             return true;
         }
-        // Fallback: also check title and artist directly (for consistency with filter_matches)
+        // Fallback: also check title and artist directly (for consistency with
+        // filter_matches)
         let filter_lower = filter.to_lowercase();
         if let Some(title) = self.metadata.get("title").and_then(|v| v.first()) {
             if title.to_lowercase().contains(&filter_lower) {
@@ -184,14 +185,22 @@ impl DirStackItem for Song {
         additional_content: Option<String>,
     ) -> ListItem<'a> {
         let config = &ctx.config;
-        let item_type = self.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
+        let item_type =
+            self.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("song");
 
         if item_type == "header" {
-            let title = self.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or("Unknown");
-            let style = Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::BOLD);
-            return ListItem::new(Line::from(vec![
-                Span::styled(format!("--- {} ---", title), style)
-            ]));
+            let title = self
+                .metadata
+                .get("title")
+                .and_then(|v| v.first())
+                .map(|s| s.as_str())
+                .unwrap_or("Unknown");
+            let style =
+                Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::BOLD);
+            return ListItem::new(Line::from(vec![Span::styled(
+                format!("--- {} ---", title),
+                style,
+            )]));
         }
 
         let marker_span = if is_marked {
@@ -203,26 +212,29 @@ impl DirStackItem for Song {
         let symbol = match item_type {
             "artist" => " ".to_string(), // Nerd Font icon for person/artist
             "album" => "jm ".to_string(), // Nerd Font icon for disc/album
-            "video" => " ".to_string(), // Nerd Font icon for video
+            "video" => " ".to_string(),  // Nerd Font icon for video
             _ => config.theme.symbols.song.clone(),
         };
 
         let mut spans = vec![
             marker_span,
-            Span::styled(
-                symbol,
-                config.theme.symbols.song_style.unwrap_or_default(),
-            ),
+            Span::styled(symbol, config.theme.symbols.song_style.unwrap_or_default()),
             Span::from(" "),
         ];
 
         if item_type == "artist" {
-             if let Some(artist) = self.metadata.get("title").and_then(|v| v.first()) {
-                spans.push(Span::styled(artist.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
-             }
+            if let Some(artist) = self.metadata.get("title").and_then(|v| v.first()) {
+                spans.push(Span::styled(
+                    artist.to_string(),
+                    Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                ));
+            }
         } else if item_type == "album" {
             if let Some(album) = self.metadata.get("title").and_then(|v| v.first()) {
-                spans.push(Span::styled(album.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
+                spans.push(Span::styled(
+                    album.to_string(),
+                    Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                ));
             }
             if let Some(artist) = self.metadata.get("artist").and_then(|v| v.first()) {
                 spans.push(Span::from(format!(" by {}", artist)));
@@ -233,7 +245,10 @@ impl DirStackItem for Song {
         } else if item_type == "playlist" {
             // Playlists: show title and author
             if let Some(title) = self.metadata.get("title").and_then(|v| v.first()) {
-                spans.push(Span::styled(title.to_string(), Style::default().add_modifier(ratatui::style::Modifier::BOLD)));
+                spans.push(Span::styled(
+                    title.to_string(),
+                    Style::default().add_modifier(ratatui::style::Modifier::BOLD),
+                ));
             }
             if let Some(subtitle) = self.metadata.get("subtitle").and_then(|v| v.first()) {
                 spans.push(Span::from(format!(" - {}", subtitle)));
@@ -244,7 +259,10 @@ impl DirStackItem for Song {
                 spans.push(Span::styled(title.to_string(), Style::default()));
             }
             if let Some(artist) = self.metadata.get("artist").and_then(|v| v.first()) {
-                spans.push(Span::styled(format!(" - {}", artist), Style::default().fg(Color::DarkGray)));
+                spans.push(Span::styled(
+                    format!(" - {}", artist),
+                    Style::default().fg(Color::DarkGray),
+                ));
             }
         } else {
             // Default song rendering

@@ -8,6 +8,7 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::BackendDispatcher,
     config::{
         artists::{AlbumDisplayMode, AlbumSortMode},
         tabs::PaneType,
@@ -18,12 +19,7 @@ use crate::{
         commands::lsinfo::LsInfoEntry,
         mpd_client::{Filter, FilterKind, Tag},
     },
-    backends::BackendDispatcher,
-    shared::{
-        cmp::StringCompare,
-        key_event::KeyEvent,
-        mouse_event::MouseEvent,
-    },
+    shared::{cmp::StringCompare, key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
         browser::BrowserPane,
@@ -50,9 +46,7 @@ const FETCH_SONGS: &str = "fetch_songs";
 const FETCH_DATA: &str = "fetch_data";
 
 impl ArtistPane {
-    pub fn new(
-        _ctx: &Ctx,
-    ) -> Self {
+    pub fn new(_ctx: &Ctx) -> Self {
         Self {
             root_tag: Tag::Artist,
             target_pane: PaneType::Artists,
@@ -83,12 +77,13 @@ impl ArtistPane {
 
     fn process_songs(&mut self, artist: String, data: Vec<Song>, ctx: &Ctx) {
         // This is used when we are browsing "Artist -> Album".
-        // But for "Rich Artist View", we might receive a flat list of songs/albums from `lsinfo`.
-        // If we use the standard `TagBrowserPane` logic, it groups songs by album.
-        
-        // For now, let's keep the standard logic for compatibility, 
+        // But for "Rich Artist View", we might receive a flat list of songs/albums from
+        // `lsinfo`. If we use the standard `TagBrowserPane` logic, it groups
+        // songs by album.
+
+        // For now, let's keep the standard logic for compatibility,
         // but we will override `fetch_data` to handle "artist:ID" paths.
-        
+
         let display_mode = ctx.config.artists.album_display_mode;
         let sort_mode = ctx.config.artists.album_sort_by;
 
@@ -265,12 +260,12 @@ impl Pane for ArtistPane {
                 ctx.render()?;
             }
             (FETCH_DATA, QueryResult::DirOrSong { data, path }) => {
-                 // This handles the result from lsinfo("artist:ID")
-                 if let Some(path) = path {
-                     self.stack.insert(path, data);
-                     self.fetch_data_internal(ctx)?;
-                     ctx.render()?;
-                 }
+                // This handles the result from lsinfo("artist:ID")
+                if let Some(path) = path {
+                    self.stack.insert(path, data);
+                    self.fetch_data_internal(ctx)?;
+                    ctx.render()?;
+                }
             }
             _ => {}
         }
@@ -319,7 +314,7 @@ impl BrowserPane<DirOrSong> for ArtistPane {
                             DirOrSong::Song(song) => Some(song.clone()),
                         })
                         .collect()
-                    })
+                })
                 .unwrap_or_default(),
             _ => Vec::new(),
         };
@@ -329,10 +324,14 @@ impl BrowserPane<DirOrSong> for ArtistPane {
                 DirOrSong::Dir { name, .. } => match path.as_slice() {
                     [_artist] => album_songs,
                     // Convert MediaItem to Song for legacy pane compatibility
-                    [] => client.find(
-                        &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
-                        None,
-                    )?.into_iter().map(Song::from).collect(),
+                    [] => client
+                        .find(
+                            &[Self::root_tag_filter(root_tag, separator.as_deref(), &name)],
+                            None,
+                        )?
+                        .into_iter()
+                        .map(Song::from)
+                        .collect(),
                     _ => Vec::new(),
                 },
                 DirOrSong::Song(song) => vec![song.clone()],
@@ -343,38 +342,41 @@ impl BrowserPane<DirOrSong> for ArtistPane {
     fn fetch_data(&self, selected: &DirOrSong, ctx: &Ctx) -> Result<()> {
         // Here we intercept the fetch to handle "artist:ID"
         let current_path = self.stack.path().to_owned();
-        
+
         // If we are at root and selected an item
         if current_path.is_empty() {
-             if let DirOrSong::Dir { name, .. } = selected {
-                 if name.starts_with("artist:") {
-                     // It's a YT Music artist, use lsinfo
-                     let name_clone = name.clone();
-                     let target = self.target_pane.clone();
-                     let next_path = self.stack.path().join(name.clone());
-                     
-                     ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(move |client| {
-                         let result = client.lsinfo(Some(&name_clone))?;
-                         // Convert Vec<LsInfoEntry> to Vec<DirOrSong>
-                         let mapped: Vec<DirOrSong> = result.into_iter().filter_map(|entry| {
-                             match entry {
-                                 LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
-                                 LsInfoEntry::Dir(dir) => Some(DirOrSong::Dir {
-                                     name: dir.name.clone(),
-                                     full_path: dir.full_path,
-                                     playlist: false,
-                                     last_modified: dir.last_modified,
-                                 }),
-                                 _ => None,
-                             }
-                         }).collect();
-                         Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
-                     });
-                     return Ok(());
-                 }
-             }
+            if let DirOrSong::Dir { name, .. } = selected {
+                if name.starts_with("artist:") {
+                    // It's a YT Music artist, use lsinfo
+                    let name_clone = name.clone();
+                    let target = self.target_pane.clone();
+                    let next_path = self.stack.path().join(name.clone());
+
+                    ctx.query().id(FETCH_DATA).replace_id(FETCH_DATA).target(target).query(
+                        move |client| {
+                            let result = client.lsinfo(Some(&name_clone))?;
+                            // Convert Vec<LsInfoEntry> to Vec<DirOrSong>
+                            let mapped: Vec<DirOrSong> = result
+                                .into_iter()
+                                .filter_map(|entry| match entry {
+                                    LsInfoEntry::File(song) => Some(DirOrSong::Song(song.into())),
+                                    LsInfoEntry::Dir(dir) => Some(DirOrSong::Dir {
+                                        name: dir.name.clone(),
+                                        full_path: dir.full_path,
+                                        playlist: false,
+                                        last_modified: dir.last_modified,
+                                    }),
+                                    _ => None,
+                                })
+                                .collect();
+                            Ok(QueryResult::DirOrSong { data: mapped, path: Some(next_path) })
+                        },
+                    );
+                    return Ok(());
+                }
+            }
         }
-        
+
         // Fallback to default behavior
         match self.stack.path().as_slice() {
             [_artist, _album] => {
@@ -397,11 +399,10 @@ impl BrowserPane<DirOrSong> for ArtistPane {
                         // Convert MediaItem to Song for legacy pane compatibility
                         let all_songs: Vec<Song> = client
                             .find(&[Self::root_tag_filter(root_tag, separator, &current)], None)?
-                            .into_iter().map(Song::from).collect();
-                        Ok(QueryResult::SongsList {
-                            data: all_songs,
-                            path: Some(current.into()),
-                        })
+                            .into_iter()
+                            .map(Song::from)
+                            .collect();
+                        Ok(QueryResult::SongsList { data: all_songs, path: Some(current.into()) })
                     },
                 );
             }

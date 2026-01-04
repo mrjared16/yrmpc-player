@@ -1,7 +1,8 @@
 //! Internal element tree for flexible list item rendering.
 //!
-//! This module provides a compositional rendering primitive similar to React elements.
-//! Elements can be composed into trees to describe complex layouts (row, column, image + text).
+//! This module provides a compositional rendering primitive similar to React
+//! elements. Elements can be composed into trees to describe complex layouts
+//! (row, column, image + text).
 //!
 //! **Note:** This is an internal implementation detail, not public API.
 
@@ -15,8 +16,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use crate::ctx::Ctx;
-use crate::ui::widgets::async_image::AsyncImage;
+use crate::{ctx::Ctx, ui::widgets::async_image::AsyncImage};
 
 /// Width of an icon cell (icon character + space)
 const ICON_CELL_WIDTH: u16 = 2;
@@ -28,26 +28,16 @@ const ICON_CELL_WIDTH: u16 = 2;
 #[derive(Debug, Clone)]
 pub(crate) enum Element<'a> {
     /// Plain styled text
-    Text {
-        content: Cow<'a, str>,
-        style: Style,
-    },
+    Text { content: Cow<'a, str>, style: Style },
 
     /// Async-loaded image with placeholder
-    Image {
-        url: Option<String>,
-        width: u16,
-        height: u16,
-    },
+    Image { url: Option<String>, width: u16, height: u16 },
 
     /// Icon character with style (for type indicators)
     Icon { char: char, style: Style },
 
     /// Horizontal layout of children
-    Row {
-        children: Vec<Element<'a>>,
-        gap: u16,
-    },
+    Row { children: Vec<Element<'a>>, gap: u16 },
 
     /// Vertical layout of children
     Column { children: Vec<Element<'a>> },
@@ -59,18 +49,12 @@ pub(crate) enum Element<'a> {
 impl<'a> Element<'a> {
     /// Create a text element
     pub fn text(content: impl Into<Cow<'a, str>>) -> Self {
-        Element::Text {
-            content: content.into(),
-            style: Style::default(),
-        }
+        Element::Text { content: content.into(), style: Style::default() }
     }
 
     /// Create a styled text element
     pub fn styled_text(content: impl Into<Cow<'a, str>>, style: Style) -> Self {
-        Element::Text {
-            content: content.into(),
-            style,
-        }
+        Element::Text { content: content.into(), style }
     }
 
     /// Create an image element

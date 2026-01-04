@@ -8,11 +8,11 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::{BackendDispatcher, DeleteTarget},
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
     mpd::mpd_client::SingleOrRange,
-    backends::{BackendDispatcher, DeleteTarget},
     shared::{
         cmp::StringCompare,
         ext::btreeset_ranges::BTreeSetRanges,
@@ -387,7 +387,9 @@ impl BrowserPane<DirOrSong> for PlaylistsPane {
             }
             [] => items
                 .filter_map(|(_, item)| match item {
-                    DirOrSong::Dir { name, .. } => Some(DeleteTarget::Playlist { name: name.clone() }),
+                    DirOrSong::Dir { name, .. } => {
+                        Some(DeleteTarget::Playlist { name: name.clone() })
+                    }
                     DirOrSong::Song(_) => None,
                 })
                 .collect_vec(),

@@ -6,13 +6,11 @@ use ratatui::{Frame, prelude::Rect, widgets::ListState};
 use super::Pane;
 use crate::{
     QueryResult,
+    backends::BackendDispatcher,
     config::tabs::PaneType,
     ctx::Ctx,
     domain::Song,
-    mpd::{
-        mpd_client::{Filter, Tag},
-    },
-    backends::BackendDispatcher,
+    mpd::mpd_client::{Filter, Tag},
     shared::{cmp::StringCompare, key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         UiEvent,
@@ -164,7 +162,11 @@ impl BrowserPane<DirOrSong> for AlbumsPane {
         move |client| match item {
             DirOrSong::Dir { name, .. } => {
                 // Convert MediaItem to Song for legacy pane compatibility
-                Ok(client.find(&[Filter::new(Tag::Album, &name)], None)?.into_iter().map(Song::from).collect())
+                Ok(client
+                    .find(&[Filter::new(Tag::Album, &name)], None)?
+                    .into_iter()
+                    .map(Song::from)
+                    .collect())
             }
             DirOrSong::Song(song) => Ok(vec![song.clone()]),
         }

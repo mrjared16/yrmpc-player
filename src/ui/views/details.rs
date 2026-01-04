@@ -32,11 +32,23 @@
 //! ```
 
 use crate::domain::{
-    ContentDetails, AlbumContent, ArtistContent, PlaylistContent, SearchResultsContent,
-    Song, ContentRef, ContentType,
-    Section as DomainSection, SectionKey, SectionData,
-    Stat as DomainStat, StatValue, Action as DomainAction, ActionKind,
-    Extensions, QueueContent,
+    Action as DomainAction,
+    ActionKind,
+    AlbumContent,
+    ArtistContent,
+    ContentDetails,
+    ContentRef,
+    ContentType,
+    Extensions,
+    PlaylistContent,
+    QueueContent,
+    SearchResultsContent,
+    Section as DomainSection,
+    SectionData,
+    SectionKey,
+    Song,
+    Stat as DomainStat,
+    StatValue,
 };
 
 /// Visual identity for the content.
@@ -221,10 +233,10 @@ impl From<AlbumContent> for DetailsPage {
     fn from(album: AlbumContent) -> Self {
         // Convert stats from extensions
         let stats = convert_stats(album.extensions.stats());
-        
+
         // Convert sections from extensions (filter out Stats and Actions)
         let sections = convert_sections(&album.extensions);
-        
+
         // Convert actions from extensions
         let actions = convert_actions(album.extensions.actions(), &album.id);
 
@@ -233,10 +245,7 @@ impl From<AlbumContent> for DetailsPage {
             kind: PageKind::Album,
             title: album.title,
             subtitle: Some(album.artist.name),
-            artwork: Artwork {
-                thumbnail: album.thumbnail,
-                backdrop: None,
-            },
+            artwork: Artwork { thumbnail: album.thumbnail, backdrop: None },
             stats,
             description: album.description,
             tracks: album.tracks,
@@ -250,10 +259,10 @@ impl From<ArtistContent> for DetailsPage {
     fn from(artist: ArtistContent) -> Self {
         // Convert stats from extensions
         let stats = convert_stats(artist.extensions.stats());
-        
+
         // Convert sections from extensions
         let sections = convert_sections(&artist.extensions);
-        
+
         // Convert actions from extensions
         let actions = convert_actions(artist.extensions.actions(), &artist.id);
 
@@ -262,10 +271,7 @@ impl From<ArtistContent> for DetailsPage {
             kind: PageKind::Artist,
             title: artist.name,
             subtitle: None,
-            artwork: Artwork {
-                thumbnail: artist.thumbnail,
-                backdrop: None,
-            },
+            artwork: Artwork { thumbnail: artist.thumbnail, backdrop: None },
             stats,
             description: artist.bio,
             tracks: artist.top_songs,
@@ -279,10 +285,10 @@ impl From<PlaylistContent> for DetailsPage {
     fn from(playlist: PlaylistContent) -> Self {
         // Convert stats from extensions
         let stats = convert_stats(playlist.extensions.stats());
-        
+
         // Convert sections from extensions
         let sections = convert_sections(&playlist.extensions);
-        
+
         // Convert actions from extensions
         let actions = convert_actions(playlist.extensions.actions(), &playlist.id);
 
@@ -291,10 +297,7 @@ impl From<PlaylistContent> for DetailsPage {
             kind: PageKind::Playlist,
             title: playlist.title,
             subtitle: playlist.author.map(|a| a.name),
-            artwork: Artwork {
-                thumbnail: playlist.thumbnail,
-                backdrop: None,
-            },
+            artwork: Artwork { thumbnail: playlist.thumbnail, backdrop: None },
             stats,
             description: playlist.description,
             tracks: playlist.tracks,
@@ -312,10 +315,7 @@ impl From<QueueContent> for DetailsPage {
             title: queue.title,
             subtitle: None,
             artwork: Artwork::default(),
-            stats: vec![Stat {
-                label: "Items".to_string(),
-                value: queue.songs.len().to_string(),
-            }],
+            stats: vec![Stat { label: "Items".to_string(), value: queue.songs.len().to_string() }],
             description: None,
             tracks: queue.songs,
             sections: vec![],
@@ -329,68 +329,79 @@ impl From<QueueContent> for DetailsPage {
 // =============================================================================
 
 fn convert_stats(domain_stats: &[DomainStat]) -> Vec<Stat> {
-    domain_stats.iter().map(|s| Stat {
-        label: s.label.clone(),
-        value: match &s.value {
-            StatValue::Text(t) => t.clone(),
-            StatValue::Number(n) => n.to_string(),
-            StatValue::Duration(d) => format_duration(*d),
-        },
-    }).collect()
+    domain_stats
+        .iter()
+        .map(|s| Stat {
+            label: s.label.clone(),
+            value: match &s.value {
+                StatValue::Text(t) => t.clone(),
+                StatValue::Number(n) => n.to_string(),
+                StatValue::Duration(d) => format_duration(*d),
+            },
+        })
+        .collect()
 }
 
 fn convert_sections(extensions: &Extensions) -> Vec<Section> {
-    extensions.iter()
+    extensions
+        .iter()
         .filter(|s| !matches!(s.key, SectionKey::Stats | SectionKey::Actions))
         .filter_map(|s| {
             match &s.content {
                 SectionData::Items(refs) => {
-                    let items: Vec<SectionItem> = refs.iter().map(|r| SectionItem {
-                        id: r.id.clone(),
-                        title: r.name.clone(),
-                        subtitle: r.subtitle.clone(),
-                        thumbnail: r.thumbnail.clone(),
-                        item_type: content_type_to_section_type(&r.content_type),
-                    }).collect();
-                    
+                    let items: Vec<SectionItem> = refs
+                        .iter()
+                        .map(|r| SectionItem {
+                            id: r.id.clone(),
+                            title: r.name.clone(),
+                            subtitle: r.subtitle.clone(),
+                            thumbnail: r.thumbnail.clone(),
+                            item_type: content_type_to_section_type(&r.content_type),
+                        })
+                        .collect();
+
                     if items.is_empty() {
                         return None;
                     }
-                    
+
                     // Choose layout based on section key
                     let layout = match s.key {
-                        SectionKey::RelatedArtists | SectionKey::FeaturedArtists => Layout::Carousel,
-                        SectionKey::Albums | SectionKey::Singles | 
-                        SectionKey::MoreByArtist | SectionKey::RelatedPlaylists => Layout::Grid,
+                        SectionKey::RelatedArtists | SectionKey::FeaturedArtists => {
+                            Layout::Carousel
+                        }
+                        SectionKey::Albums
+                        | SectionKey::Singles
+                        | SectionKey::MoreByArtist
+                        | SectionKey::RelatedPlaylists => Layout::Grid,
                         _ => Layout::List,
                     };
-                    
-                    Some(Section {
-                        title: s.title.clone(),
-                        items,
-                        layout,
-                    })
-                },
+
+                    Some(Section { title: s.title.clone(), items, layout })
+                }
                 SectionData::Tracks(_songs) => {
                     // For track sections, skip (tracks are in main tracks field)
                     None
-                },
+                }
                 _ => None,
             }
-        }).collect()
+        })
+        .collect()
 }
 
 fn convert_actions(domain_actions: &[DomainAction], id: &str) -> Vec<Action> {
-    domain_actions.iter().filter_map(|a| {
-        match a.kind {
-            ActionKind::Play => Some(Action::Play { id: id.to_string() }),
-            ActionKind::Shuffle => Some(Action::Shuffle { id: id.to_string() }),
-            ActionKind::Radio => Some(Action::Radio { id: id.to_string() }),
-            ActionKind::AddToQueue => Some(Action::AddToQueue { id: id.to_string() }),
-            // Skip actions we don't support in UI yet
-            ActionKind::AddToLibrary | ActionKind::Share => None,
-        }
-    }).collect()
+    domain_actions
+        .iter()
+        .filter_map(|a| {
+            match a.kind {
+                ActionKind::Play => Some(Action::Play { id: id.to_string() }),
+                ActionKind::Shuffle => Some(Action::Shuffle { id: id.to_string() }),
+                ActionKind::Radio => Some(Action::Radio { id: id.to_string() }),
+                ActionKind::AddToQueue => Some(Action::AddToQueue { id: id.to_string() }),
+                // Skip actions we don't support in UI yet
+                ActionKind::AddToLibrary | ActionKind::Share => None,
+            }
+        })
+        .collect()
 }
 
 fn content_type_to_section_type(ct: &ContentType) -> SectionItemType {
@@ -406,12 +417,8 @@ fn format_duration(duration: std::time::Duration) -> String {
     let total_secs = duration.as_secs();
     let hours = total_secs / 3600;
     let minutes = (total_secs % 3600) / 60;
-    
-    if hours > 0 {
-        format!("{} hr {} min", hours, minutes)
-    } else {
-        format!("{} min", minutes)
-    }
+
+    if hours > 0 { format!("{} hr {} min", hours, minutes) } else { format!("{} min", minutes) }
 }
 
 #[cfg(test)]

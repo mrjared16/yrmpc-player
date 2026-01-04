@@ -35,8 +35,8 @@ impl Pane for VolumePane {
                 }
 
                 let symbols = &config.symbols;
-                let filled_len = (f64::from(area.width - 1) * f64::from(ctx.status.volume)
-                    / 100.0) as u16;
+                let filled_len =
+                    (f64::from(area.width - 1) * f64::from(ctx.status.volume) / 100.0) as u16;
 
                 for i in 0..area.width {
                     let style = if i <= filled_len && filled_len > 0 {
@@ -158,7 +158,6 @@ mod tests {
             theme::volume_slider::{Symbols, VolumeSliderConfig},
         },
         ctx::Ctx,
-
         tests::fixtures::{ctx, terminal},
         ui::panes::{Pane, volume::VolumePane},
     };

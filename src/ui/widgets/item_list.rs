@@ -1,7 +1,8 @@
 //! Item list widget with support for compact and rich rendering modes.
 //!
 //! This widget renders a list of items that implement `ListItemDisplay`,
-//! supporting both single-line compact mode and two-line rich mode with thumbnails.
+//! supporting both single-line compact mode and two-line rich mode with
+//! thumbnails.
 
 use std::borrow::Cow;
 
@@ -13,9 +14,8 @@ use ratatui::{
     widgets::{List, ListItem, ListState, StatefulWidget, Widget},
 };
 
-use crate::ctx::Ctx;
-use crate::domain::display::ListItemDisplay;
 use super::element::Element;
+use crate::{ctx::Ctx, domain::display::ListItemDisplay};
 
 /// Minimum terminal width for rich mode (columns)
 const MIN_RICH_MODE_WIDTH: u16 = 60;
@@ -49,11 +49,7 @@ pub struct ItemListConfig {
 
 impl Default for ItemListConfig {
     fn default() -> Self {
-        Self {
-            mode: ListRenderMode::Compact,
-            thumbnail_width: 6,
-            row_height: 3,
-        }
+        Self { mode: ListRenderMode::Compact, thumbnail_width: 6, row_height: 3 }
     }
 }
 
@@ -142,11 +138,7 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
                 let prefix = if is_playing { "▶ " } else { "" };
                 let line = format!("{}{} {}", prefix, icon, text);
 
-                let style = if is_playing {
-                    self.playing_style
-                } else {
-                    self.normal_style
-                };
+                let style = if is_playing { self.playing_style } else { self.normal_style };
 
                 ListItem::new(Line::styled(line, style))
             })
@@ -159,41 +151,43 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
     /// Render in rich mode with thumbnails and 2-line layout.
     fn render_rich(&self, area: Rect, buf: &mut Buffer, state: &mut ListState) {
         use ratatui::style::Color;
-        
+
         let row_height = self.config.row_height;
-        
+
         // Calculate viewport capacity and ensure selected item is visible
         let selected = state.selected().unwrap_or(0);
         let mut offset = state.offset();
-        
+
         // Calculate how many items fit in the viewport (approximate)
         // This is tricky because headers take 1 line, items take row_height lines
         let viewport_height = area.height as usize;
-        
+
         // First, ensure offset doesn't make selected invisible
         // Calculate cumulative height from offset to selected
         let mut height_to_selected = 0usize;
         for i in offset..=selected.min(self.items.len().saturating_sub(1)) {
-            if i >= self.items.len() { break; }
+            if i >= self.items.len() {
+                break;
+            }
             let h = if self.items[i].is_header() { 1 } else { row_height as usize };
             height_to_selected += h;
         }
-        
+
         // If selected is below viewport, scroll down
         while height_to_selected > viewport_height && offset < selected {
             let h = if self.items[offset].is_header() { 1 } else { row_height as usize };
             height_to_selected -= h;
             offset += 1;
         }
-        
+
         // If selected is above offset, scroll up
         if selected < offset {
             offset = selected;
         }
-        
+
         // Update state with new offset
         *state.offset_mut() = offset;
-        
+
         let mut y = area.y;
         let mut item_idx = offset;
 
@@ -203,38 +197,32 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
             let is_header = item.is_header();
             let is_selected = state.selected() == Some(item_idx);
             let is_playing = item.is_playing();
-            
+            let is_next = item.is_next();
+
             // Headers take 1 line, normal items take row_height lines
             let item_height = if is_header { 1 } else { row_height };
-            
+
             // Don't render partial rows
             if y + item_height > area.y + area.height {
                 break;
             }
 
-            let row_rect = Rect {
-                x: area.x,
-                y,
-                width: area.width,
-                height: item_height,
-            };
+            let row_rect = Rect { x: area.x, y, width: area.width, height: item_height };
 
             if is_header {
                 // HEADER: Bold, yellow, with separator line
-                let header_style = Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD);
-                
+                let header_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+
                 // Render header text: "── Section Name ──────────"
                 let text = item.primary_text();
                 let separator = "───";
                 let header_text = format!("{} {} ", separator, text);
-                
+
                 // Calculate remaining width in characters (not bytes!)
                 let header_char_count = header_text.chars().count();
                 let remaining_chars = (area.width as usize).saturating_sub(header_char_count);
                 let full_line = format!("{}{}", header_text, "─".repeat(remaining_chars));
-                
+
                 // Truncate by characters, not bytes (safe for multi-byte chars)
                 let display_str: String = full_line.chars().take(area.width as usize).collect();
                 buf.set_string(row_rect.x, row_rect.y, &display_str, header_style);
@@ -252,9 +240,10 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
                 }
 
                 // Build element tree for this row
-                // Skip filter highlight if selected (selection highlight is enough, and combining them makes text unreadable)
+                // Skip filter highlight if selected (selection highlight is enough, and
+                // combining them makes text unreadable)
                 let show_filter_highlight = matches_filter && !is_selected;
-                let elem = self.build_rich_row(item, is_playing, show_filter_highlight);
+                let elem = self.build_rich_row(item, is_playing, is_next, show_filter_highlight);
                 elem.render(row_rect, buf, self.ctx);
             }
 
@@ -264,19 +253,33 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
     }
 
     /// Build the element tree for a rich list row.
-    fn build_rich_row(&self, item: &'a T, is_playing: bool, matches_filter: bool) -> Element<'a> {
+    fn build_rich_row(
+        &self,
+        item: &'a T,
+        is_playing: bool,
+        is_next: bool,
+        matches_filter: bool,
+    ) -> Element<'a> {
         let icon = item.type_icon();
-        let prefix = if is_playing { "▶ " } else { "" };
+        let prefix = if is_playing {
+            "▶ "
+        } else if is_next {
+            "▷ "
+        } else {
+            ""
+        };
         let thumb_url = item.thumbnail_url();
-        log::trace!("[DIAG-IMG] build_rich_row: title={} thumbnail_url={:?}", item.primary_text(), thumb_url);
+        log::trace!(
+            "[DIAG-IMG] build_rich_row: title={} thumbnail_url={:?}",
+            item.primary_text(),
+            thumb_url
+        );
 
         // Primary line: [prefix][icon] [title]
         let primary = format!("{}{} {}", prefix, icon, item.primary_text());
 
         // Secondary line: metadata (dimmed)
-        let secondary = item
-            .secondary_text()
-            .unwrap_or_else(|| Cow::Borrowed(""));
+        let secondary = item.secondary_text().unwrap_or_else(|| Cow::Borrowed(""));
 
         // Duration (right-aligned)
         let duration = item.duration_text().unwrap_or_else(|| Cow::Borrowed(""));
@@ -326,7 +329,12 @@ impl<'a, T: ListItemDisplay> StatefulWidget for ItemListWidget<'a, T> {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mode = self.effective_mode(area);
-        log::trace!("[DIAG-IMG] ItemListWidget::render mode={:?} area_width={} items={}", mode, area.width, self.items.len());
+        log::trace!(
+            "[DIAG-IMG] ItemListWidget::render mode={:?} area_width={} items={}",
+            mode,
+            area.width,
+            self.items.len()
+        );
         match mode {
             ListRenderMode::Compact => self.render_compact(area, buf, state),
             ListRenderMode::Rich => self.render_rich(area, buf, state),

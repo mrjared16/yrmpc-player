@@ -8,6 +8,14 @@ use ratatui::{prelude::Rect, widgets::ListState};
 
 use crate::{
     QueryResult,
+    backends::{
+        BackendActions,
+        BackendDispatcher,
+        Capability,
+        DeleteTarget,
+        EXTERNAL_COMMAND,
+        Enqueue,
+    },
     config::keys::{
         CommonAction,
         GlobalAction,
@@ -15,7 +23,6 @@ use crate::{
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
     domain::Song,
-    backends::{Capability, BackendDispatcher, Enqueue, BackendActions, DeleteTarget, EXTERNAL_COMMAND},
     shared::{
         key_event::KeyEvent,
         macros::{modal, status_warn},
@@ -86,7 +93,14 @@ where
                     (Position::EndOfQueue, AutoplayKind::None)
                 };
 
-                BackendDispatcher::resolve_and_enqueue(ctx, items, position, autoplay, None, hovered_song_idx);
+                BackendDispatcher::resolve_and_enqueue(
+                    ctx,
+                    items,
+                    position,
+                    autoplay,
+                    None,
+                    hovered_song_idx,
+                );
             }
         } else {
             self.stack_mut().enter();
@@ -102,7 +116,8 @@ where
     fn list_songs_in_items(
         &self,
         all: bool,
-    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static {
+    ) -> impl FnOnce(&mut BackendDispatcher<'_>) -> Result<Vec<Song>> + Send + Sync + Clone + 'static
+    {
         let list_songs_fns =
             self.items(all).map(|(_, item)| self.list_songs_in_item(item.to_owned())).collect_vec();
         |client| {
@@ -540,7 +555,7 @@ where
             CommonAction::AddOptions { kind: AddKind::Action(options) } => {
                 let (enqueue, hovered_idx) = self.enqueue_items(options.all);
                 if !enqueue.is_empty() {
-                    let queue_len = ctx.queue.len();
+                    let queue_len = ctx.queue_store().len();
                     let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
                     BackendDispatcher::resolve_and_enqueue(

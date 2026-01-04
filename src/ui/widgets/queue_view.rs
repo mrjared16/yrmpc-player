@@ -7,18 +7,21 @@ use std::borrow::Cow;
 
 use anyhow::Result;
 use ratatui::{
+    Frame,
     layout::{Constraint, Layout, Rect},
     text::{Line, Span},
     widgets::{Block, Borders, ListState, Paragraph},
-    Frame,
 };
 
-use crate::ctx::Ctx;
-use crate::domain::Song;
-use crate::domain::display::ListItemDisplay;
-use crate::ui::widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode};
-use crate::ui::widgets::async_image::AsyncImage;
-use crate::shared::image_cache::ThumbnailSize;
+use crate::{
+    ctx::Ctx,
+    domain::{Song, display::ListItemDisplay},
+    shared::image_cache::ThumbnailSize,
+    ui::widgets::{
+        async_image::AsyncImage,
+        item_list::{ItemListConfig, ItemListWidget, ListRenderMode},
+    },
+};
 
 /// Wrapper that provides ListItemDisplay with playing context
 struct QueueSongView<'a> {
@@ -69,7 +72,8 @@ impl QueueView {
         Self::default()
     }
 
-    // ========== NAVIGATION (Single Responsibility: Selection management) ==========
+    // ========== NAVIGATION (Single Responsibility: Selection management)
+    // ==========
 
     /// Move selection up
     pub fn select_previous(&mut self, queue_len: usize) {
@@ -119,10 +123,10 @@ impl QueueView {
     /// Play the selected song. Returns true if command was sent.
     pub fn play_selected(&self, ctx: &mut Ctx) -> bool {
         use crate::domain::{QueueItemAction, QueueItemOps};
-        
+
         if let Some(idx) = self.selected() {
-            // Clone song to release borrow on ctx.queue before calling execute
-            let song = ctx.queue.get(idx).cloned();
+            // Clone song to release borrow on queue_store before calling execute
+            let song = ctx.queue_store().get(idx);
             if let Some(song) = song {
                 // Use the trait method - Tell, Don't Ask!
                 if song.execute_queue_action(QueueItemAction::PlayOrToggle, ctx).is_ok() {
@@ -136,16 +140,17 @@ impl QueueView {
     /// Delete the selected song from queue. Returns true if command was sent.
     pub fn delete_selected(&mut self, ctx: &mut Ctx) -> bool {
         use crate::domain::{QueueItemAction, QueueItemOps};
-        
+
         if let Some(idx) = self.selected() {
-            // Clone song to release borrow on ctx.queue before calling execute
-            let song = ctx.queue.get(idx).cloned();
+            // Clone song to release borrow on queue_store before calling execute
+            let song = ctx.queue_store().get(idx);
             if let Some(song) = song {
                 // Use the trait method - Tell, Don't Ask!
                 if song.execute_queue_action(QueueItemAction::Delete, ctx).is_ok() {
                     // Adjust selection after delete
-                    if idx > 0 && ctx.queue.len() > 1 {
-                        self.select_previous(ctx.queue.len());
+                    let queue_len = ctx.queue_store().len();
+                    if idx > 0 && queue_len > 1 {
+                        self.select_previous(queue_len);
                     }
                     return true;
                 }
@@ -160,7 +165,7 @@ impl QueueView {
     pub fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         // Sync selection on first render
         self.sync_to_current(ctx);
-        
+
         if area.width < 50 {
             self.render_compact(frame, area, ctx);
         } else {
@@ -171,37 +176,37 @@ impl QueueView {
     /// Compact mode: list only (for sidebar modal)
     fn render_compact(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
-        
+
         // Find current song for playing indicator
-        let current_song_id = ctx.find_current_song_in_queue()
-            .map(|(_, song)| song.id);
-        
+        let current_song_id = ctx.find_current_song_in_queue().map(|(_, song)| song.id);
+
+        // Get queue snapshot for rendering
+        let queue = ctx.queue_store().read();
+
         // Create items with playing context
-        let items: Vec<QueueSongView<'_>> = ctx.queue.iter()
+        let items: Vec<QueueSongView<'_>> = queue
+            .iter()
             .map(|song| {
                 let is_current = current_song_id.is_some_and(|id| id == song.id);
                 QueueSongView::new(song, is_current)
             })
             .collect();
-        
+
         // Configure compact rich list
-        let item_config = ItemListConfig {
-            mode: ListRenderMode::Rich,
-            thumbnail_width: 4,
-            row_height: 2,
-        };
-        
+        let item_config =
+            ItemListConfig { mode: ListRenderMode::Rich, thumbnail_width: 4, row_height: 2 };
+
         let widget = ItemListWidget::new(&items, ctx)
             .config(item_config)
             .highlight_style(config.theme.current_item_style);
-        
+
         // Render with header
-        let queue_count = ctx.queue.len();
+        let queue_count = queue.len();
         let block = Block::default()
             .title(format!(" Queue ({}) ", queue_count))
             .borders(Borders::ALL)
             .border_style(config.as_border_style());
-        
+
         let inner = block.inner(area);
         frame.render_widget(block, area);
         frame.render_stateful_widget(widget, inner, &mut self.list_state);
@@ -210,15 +215,13 @@ impl QueueView {
     /// Full mode: album art + list (for queue tab)
     fn render_full(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         // Split into album art area and queue list
-        let [art_area, list_area] = Layout::horizontal([
-            Constraint::Percentage(35),
-            Constraint::Percentage(65),
-        ])
-        .areas::<2>(area);
-        
+        let [art_area, list_area] =
+            Layout::horizontal([Constraint::Percentage(35), Constraint::Percentage(65)])
+                .areas::<2>(area);
+
         // Render album art (left side) - show now playing
         self.render_now_playing(frame, art_area, ctx);
-        
+
         // Render queue list (right side)
         self.render_compact(frame, list_area, ctx);
     }
@@ -226,39 +229,37 @@ impl QueueView {
     /// Render the now playing section with album art
     fn render_now_playing(&self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
-        
+
         let block = Block::default()
             .title(" Now Playing ")
             .borders(Borders::ALL)
             .border_style(config.as_border_style());
-        
+
         let inner = block.inner(area);
         frame.render_widget(block, area);
-        
+
         // Get current song
         if let Some((_, song)) = ctx.find_current_song_in_queue() {
             // Split for album art and info
-            let [img_area, info_area] = Layout::vertical([
-                Constraint::Percentage(70),
-                Constraint::Percentage(30),
-            ])
-            .areas::<2>(inner);
-            
+            let [img_area, info_area] =
+                Layout::vertical([Constraint::Percentage(70), Constraint::Percentage(30)])
+                    .areas::<2>(inner);
+
             // Render album art if available
             let thumbnail_url = song.thumbnail_url().map(|s| s.to_string());
-            let image = AsyncImage::new(&ctx.image_cache, thumbnail_url)
-                .size(ThumbnailSize::AlbumArt);
+            let image =
+                AsyncImage::new(&ctx.image_cache, thumbnail_url).size(ThumbnailSize::AlbumArt);
             frame.render_widget(image, img_area);
-            
+
             // Render song info
             let title = song.title();
             let artist = song.artist().unwrap_or("Unknown Artist");
-            
+
             let info = Paragraph::new(vec![
                 Line::from(Span::styled(title, config.theme.current_item_style)),
                 Line::from(Span::styled(artist, config.as_text_style())),
             ]);
-            
+
             frame.render_widget(info, info_area);
         }
     }

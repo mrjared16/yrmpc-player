@@ -6,9 +6,10 @@ use crate::{
         sort_mode::{SortMode, SortOptions},
         theme::{TagResolutionStrategy, properties::SongProperty},
     },
-    domain::Song, ui::panes::browser::SongExt,
+    domain::Song,
     mpd::commands::lsinfo::{Dir, LsInfoEntry},
     shared::cmp::StringCompare,
+    ui::panes::browser::SongExt,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

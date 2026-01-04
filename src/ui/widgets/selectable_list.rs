@@ -1,7 +1,9 @@
-//! Generic interactive list view component for reuse across Queue, Playlist, Search, etc.
+//! Generic interactive list view component for reuse across Queue, Playlist,
+//! Search, etc.
 //!
-//! Provides navigation and rendering for any list of items implementing ListItemDisplay.
-//! Actions are handled by the containing Pane (not embedded in this view).
+//! Provides navigation and rendering for any list of items implementing
+//! ListItemDisplay. Actions are handled by the containing Pane (not embedded in
+//! this view).
 //!
 //! ## Design (SOLID - OCP)
 //!
@@ -22,21 +24,27 @@
 
 use std::borrow::Cow;
 
+use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders, ListState},
-    Frame,
 };
 
-use crate::ctx::Ctx;
-use crate::domain::display::ListItemDisplay;
-use crate::ui::panes::navigator_types::{InputMode, EscResult, BackspaceResult, ListAction};
-use crate::ui::widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode};
-use crate::ui::widgets::list_view_state::ListViewState;
-use crate::ui::widgets::find_state::FindState;
-use crate::config::keys::CommonAction;
-use crate::shared::key_event::KeyEvent;
-use crossterm::event::KeyCode;
+use crate::{
+    config::keys::CommonAction,
+    ctx::Ctx,
+    domain::display::ListItemDisplay,
+    shared::key_event::KeyEvent,
+    ui::{
+        panes::navigator_types::{BackspaceResult, EscResult, InputMode, ListAction},
+        widgets::{
+            find_state::FindState,
+            item_list::{ItemListConfig, ItemListWidget, ListRenderMode},
+            list_view_state::ListViewState,
+        },
+    },
+};
 
 /// Wrapper that adds highlight state to any ListItemDisplay item
 struct HighlightedItem<'a, T> {
@@ -60,11 +68,7 @@ impl<T: ListItemDisplay> ListItemDisplay for HighlightedItem<'_, T> {
 
     fn type_icon(&self) -> &str {
         // Show mark indicator if marked
-        if self.is_marked {
-            "✓"
-        } else {
-            self.item.type_icon()
-        }
+        if self.is_marked { "✓" } else { self.item.type_icon() }
     }
 
     fn duration_text(&self) -> Option<Cow<'_, str>> {
@@ -109,9 +113,9 @@ impl Default for NavConfig {
 ///
 /// Uses ListViewState for state management. Does NOT own items.
 /// Optionally supports vim-style find (/) via FindState.
-/// 
+///
 /// ## Mode Support
-/// 
+///
 /// The view tracks its own InputMode for Find mode, but Edit mode is
 /// managed by the containing pane (for text inputs like search).
 #[derive(Debug, Clone)]
@@ -167,14 +171,14 @@ impl SelectableList {
         // Try up to len times to find a focusable item
         for _ in 0..len {
             self.state.select_next(cfg.scrolloff, cfg.wrap);
-            
+
             if let Some(idx) = self.state.selected() {
                 if items.get(idx).is_some_and(|item| item.is_focusable()) {
                     break;
                 }
             }
         }
-        
+
         // Sync ListState
         self.list_state.select(self.state.selected());
     }
@@ -304,10 +308,7 @@ impl SelectableList {
 
     /// Update viewport height (call in render or resize)
     pub fn set_viewport_height(&mut self, height: u16) {
-        self.state.set_content_and_viewport_len(
-            self.state.content_len(),
-            height as usize,
-        );
+        self.state.set_content_and_viewport_len(self.state.content_len(), height as usize);
     }
 
     // ========== MODE HANDLING ==========
@@ -377,7 +378,7 @@ impl SelectableList {
                 if !filter.text().is_empty() {
                     filter.pop_char();
                     filter.apply(items);
-                    
+
                     // Jump to first match if any
                     if let Some(idx) = filter.current_match_idx() {
                         self.state.select(Some(idx), 0);
@@ -397,13 +398,13 @@ impl SelectableList {
     }
 
     /// Handle character input in Find mode
-    /// 
+    ///
     /// Returns true if character was consumed (in Find mode)
     pub fn handle_find_char<T: ListItemDisplay>(&mut self, items: &[T], ch: char) -> bool {
         if self.mode != InputMode::Find {
             return false;
         }
-        
+
         self.filter_push_char(items, ch);
         true
     }
@@ -431,10 +432,7 @@ impl SelectableList {
         items: &[T],
         ctx: &Ctx,
     ) -> ListAction {
-        let cfg = NavConfig {
-            scrolloff: ctx.config.scrolloff,
-            wrap: ctx.config.wrap_navigation,
-        };
+        let cfg = NavConfig { scrolloff: ctx.config.scrolloff, wrap: ctx.config.wrap_navigation };
 
         // Handle Find mode
         if self.mode == InputMode::Find {
@@ -589,18 +587,16 @@ impl SelectableList {
                 return ListAction::Handled;
             }
             // Backspace
-            KeyCode::Backspace => {
-                match self.handle_backspace(items) {
-                    BackspaceResult::Handled => {
-                        key.stop_propagation();
-                        return ListAction::Handled;
-                    }
-                    BackspaceResult::NoEffect => {
-                        key.stop_propagation();
-                        return ListAction::Back;
-                    }
+            KeyCode::Backspace => match self.handle_backspace(items) {
+                BackspaceResult::Handled => {
+                    key.stop_propagation();
+                    return ListAction::Handled;
                 }
-            }
+                BackspaceResult::NoEffect => {
+                    key.stop_propagation();
+                    return ListAction::Back;
+                }
+            },
             _ => {}
         }
 
@@ -682,13 +678,13 @@ impl SelectableList {
     pub fn start_filter<T: ListItemDisplay>(&mut self, items: &[T], initial: &str) {
         let mut filter = FindState::with_text(initial);
         filter.apply(items);
-        
+
         // Jump to first match if any
         if let Some(idx) = filter.current_match_idx() {
             self.state.select(Some(idx), 0);
             self.list_state.select(Some(idx));
         }
-        
+
         self.filter = Some(filter);
     }
 
@@ -697,7 +693,7 @@ impl SelectableList {
         if let Some(ref mut filter) = self.filter {
             filter.push_char(ch);
             filter.apply(items);
-            
+
             // Jump to first match
             if let Some(idx) = filter.current_match_idx() {
                 self.state.select(Some(idx), 0);
@@ -711,7 +707,7 @@ impl SelectableList {
         if let Some(ref mut filter) = self.filter {
             filter.pop_char();
             filter.apply(items);
-            
+
             // Jump to first match
             if let Some(idx) = filter.current_match_idx() {
                 self.state.select(Some(idx), 0);
@@ -771,8 +767,7 @@ impl SelectableList {
         items: &[T],
         title: Option<&str>,
         highlight_fn: F,
-    )
-    where
+    ) where
         T: ListItemDisplay,
         F: Fn(usize, &T) -> bool,
     {
@@ -794,11 +789,8 @@ impl SelectableList {
             .collect();
 
         // Configure rich list
-        let item_config = ItemListConfig {
-            mode: ListRenderMode::Rich,
-            thumbnail_width: 4,
-            row_height: 2,
-        };
+        let item_config =
+            ItemListConfig { mode: ListRenderMode::Rich, thumbnail_width: 4, row_height: 2 };
 
         // Extract filter text as owned String to avoid borrow issues
         let filter_text = self.filter_text().map(|s| s.to_string());
@@ -861,6 +853,7 @@ mod tests {
         fn primary_text(&self) -> Cow<'_, str> {
             Cow::Borrowed(&self.name)
         }
+
         fn is_focusable(&self) -> bool {
             self.focusable
         }
@@ -928,21 +921,25 @@ mod tests {
 
     /// BUG: task-43 - 'a' key (add to queue) not working
     ///
-    /// EXPECTED BEHAVIOR: Pressing 'a' should return ListAction::Enqueue(indices)
-    /// ACTUAL BEHAVIOR: Returns ListAction::Passthrough (key not handled)
+    /// EXPECTED BEHAVIOR: Pressing 'a' should return
+    /// ListAction::Enqueue(indices) ACTUAL BEHAVIOR: Returns
+    /// ListAction::Passthrough (key not handled)
     ///
     /// ROOT CAUSE: SelectableList.handle_key() doesn't handle 'a' key
     #[test]
     fn handle_key_a_returns_enqueue_action() {
-        use crate::ui::panes::navigator_types::ListAction;
-        use crate::tests::fixtures::ctx;
-        use crate::shared::key_event::KeyEvent;
         use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
 
-        let items = vec![
-            TestItem { name: "Song 1".into(), focusable: true },
-            TestItem { name: "Song 2".into(), focusable: true },
-        ];
+        use crate::{
+            shared::key_event::KeyEvent,
+            tests::fixtures::ctx,
+            ui::panes::navigator_types::ListAction,
+        };
+
+        let items = vec![TestItem { name: "Song 1".into(), focusable: true }, TestItem {
+            name: "Song 2".into(),
+            focusable: true,
+        }];
         let mut view = SelectableList::new();
         view.select(Some(0));
 
@@ -968,8 +965,9 @@ mod tests {
 
     /// BUG: task-42 - Find mode no highlight on matches
     ///
-    /// EXPECTED BEHAVIOR: is_filter_match() returns true for items matching filter
-    /// ACTUAL BEHAVIOR: Filter state not properly exposed/used in rendering
+    /// EXPECTED BEHAVIOR: is_filter_match() returns true for items matching
+    /// filter ACTUAL BEHAVIOR: Filter state not properly exposed/used in
+    /// rendering
     #[test]
     fn filter_match_is_detected_for_matching_item() {
         let items = vec![
@@ -988,18 +986,9 @@ mod tests {
 
         // Test filter matching - this exposes the rendering bug
         // The filter exists but is_filter_match isn't used properly in render
-        assert!(
-            view.is_filter_match(0),
-            "Apple should match 'ap' (case-insensitive)"
-        );
-        assert!(
-            !view.is_filter_match(1),
-            "Banana should NOT match 'ap'"
-        );
-        assert!(
-            view.is_filter_match(2),
-            "Apricot should match 'ap' (case-insensitive)"
-        );
+        assert!(view.is_filter_match(0), "Apple should match 'ap' (case-insensitive)");
+        assert!(!view.is_filter_match(1), "Banana should NOT match 'ap'");
+        assert!(view.is_filter_match(2), "Apricot should match 'ap' (case-insensitive)");
     }
 
     // ============================================================================
@@ -1011,15 +1000,19 @@ mod tests {
     /// EXPECTED BEHAVIOR: Pressing 'n' in Find mode adds 'n' to filter pattern
     /// ACTUAL BEHAVIOR: 'n' triggers filter_next_match() instead of typing
     ///
-    /// ROOT CAUSE: KeyCode::Char('n') is matched before KeyCode::Char(ch) in Find mode
+    /// ROOT CAUSE: KeyCode::Char('n') is matched before KeyCode::Char(ch) in
+    /// Find mode
     ///
     /// This test should FAIL before fix, PASS after fix.
     #[test]
     fn find_mode_typing_n_adds_to_filter() {
-        use crate::ui::panes::navigator_types::ListAction;
-        use crate::tests::fixtures::ctx;
-        use crate::shared::key_event::KeyEvent;
         use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        use crate::{
+            shared::key_event::KeyEvent,
+            tests::fixtures::ctx,
+            ui::panes::navigator_types::ListAction,
+        };
 
         let items = vec![
             TestItem { name: "Song One".into(), focusable: true },
@@ -1054,13 +1047,11 @@ mod tests {
     /// BUG: task-48 - 'N' should also be typeable in Find mode
     #[test]
     fn find_mode_typing_capital_n_adds_to_filter() {
-        use crate::tests::fixtures::ctx;
-        use crate::shared::key_event::KeyEvent;
         use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
 
-        let items = vec![
-            TestItem { name: "Name".into(), focusable: true },
-        ];
+        use crate::{shared::key_event::KeyEvent, tests::fixtures::ctx};
+
+        let items = vec![TestItem { name: "Name".into(), focusable: true }];
         let mut view = SelectableList::new();
         view.select(Some(0));
 

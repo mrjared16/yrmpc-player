@@ -2,9 +2,10 @@
 //!
 //! ## Purpose
 //!
-//! `ListItem` wraps domain items (`DetailItem`) and adds UI-only presentation variants
-//! like `Header` and `Spacer`. This keeps the domain layer clean - `DetailItem` contains
-//! only actionable content (Song, Ref), while `ListItem` adds presentation concerns.
+//! `ListItem` wraps domain items (`DetailItem`) and adds UI-only presentation
+//! variants like `Header` and `Spacer`. This keeps the domain layer clean -
+//! `DetailItem` contains only actionable content (Song, Ref), while `ListItem`
+//! adds presentation concerns.
 //!
 //! ## Architecture
 //!
@@ -45,11 +46,10 @@
 //! ```
 
 use std::borrow::Cow;
+
 use ratatui::style::Style;
 
-use crate::domain::{DetailItem, Song};
-use crate::domain::content::ContentRef;
-use crate::domain::display::ListItemDisplay;
+use crate::domain::{DetailItem, Song, content::ContentRef, display::ListItemDisplay};
 
 /// A list item for UI rendering.
 ///
@@ -270,12 +270,14 @@ mod tests {
     /// EXPECTED BEHAVIOR: Artist/Album/Playlist refs should have distinct icons
     /// ACTUAL BEHAVIOR: All items show song icon (or no icon distinction)
     ///
-    /// ROOT CAUSE: ListItem delegates to DetailItem which delegates to ContentRef
-    /// This test verifies the icon chain works correctly
+    /// ROOT CAUSE: ListItem delegates to DetailItem which delegates to
+    /// ContentRef This test verifies the icon chain works correctly
     #[test]
     fn list_item_from_artist_ref_has_artist_icon() {
-        use crate::domain::content::{ContentRef, ContentType};
-        use crate::domain::display::ListItemDisplay;
+        use crate::domain::{
+            content::{ContentRef, ContentType},
+            display::ListItemDisplay,
+        };
 
         let artist_ref = ContentRef {
             content_type: ContentType::Artist,
@@ -296,16 +298,15 @@ mod tests {
             !icon.is_empty(),
             "BUG: Artist ref has empty icon. Expected artist icon like 👤 or  "
         );
-        assert_ne!(
-            icon, "🎵",
-            "BUG: Artist ref has song icon. Should have artist icon."
-        );
+        assert_ne!(icon, "🎵", "BUG: Artist ref has song icon. Should have artist icon.");
     }
 
     #[test]
     fn list_item_from_album_ref_has_album_icon() {
-        use crate::domain::content::{ContentRef, ContentType};
-        use crate::domain::display::ListItemDisplay;
+        use crate::domain::{
+            content::{ContentRef, ContentType},
+            display::ListItemDisplay,
+        };
 
         let album_ref = ContentRef {
             content_type: ContentType::Album,
@@ -323,16 +324,15 @@ mod tests {
             !icon.is_empty(),
             "BUG: Album ref has empty icon. Expected album icon like 💿 or  "
         );
-        assert_ne!(
-            icon, "🎵",
-            "BUG: Album ref has song icon. Should have album icon."
-        );
+        assert_ne!(icon, "🎵", "BUG: Album ref has song icon. Should have album icon.");
     }
 
     #[test]
     fn list_item_from_playlist_ref_has_playlist_icon() {
-        use crate::domain::content::{ContentRef, ContentType};
-        use crate::domain::display::ListItemDisplay;
+        use crate::domain::{
+            content::{ContentRef, ContentType},
+            display::ListItemDisplay,
+        };
 
         let playlist_ref = ContentRef {
             content_type: ContentType::Playlist,
@@ -350,10 +350,7 @@ mod tests {
             !icon.is_empty(),
             "BUG: Playlist ref has empty icon. Expected playlist icon like 📁 or  "
         );
-        assert_ne!(
-            icon, "🎵",
-            "BUG: Playlist ref has song icon. Should have playlist icon."
-        );
+        assert_ne!(icon, "🎵", "BUG: Playlist ref has song icon. Should have playlist icon.");
     }
 
     // =========================================================================
@@ -362,8 +359,9 @@ mod tests {
 
     #[test]
     fn list_item_preserves_song_thumbnail_through_full_pipeline() {
-        use crate::domain::display::ListItemDisplay;
         use std::collections::HashMap;
+
+        use crate::domain::display::ListItemDisplay;
 
         // Arrange: Create a Song with thumbnail in metadata
         let mut metadata = HashMap::new();
@@ -409,8 +407,10 @@ mod tests {
 
     #[test]
     fn list_item_preserves_artist_ref_thumbnail_through_full_pipeline() {
-        use crate::domain::content::{ContentRef, ContentType};
-        use crate::domain::display::ListItemDisplay;
+        use crate::domain::{
+            content::{ContentRef, ContentType},
+            display::ListItemDisplay,
+        };
 
         // Arrange: Create a ContentRef (artist) with thumbnail
         let artist_ref = ContentRef {

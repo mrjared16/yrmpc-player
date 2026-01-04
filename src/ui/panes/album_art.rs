@@ -176,10 +176,10 @@ mod tests {
 
     use super::AlbumArtPane;
     use crate::{
+        backends::messaging::Query,
         config::{Config, album_art::ImageMethod, tabs::PaneType},
         domain::{song::Song, status::State},
         shared::events::{ClientRequest, WorkRequest},
-        backends::messaging::Query,
         tests::fixtures::{client_request_channel, ctx, work_request_channel},
         ui::{
             UiEvent,
@@ -197,12 +197,14 @@ mod tests {
         client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
     ) {
         let rx = client_request_channel.1.clone();
-        let mut ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+        let mut ctx =
+            crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
         let selected_song_id = 333;
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue.push(Song { id: Some(selected_song_id), ..Default::default() });
+        ctx.queue_store()
+            .reconcile(vec![Song { id: Some(selected_song_id), ..Default::default() }]);
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);
@@ -237,12 +239,14 @@ mod tests {
         client_request_channel: (Sender<ClientRequest>, Receiver<ClientRequest>),
     ) {
         let rx = client_request_channel.1.clone();
-        let mut ctx = crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
+        let mut ctx =
+            crate::tests::fixtures::ctx_with_channels(work_request_channel, client_request_channel);
         let selected_song_id = 333;
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue.push(Song { id: Some(selected_song_id), ..Default::default() });
+        ctx.queue_store()
+            .reconcile(vec![Song { id: Some(selected_song_id), ..Default::default() }]);
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);
