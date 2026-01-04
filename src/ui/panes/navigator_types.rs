@@ -2,35 +2,35 @@
 //!
 //! This module provides the new UI architecture with:
 //! - TabPane: Panes with dedicated tabs (Search, Queue, Library)
-//! - DetailPane: Entity detail panes with content stacking (Artist, Album, Playlist)
+//! - DetailPane: Entity detail panes with content stacking (Artist, Album,
+//!   Playlist)
 //! - Navigator: Central controller for pane history and navigation
 //!
 //! ## Coexistence with Legacy Panes
 //!
-//! The legacy `Pane` trait in `mod.rs` has different methods (handle_action, on_event, etc.)
-//! This module defines `NavigatorPane` to avoid name collision.
+//! The legacy `Pane` trait in `mod.rs` has different methods (handle_action,
+//! on_event, etc.) This module defines `NavigatorPane` to avoid name collision.
 //!
 //! Migration strategy:
 //! 1. New panes implement NavigatorPane + TabPane/DetailPane
-//! 2. Adapters wrap existing panes (QueuePaneV2, SearchPaneV2) to provide NavigatorPane
+//! 2. Adapters wrap existing panes (QueuePaneV2, SearchPaneV2) to provide
+//!    NavigatorPane
 //! 3. Navigator orchestrates NavigatorPane instances
 //! 4. Eventually, all panes migrate to NavigatorPane
 
 use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
+use super::UiEvent;
 // Re-export MoveDirection for unified queue move operations
 pub use crate::ui::list_ops::MoveDirection;
-
 use crate::{
+    QueryResult,
     actions::intent::Intent,
     ctx::Ctx,
     domain::Song,
     shared::key_event::KeyEvent,
-    QueryResult,
 };
-
-use super::UiEvent;
 
 // ============================================================================
 // Pane Identification
@@ -85,9 +85,9 @@ pub enum DetailId {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum InputMode {
     #[default]
-    Normal,  // Navigation mode
-    Edit,    // Typing in text input (e.g., search box)
-    Find,    // Typing find query (/)
+    Normal, // Navigation mode
+    Edit, // Typing in text input (e.g., search box)
+    Find, // Typing find query (/)
 }
 
 // ============================================================================
@@ -118,37 +118,11 @@ pub enum ListAction {
 }
 
 // ============================================================================
-// Section Actions (Layer 1: SectionList)
+// Content Actions (Layer 1: ContentView - previously SectionAction +
+// ContentAction)
 // ============================================================================
 
 use crate::domain::DetailItem;
-
-/// Actions returned from SectionList key handling
-#[derive(Debug, Clone)]
-pub enum SectionAction {
-    /// Key was handled internally
-    Handled,
-    /// Enter pressed - activate item
-    Activate(DetailItem),
-    /// Space pressed - return marked items
-    Mark(Vec<DetailItem>),
-    /// Shift+K - move items up
-    MoveUp(Vec<DetailItem>),
-    /// Shift+J - move items down
-    MoveDown(Vec<DetailItem>),
-    /// 'd' pressed - delete items
-    Delete(Vec<DetailItem>),
-    /// 'a' pressed - add to queue (enqueue without playing)
-    Enqueue(Vec<DetailItem>),
-    /// Esc/Backspace with nothing to handle - bubble up
-    Back,
-    /// Key not handled
-    Passthrough,
-}
-
-// ============================================================================
-// Content Actions (Layer 2: ContentView)
-// ============================================================================
 
 /// Actions returned from ContentView key handling
 #[derive(Debug, Clone)]
@@ -169,6 +143,8 @@ pub enum ContentAction {
     Enqueue(Vec<DetailItem>),
     /// Back requested - pane decides what to do
     Back,
+    /// Key not handled - pass to next layer
+    Passthrough,
 }
 
 // ============================================================================
@@ -180,33 +156,33 @@ pub enum ContentAction {
 pub enum PaneAction {
     /// Key was handled internally, no further action needed
     Handled,
-    
+
     /// Navigate to an entity (push onto current pane's stack or switch pane)
     NavigateTo(EntityRef),
-    
+
     /// Go back to previous pane (Esc in Normal mode)
     BackPane,
-    
+
     /// Play a single song
     Play(Song),
-    
+
     /// Play all songs starting from index
     PlayAll { songs: Vec<Song>, start_index: usize },
-    
+
     /// Add songs to queue
     Enqueue(Vec<Song>),
-    
+
     /// Queue: Delete items by queue ID
     QueueDelete(Vec<u32>),
-    
+
     /// Queue: Move items up by one position (deprecated, use QueueMove)
     #[deprecated(note = "Use QueueMove with MoveDirection::Up")]
     QueueMoveUp(Vec<u32>),
-    
+
     /// Queue: Move items down by one position (deprecated, use QueueMove)
     #[deprecated(note = "Use QueueMove with MoveDirection::Down")]
     QueueMoveDown(Vec<u32>),
-    
+
     /// Queue: Move items in specified direction (unified facade)
     QueueMove { ids: Vec<u32>, direction: MoveDirection },
 
@@ -215,10 +191,10 @@ pub enum PaneAction {
 
     /// Show a modal
     ShowModal(ModalKind),
-    
+
     /// Search with query
     Search(String),
-    
+
     /// Execute an intent through the action system
     Execute(Intent),
 }
@@ -253,22 +229,22 @@ pub struct EntityRef {
 pub(crate) trait NavigatorPane {
     /// Get the pane's unique identifier
     fn id(&self) -> PaneId;
-    
+
     /// Get current input mode
     fn mode(&self) -> InputMode;
-    
+
     /// Render the pane
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()>;
-    
+
     /// Handle a key event, returning an action for the navigator
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<PaneAction>;
-    
+
     /// Handle UI events (queue changes, playback state, etc.)
     #[allow(unused_variables)]
     fn on_event(&mut self, event: &mut UiEvent, ctx: &Ctx) -> Result<()> {
         Ok(())
     }
-    
+
     /// Handle async query results
     #[allow(unused_variables)]
     fn on_query_finished(&mut self, id: &'static str, data: QueryResult, ctx: &Ctx) -> Result<()> {
@@ -284,23 +260,23 @@ pub(crate) trait NavigatorPane {
 pub(crate) trait TabPane: NavigatorPane {
     /// Get the tab identifier
     fn tab_id(&self) -> TabId;
-    
+
     /// Get the tab label for display
     fn tab_label(&self) -> &str {
         self.tab_id().label()
     }
-    
+
     /// Get the hotkey for this tab
     fn hotkey(&self) -> char {
         self.tab_id().hotkey()
     }
-    
+
     /// Get current stage name (for display)
     fn current_stage(&self) -> &str;
-    
+
     /// Can go back to previous stage within this pane?
     fn can_go_back_stage(&self) -> bool;
-    
+
     /// Go back to previous stage. Returns true if successful.
     fn go_back_stage(&mut self) -> bool;
 }
@@ -325,7 +301,7 @@ impl EntityContent {
             EntityContent::Playlist(_) => DetailId::Playlist,
         }
     }
-    
+
     pub fn title(&self) -> &str {
         match self {
             EntityContent::Artist(a) => &a.name,
@@ -339,32 +315,32 @@ impl EntityContent {
 pub(crate) trait DetailPane: NavigatorPane {
     /// Get the detail identifier
     fn detail_id(&self) -> DetailId;
-    
+
     /// Does this pane have any content?
     fn has_content(&self) -> bool;
-    
+
     /// Get the current stack depth
     fn stack_depth(&self) -> usize;
-    
+
     /// Push content onto the stack
     fn push(&mut self, content: EntityContent);
-    
+
     /// Pop content from the stack. Returns false if at bottom (single item).
     fn pop(&mut self) -> bool;
-    
+
     /// Clear all content from the stack
     fn clear(&mut self);
-    
+
     /// Can go back internally (pop stack)?
     fn can_go_back_internal(&self) -> bool {
         self.stack_depth() > 1
     }
-    
+
     /// Go back internally (pop stack). Returns true if successful.
     fn go_back_internal(&mut self) -> bool {
         self.pop()
     }
-    
+
     /// Get the title of the current content (for breadcrumb)
     fn current_title(&self) -> Option<&str>;
 }
@@ -403,7 +379,7 @@ mod tests {
     fn test_pane_id_construction() {
         let tab_pane = PaneId::Tab(TabId::Search);
         let detail_pane = PaneId::Detail(DetailId::Artist);
-        
+
         assert_ne!(tab_pane, detail_pane);
     }
 
@@ -412,7 +388,7 @@ mod tests {
         let tabs = [TabId::Search, TabId::Queue, TabId::Library];
         let labels = ["Search", "Queue", "Library"];
         let hotkeys = ['1', '2', '3'];
-        
+
         for (i, tab) in tabs.iter().enumerate() {
             assert_eq!(tab.label(), labels[i]);
             assert_eq!(tab.hotkey(), hotkeys[i]);
@@ -422,7 +398,7 @@ mod tests {
     #[test]
     fn test_detail_id_all_values() {
         let details = [DetailId::Artist, DetailId::Album, DetailId::Playlist];
-        
+
         // Ensure all are distinct
         for i in 0..details.len() {
             for j in (i + 1)..details.len() {
@@ -444,7 +420,7 @@ mod tests {
             id: "artist123".to_string(),
             name: "Test Artist".to_string(),
         };
-        
+
         assert_eq!(entity.entity_type, DetailId::Artist);
         assert_eq!(entity.id, "artist123");
         assert_eq!(entity.name, "Test Artist");

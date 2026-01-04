@@ -1,12 +1,13 @@
 //! SearchPaneV2 - New search pane using ContentView + InteractiveListView
 //!
-//! This implementation uses ContentView<SearchableContent> for hierarchical navigation
-//! and reuses InputGroups from the legacy search pane for search inputs.
+//! This implementation uses ContentView<SearchableContent> for hierarchical
+//! navigation and reuses InputGroups from the legacy search pane for search
+//! inputs.
 //!
 //! ## Architecture (per ADR-unified-view-architecture)
 //!
 //! - ContentView<SearchableContent> for content stacking
-//! - InputGroups wrapped in SearchInputZone for input handling  
+//! - InputGroups wrapped in SearchInputZone for input handling
 //! - Phase management for input vs browse focus
 //!
 //! ## Traits Implemented
@@ -17,7 +18,6 @@
 use anyhow::Result;
 use crossterm::event::KeyCode;
 use itertools::Itertools;
-use crate::backends::BackendActions;
 use ratatui::{
     Frame,
     layout::{Constraint, Layout, Rect},
@@ -29,27 +29,36 @@ use ratatui::{
 use super::{Pane, browser::SongExt};
 use crate::{
     QueryResult,
+    backends::BackendActions,
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
-    domain::{Song, DetailItem, ContentType, SearchableContent, SearchResultsContent},
+    domain::{ContentType, DetailItem, SearchResultsContent, SearchableContent, Song},
     mpd::mpd_client::Filter,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
         Enqueue,
         UiEvent,
-        panes::search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
-        panes::navigator_types::{
-            BackspaceResult, DetailId, EntityRef, EscResult, InputMode,
-            NavigatorPane, PaneAction, PaneId, TabId, TabPane,
+        panes::{
+            navigator_types::{
+                BackspaceResult,
+                DetailId,
+                EntityRef,
+                EscResult,
+                InputMode,
+                NavigatorPane,
+                PaneAction,
+                PaneId,
+                TabId,
+                TabPane,
+            },
+            search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
         },
-        widgets::{
-            content_view::ContentView,
-            selectable_list::NavConfig,
-        },
+        widgets::{content_view::ContentView, selectable_list::NavConfig},
     },
 };
 
 const SEARCH_ID: &'static str = "search_v2";
+const SUGGESTIONS_ID: &'static str = "search_suggestions_v2";
 
 /// Convert ContentType to string for logging
 fn kind_to_string(kind: ContentType) -> &'static str {
@@ -73,25 +82,142 @@ enum Phase {
     BrowseResults,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct SearchLayout {
+    input: Option<Rect>,
+    results: Option<Rect>,
+    preview: Option<Rect>,
+}
+
+impl SearchLayout {
+    const MIN_COLUMN_WIDTH: u16 = 25;
+    const NARROW_THRESHOLD: u16 = 100;
+
+    fn compute(area: Rect, phase: Phase, has_results: bool, widths: &[u16; 3]) -> Self {
+        match (phase, has_results) {
+            (Phase::Search, false) => Self::full_width_input(area),
+            _ if area.width < Self::NARROW_THRESHOLD => Self::two_column(area),
+            _ => Self::three_column(area, widths),
+        }
+    }
+
+    fn full_width_input(area: Rect) -> Self {
+        Self { input: Some(area), results: None, preview: None }
+    }
+
+    fn two_column(area: Rect) -> Self {
+        let [input, results] =
+            Layout::horizontal([Constraint::Min(Self::MIN_COLUMN_WIDTH), Constraint::Fill(1)])
+                .areas(area);
+        Self { input: Some(input), results: Some(results), preview: None }
+    }
+
+    fn three_column(area: Rect, widths: &[u16; 3]) -> Self {
+        let [input, results, preview] = Layout::horizontal([
+            Constraint::Percentage(widths[0]),
+            Constraint::Percentage(widths[1]),
+            Constraint::Percentage(widths[2]),
+        ])
+        .areas(area);
+        Self { input: Some(input), results: Some(results), preview: Some(preview) }
+    }
+}
+
+#[derive(Debug, Default)]
+struct AutocompleteDropdown {
+    suggestions: Vec<String>,
+    showing: bool,
+    state: ListState,
+    last_query: String,
+}
+
+impl AutocompleteDropdown {
+    const MAX_VISIBLE: u16 = 8;
+
+    fn update(&mut self, query: String, suggestions: Vec<String>) {
+        if query == self.last_query && !query.is_empty() {
+            self.suggestions = suggestions;
+            self.showing = !self.suggestions.is_empty();
+            self.state.select(None);
+        }
+    }
+
+    fn set_query(&mut self, query: String) {
+        self.last_query = query;
+    }
+
+    fn hide(&mut self) {
+        self.showing = false;
+        self.state.select(None);
+    }
+
+    fn clear(&mut self) {
+        self.suggestions.clear();
+        self.showing = false;
+        self.state.select(None);
+    }
+
+    fn select_next(&mut self) {
+        if self.suggestions.is_empty() {
+            return;
+        }
+        let next = match self.state.selected() {
+            Some(i) => (i + 1).min(self.suggestions.len() - 1),
+            None => 0,
+        };
+        self.state.select(Some(next));
+    }
+
+    fn select_prev(&mut self) {
+        if self.suggestions.is_empty() {
+            return;
+        }
+        match self.state.selected() {
+            Some(0) | None => self.state.select(None),
+            Some(i) => self.state.select(Some(i - 1)),
+        }
+    }
+
+    fn selected_suggestion(&self) -> Option<&str> {
+        self.state.selected().and_then(|i| self.suggestions.get(i).map(|s| s.as_str()))
+    }
+
+    fn compute_overlay_rect(&self, anchor: Rect) -> Rect {
+        let height = (self.suggestions.len() as u16 + 2).min(Self::MAX_VISIBLE);
+        Rect { x: anchor.x, y: anchor.y + 1, width: anchor.width, height }
+    }
+
+    fn render(&mut self, frame: &mut Frame, anchor: Rect, ctx: &Ctx) {
+        if !self.showing || self.suggestions.is_empty() {
+            return;
+        }
+
+        let overlay = self.compute_overlay_rect(anchor);
+
+        frame.render_widget(ratatui::widgets::Clear, overlay);
+
+        let block = Block::default()
+            .borders(Borders::LEFT | Borders::RIGHT | Borders::BOTTOM)
+            .border_style(ctx.config.theme.borders_style);
+
+        let items: Vec<ListItem> =
+            self.suggestions.iter().map(|s| ListItem::new(Span::raw(format!(" {} ", s)))).collect();
+
+        let list =
+            List::new(items).block(block).highlight_style(ctx.config.theme.current_item_style);
+
+        frame.render_stateful_widget(list, overlay, &mut self.state);
+    }
+}
+
 /// SearchPaneV2 using ContentView architecture
 #[derive(Debug)]
 pub struct SearchPaneV2 {
-    /// Search input groups (reused from legacy)
     inputs: InputGroups,
-    /// Current phase
     phase: Phase,
-    /// ContentView for hierarchical navigation with SearchableContent
     view: ContentView<SearchableContent>,
-    /// Navigation config
     nav_config: NavConfig,
-    /// Search suggestions from backend
-    suggestions: Vec<String>,
-    /// Whether to show suggestions dropdown
-    showing_suggestions: bool,
-    /// State for suggestion list selection
-    suggestions_state: ListState,
-    /// Last query string (for debouncing)
-    last_suggestion_query: String,
+    autocomplete: AutocompleteDropdown,
 }
 
 impl SearchPaneV2 {
@@ -120,14 +246,8 @@ impl SearchPaneV2 {
             inputs,
             phase: Phase::Search,
             view,
-            nav_config: NavConfig {
-                scrolloff: config.scrolloff,
-                wrap: config.wrap_navigation,
-            },
-            suggestions: Vec::new(),
-            showing_suggestions: false,
-            suggestions_state: ListState::default(),
-            last_suggestion_query: String::new(),
+            nav_config: NavConfig { scrolloff: config.scrolloff, wrap: config.wrap_navigation },
+            autocomplete: AutocompleteDropdown::default(),
         }
     }
 
@@ -138,14 +258,14 @@ impl SearchPaneV2 {
         log::debug!("SearchPaneV2::search() called");
 
         // Get search text from primary input
-        let search_text = self.inputs.inputs.iter()
-            .find_map(|input| {
-                match input {
-                    InputType::Textbox(TextboxInput { value, filter_key: Some(_), .. })
-                        if !value.is_empty() => Some(value.clone()),
-                    _ => None,
-                }
-            });
+        let search_text = self.inputs.inputs.iter().find_map(|input| match input {
+            InputType::Textbox(TextboxInput { value, filter_key: Some(_), .. })
+                if !value.is_empty() =>
+            {
+                Some(value.clone())
+            }
+            _ => None,
+        });
 
         let Some(query_text) = search_text else {
             log::debug!("SearchPaneV2::search() early return - no search text");
@@ -154,18 +274,16 @@ impl SearchPaneV2 {
 
         log::debug!("SearchPaneV2::search() query_text={}", query_text);
 
-        ctx.query()
-            .id(SEARCH_ID)
-            .replace_id(SEARCH_ID)
-            .target(PaneType::Search)
-            .query(move |client| {
+        ctx.query().id(SEARCH_ID).replace_id(SEARCH_ID).target(PaneType::Search).query(
+            move |client| {
                 // Use the new sectioned API (api::Discovery::search)
                 use crate::backends::api::{Discovery, SearchQuery};
                 let results = Discovery::search(client, SearchQuery::new(&query_text))?;
-                Ok(QueryResult::SearchResultSectioned(
-                    crate::domain::search::SearchResults::from(results)
-                ))
-            });
+                Ok(QueryResult::SearchResultSectioned(crate::domain::search::SearchResults::from(
+                    results,
+                )))
+            },
+        );
     }
 
     // ========== ENQUEUE ==========
@@ -177,7 +295,9 @@ impl SearchPaneV2 {
         };
 
         if all {
-            level.section_list.items()
+            level
+                .section_list
+                .items()
                 .iter()
                 .filter_map(|item| item.as_content())
                 .filter_map(|item| match item {
@@ -189,7 +309,8 @@ impl SearchPaneV2 {
             // Get marked items or selected item
             let marked = level.section_list.marked_items();
             if !marked.is_empty() {
-                marked.iter()
+                marked
+                    .iter()
                     .filter_map(|item| match item {
                         DetailItem::Song(song) => Some(Enqueue::Song { song: song.clone() }),
                         _ => None,
@@ -206,58 +327,32 @@ impl SearchPaneV2 {
         }
     }
 
-    /// Add items to queue and play the first one
-    /// Uses optimistic UI update for immediate feedback
     fn add_to_queue(&self, ctx: &Ctx, enqueue: Vec<Enqueue>, play: bool) {
         if enqueue.is_empty() {
             return;
         }
 
-        // Optimistic local update: Add songs to ctx.queue immediately
-        // This provides instant visual feedback without waiting for backend
-        let songs_to_add: Vec<Song> = enqueue.iter()
+        let songs: Vec<Song> = enqueue
+            .iter()
             .filter_map(|e| match e {
                 Enqueue::Song { song } => Some(song.clone()),
                 _ => None,
             })
             .collect();
-        
-        let count = songs_to_add.len();
-        
-        // SAFETY: We're modifying ctx.queue which typically requires &mut self,
-        // but we use interior mutability pattern here for immediate UI update.
-        // The backend will eventually sync the authoritative state.
-        // NOTE: This is a temporary workaround. The proper fix is to make
-        // ctx.queue behind RwLock and use local-first architecture.
 
-        ctx.query()
-            .id("enqueue_v2")
-            .query(move |client| {
-                let status = client.get_status()?;
-                let start_idx = status.playlistlength;
-
-                for song in songs_to_add {
-                    // Use add_song to preserve full metadata from search results
-                    client.add_song(&song, None)?;
-                }
-
-                // Play the first added song if requested
-                if play {
-                    client.play_pos(start_idx as usize)?;
-                }
-
-                // Return updated queue - event loop will update ctx.queue automatically
-                let queue = client.playlist_info()?;
-                Ok(QueryResult::Queue(Some(queue)))
-            });
-        
-        // Request render immediately so UI shows status message
-        let _ = ctx.render();
-        
-        // Show feedback message (using method that doesn't require &mut)
-        if count > 0 {
-            log::info!("Added {} item(s) to queue", count);
+        if songs.is_empty() {
+            return;
         }
+
+        let count = songs.len();
+        if play {
+            ctx.queue_store().add_and_play(songs);
+        } else {
+            ctx.queue_store().add(songs);
+        }
+
+        let _ = ctx.render();
+        log::info!("Added {} item(s) to queue", count);
     }
 
     // ========== INPUT PHASE ==========
@@ -314,9 +409,10 @@ impl SearchPaneV2 {
 
     /// Handle browse results phase key events
     fn handle_browse_phase(&mut self, event: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
-        use crate::ui::widgets::content_view::ContentAction;
-        use crate::domain::DetailItem;
-        use crate::domain::content::ContentType;
+        use crate::{
+            domain::{DetailItem, content::ContentType},
+            ui::widgets::content_view::ContentAction,
+        };
 
         // Use unified ContentView key handling
         match self.view.handle_key(event, ctx) {
@@ -343,7 +439,8 @@ impl SearchPaneV2 {
                 ctx.render()?;
             }
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
-                // Move/Delete not applicable in SearchPane - search results are read-only
+                // Move/Delete not applicable in SearchPane - search results are
+                // read-only
             }
             ContentAction::Enqueue(items) => {
                 // 'a' key: Add to queue without playing
@@ -356,11 +453,12 @@ impl SearchPaneV2 {
                     self.add_to_queue(ctx, enqueue_items, false);
                 }
             }
+            ContentAction::Passthrough => {}
         }
 
-        // NOTE: All actions are now handled via ContentView's typed action system above.
-        // Previously there was a redundant CommonAction check here that caused duplicate handling.
-        // See Task-49 for details.
+        // NOTE: All actions are now handled via ContentView's typed action system
+        // above. Previously there was a redundant CommonAction check here that
+        // caused duplicate handling. See Task-49 for details.
 
         Ok(())
     }
@@ -384,10 +482,8 @@ impl SearchPaneV2 {
                             .filter_map(|item| item.as_song().cloned())
                             .collect();
                         if !songs.is_empty() {
-                            let start_index = songs
-                                .iter()
-                                .position(|s| s.uri == song.uri)
-                                .unwrap_or(0);
+                            let start_index =
+                                songs.iter().position(|s| s.uri == song.uri).unwrap_or(0);
                             self.play_all_songs(ctx, songs, start_index);
                             ctx.render()?;
                             return Ok(());
@@ -428,9 +524,8 @@ impl SearchPaneV2 {
     /// Play all songs starting from index
     fn play_all_songs(&self, ctx: &Ctx, songs: Vec<Song>, start_index: usize) {
         if !songs.is_empty() {
-            let queue_items: Vec<_> = songs.into_iter()
-                .map(|s| Enqueue::Song { song: s })
-                .collect();
+            let queue_items: Vec<_> =
+                songs.into_iter().map(|s| Enqueue::Song { song: s }).collect();
 
             let current_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
@@ -461,10 +556,8 @@ impl SearchPaneV2 {
                             .filter_map(|i| i.as_song().cloned())
                             .collect();
                         if !songs.is_empty() {
-                            let start_index = songs
-                                .iter()
-                                .position(|s| s.uri == song.uri)
-                                .unwrap_or(0);
+                            let start_index =
+                                songs.iter().position(|s| s.uri == song.uri).unwrap_or(0);
                             return PaneAction::PlayAll { songs, start_index };
                         }
                     }
@@ -487,109 +580,89 @@ impl SearchPaneV2 {
         }
     }
 
-    /// Clear queue, add single song, and play it (YouTube Music-like behavior)
     fn play_song(&self, ctx: &Ctx, song: Song) {
-        ctx.query()
-            .id("play_song_v2")
-            .query(move |client| {
-                client.clear()?;
-                client.add_song(&song, None)?;
-                client.play_pos(0)?;
-
-                // Return updated queue for automatic UI refresh
-                let queue = client.playlist_info()?;
-                Ok(QueryResult::Queue(Some(queue)))
-            });
+        ctx.queue_store().replace_and_play(vec![song]);
     }
 
     fn fetch_playlist_detail(&self, ctx: &Ctx, playlist_id: String) {
-        ctx.query()
-            .id("fetch_playlist_v2")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: playlist_id.clone(),
-                    content_type: ContentType::Playlist,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
-                    _ => anyhow::bail!("Expected playlist details"),
-                }
-            });
+        ctx.query().id("fetch_playlist_v2").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: playlist_id.clone(),
+                content_type: ContentType::Playlist,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Playlist(p) => Ok(QueryResult::PlaylistDetail(p)),
+                _ => anyhow::bail!("Expected playlist details"),
+            }
+        });
     }
 
     fn fetch_album_detail(&self, ctx: &Ctx, album_id: String) {
-        ctx.query()
-            .id("fetch_album_v2")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: album_id.clone(),
-                    content_type: ContentType::Album,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
-                    _ => anyhow::bail!("Expected album details"),
-                }
-            });
+        ctx.query().id("fetch_album_v2").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: album_id.clone(),
+                content_type: ContentType::Album,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Album(a) => Ok(QueryResult::AlbumDetail(a)),
+                _ => anyhow::bail!("Expected album details"),
+            }
+        });
     }
 
     fn fetch_artist_detail(&self, ctx: &Ctx, artist_id: String) {
-        ctx.query()
-            .id("fetch_artist_v2")
-            .target(PaneType::Search)
-            .query(move |client| {
-                use crate::backends::api::{Discovery, Item, ContentType};
-                use crate::domain::content::ContentDetails;
-                
-                let item = Item {
-                    id: artist_id.clone(),
-                    content_type: ContentType::Artist,
-                    title: String::new(),
-                    subtitle: None,
-                    thumbnail: None,
-                    duration: None,
-                    queue_id: None,
-                };
-                
-                match client.details(&item)? {
-                    ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
-                    _ => anyhow::bail!("Expected artist details"),
-                }
-            });
+        ctx.query().id("fetch_artist_v2").target(PaneType::Search).query(move |client| {
+            use crate::{
+                backends::api::{ContentType, Discovery, Item},
+                domain::content::ContentDetails,
+            };
+
+            let item = Item {
+                id: artist_id.clone(),
+                content_type: ContentType::Artist,
+                title: String::new(),
+                subtitle: None,
+                thumbnail: None,
+                duration: None,
+                queue_id: None,
+            };
+
+            match client.details(&item)? {
+                ContentDetails::Artist(a) => Ok(QueryResult::ArtistDetail(a)),
+                _ => anyhow::bail!("Expected artist details"),
+            }
+        });
     }
 
     // ========== PUBLIC NAVIGATION API ==========
 
     /// Navigate to content from external source (e.g., queue modal).
-    /// 
+    ///
     /// This allows other parts of the UI to trigger navigation into
     /// artist/album/playlist details without going through search.
-    pub fn navigate_to(
-        &mut self,
-        id: String,
-        kind: ContentType,
-        title_hint: String,
-        ctx: &Ctx,
-    ) {
+    pub fn navigate_to(&mut self, id: String, kind: ContentType, title_hint: String, ctx: &Ctx) {
         // Ensure we're in browse mode
         self.phase = Phase::BrowseResults;
 
@@ -614,10 +687,15 @@ impl SearchPaneV2 {
     // ========== RENDERING ==========
 
     /// Reorder search results by config section order.
-    /// This ensures top_results appears first (if configured), followed by songs, artists, etc.
-    fn reorder_by_config_sections(data: Vec<crate::domain::MediaItem>, config_sections: &[String]) -> Vec<DetailItem> {
-        use crate::domain::media_item::{MediaItem, Displayable};
+    /// This ensures top_results appears first (if configured), followed by
+    /// songs, artists, etc.
+    fn reorder_by_config_sections(
+        data: Vec<crate::domain::MediaItem>,
+        config_sections: &[String],
+    ) -> Vec<DetailItem> {
         use std::collections::HashMap;
+
+        use crate::domain::media_item::{Displayable, MediaItem};
 
         // Phase 1: Group items by section (using headers as markers)
         let mut sections: HashMap<String, Vec<MediaItem>> = HashMap::new();
@@ -630,7 +708,9 @@ impl SearchPaneV2 {
                 "songs" => "songs".to_string(),
                 "artists" => "artists".to_string(),
                 "albums" => "albums".to_string(),
-                "playlists" | "featured playlists" | "community playlists" => "playlists".to_string(),
+                "playlists" | "featured playlists" | "community playlists" => {
+                    "playlists".to_string()
+                }
                 "videos" => "videos".to_string(),
                 other => other.to_lowercase().replace(" ", "_"),
             }
@@ -663,9 +743,8 @@ impl SearchPaneV2 {
         }
 
         // Log what we found per section
-        let section_counts: Vec<String> = sections.iter()
-            .map(|(k, v)| format!("{}:{}", k, v.len()))
-            .collect();
+        let section_counts: Vec<String> =
+            sections.iter().map(|(k, v)| format!("{}:{}", k, v.len())).collect();
         log::info!("[SEARCH_V2] Sections found: {}", section_counts.join(", "));
 
         // Phase 2: Build display list based on config order
@@ -694,7 +773,11 @@ impl SearchPaneV2 {
             }
         }
 
-        log::info!("[SEARCH_V2] Reordered {} items by config sections: {:?}", result.len(), config_sections);
+        log::info!(
+            "[SEARCH_V2] Reordered {} items by config sections: {:?}",
+            result.len(),
+            config_sections
+        );
         result
     }
 
@@ -731,14 +814,19 @@ impl SearchPaneV2 {
             }
         }
 
-        log::info!("[SEARCH_V2] Applied config order: {:?} -> {} sections", config_order, result.len());
+        log::info!(
+            "[SEARCH_V2] Applied config order: {:?} -> {} sections",
+            config_order,
+            result.len()
+        );
         result
     }
 
     /// Convert structured sections to flat DetailItems with headers.
     ///
-    /// This is a bridge for the existing SearchResultsContent which uses flat items.
-    /// Eventually, SearchResultsContent should be updated to store sections directly.
+    /// This is a bridge for the existing SearchResultsContent which uses flat
+    /// items. Eventually, SearchResultsContent should be updated to store
+    /// sections directly.
     fn sections_to_detail_items(
         sections: Vec<crate::domain::search::SearchSection>,
     ) -> Vec<DetailItem> {
@@ -755,39 +843,28 @@ impl SearchPaneV2 {
             }
         }
 
-        log::info!("[SEARCH_V2] Converted {} sections to {} DetailItems",
-            section_count, result.len());
+        log::info!(
+            "[SEARCH_V2] Converted {} sections to {} DetailItems",
+            section_count,
+            result.len()
+        );
         result
     }
 
     /// Get current search query string from focused input
     fn get_current_query_string(&self) -> String {
-        self.inputs.inputs.iter().find_map(|input| match input {
-            InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
-                if !value.is_empty() && key == "any" =>
-            {
-                Some(value.clone())
-            }
-            _ => None,
-        }).unwrap_or_default()
-    }
-
-    /// Render suggestions dropdown
-    fn render_suggestions(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .title("Suggestions")
-            .style(ctx.config.theme.borders_style);
-
-        let items: Vec<ListItem> = self.suggestions.iter().map(|s| {
-            ListItem::new(Span::raw(s))
-        }).collect();
-
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(ctx.config.theme.current_item_style);
-
-        frame.render_stateful_widget(list, area, &mut self.suggestions_state);
+        self.inputs
+            .inputs
+            .iter()
+            .find_map(|input| match input {
+                InputType::Textbox(TextboxInput { value, filter_key: Some(key), .. })
+                    if !value.is_empty() && key == "any" =>
+                {
+                    Some(value.clone())
+                }
+                _ => None,
+            })
+            .unwrap_or_default()
     }
 
     /// Render the search inputs column
@@ -799,7 +876,7 @@ impl SearchPaneV2 {
     /// Render the results column using InteractiveListView
     fn render_results(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
-        
+
         if self.view.has_content() {
             // Render the current content view
             self.view.render(frame, area, ctx);
@@ -816,7 +893,7 @@ impl SearchPaneV2 {
     /// Render the preview column showing selected item details
     fn render_preview(&self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
-        
+
         // Get selected item from ContentView
         if let Some(level) = self.view.current() {
             if let Some(item) = level.section_list.selected_item() {
@@ -839,9 +916,10 @@ impl SearchPaneV2 {
                     frame.render_widget(preview_widget, area);
                 } else if let Some(content_ref) = item.as_content_ref() {
                     // Show basic info for content refs
-                    let mut lines = vec![
-                        ListItem::new(Span::styled(content_ref.name.clone(), config.theme.highlighted_item_style)),
-                    ];
+                    let mut lines = vec![ListItem::new(Span::styled(
+                        content_ref.name.clone(),
+                        config.theme.highlighted_item_style,
+                    ))];
                     if let Some(subtitle) = &content_ref.subtitle {
                         lines.push(ListItem::new(Span::raw(subtitle.clone())));
                     }
@@ -867,43 +945,57 @@ impl SearchPaneV2 {
 impl Pane for SearchPaneV2 {
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {
         let widths = &ctx.config.theme.column_widths;
-        
-        // 3-column layout using config widths
-        let [input_area_raw, results_area_raw, preview_area] = Layout::horizontal([
-            Constraint::Percentage(widths[0]),
-            Constraint::Percentage(widths[1]),
-            Constraint::Percentage(widths[2]),
-        ]).areas::<3>(area);
+        let has_results = self.view.has_content();
+        let layout = SearchLayout::compute(area, self.phase, has_results, widths);
 
-        // Draw column separators
-        frame.render_widget(
-            Block::default().borders(Borders::RIGHT).border_style(ctx.config.theme.borders_style),
-            input_area_raw,
-        );
-        frame.render_widget(
-            Block::default().borders(Borders::RIGHT).border_style(ctx.config.theme.borders_style),
-            results_area_raw,
-        );
+        match (layout.input, layout.results, layout.preview) {
+            (Some(input), None, None) => {
+                self.render_inputs(frame, input, ctx);
 
-        // Adjust areas for border width
-        let input_area = Rect {
-            width: input_area_raw.width.saturating_sub(1),
-            ..input_area_raw
-        };
-        let results_area = Rect {
-            width: results_area_raw.width.saturating_sub(1),
-            ..results_area_raw
-        };
+                if self.phase == Phase::Search && self.autocomplete.showing {
+                    self.autocomplete.render(frame, input, ctx);
+                }
+            }
+            (Some(input_raw), Some(results_raw), None) => {
+                frame.render_widget(
+                    Block::default()
+                        .borders(Borders::RIGHT)
+                        .border_style(ctx.config.theme.borders_style),
+                    input_raw,
+                );
+                let input = Rect { width: input_raw.width.saturating_sub(1), ..input_raw };
+                self.render_inputs(frame, input, ctx);
+                self.render_results(frame, results_raw, ctx);
 
-        // Render all 3 columns
-        self.render_inputs(frame, input_area, ctx);
-        self.render_results(frame, results_area, ctx);
+                if self.phase == Phase::Search && self.autocomplete.showing {
+                    self.autocomplete.render(frame, input_raw, ctx);
+                }
+            }
+            (Some(input_raw), Some(results_raw), Some(preview)) => {
+                frame.render_widget(
+                    Block::default()
+                        .borders(Borders::RIGHT)
+                        .border_style(ctx.config.theme.borders_style),
+                    input_raw,
+                );
+                frame.render_widget(
+                    Block::default()
+                        .borders(Borders::RIGHT)
+                        .border_style(ctx.config.theme.borders_style),
+                    results_raw,
+                );
+                let input = Rect { width: input_raw.width.saturating_sub(1), ..input_raw };
+                let results = Rect { width: results_raw.width.saturating_sub(1), ..results_raw };
 
-        // In Search phase, show suggestions in preview area when available
-        if self.phase == Phase::Search && self.showing_suggestions {
-            self.render_suggestions(frame, preview_area, ctx);
-        } else {
-            self.render_preview(frame, preview_area, ctx);
+                self.render_inputs(frame, input, ctx);
+                self.render_results(frame, results, ctx);
+                self.render_preview(frame, preview, ctx);
+
+                if self.phase == Phase::Search && self.autocomplete.showing {
+                    self.autocomplete.render(frame, input_raw, ctx);
+                }
+            }
+            _ => {}
         }
 
         Ok(())
@@ -920,8 +1012,10 @@ impl Pane for SearchPaneV2 {
             match event.as_common_action(ctx) {
                 Some(CommonAction::Close) => {
                     self.inputs.insert_mode = false;
-                    self.showing_suggestions = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                    self.autocomplete.showing = false;
+                    if let InputType::Numberbox(TextboxInput { value, .. }) =
+                        self.inputs.focused_mut()
+                    {
                         if value.is_empty() {
                             value.push('0');
                         }
@@ -930,13 +1024,17 @@ impl Pane for SearchPaneV2 {
                 }
                 Some(CommonAction::Confirm) => {
                     // If showing suggestions and one is selected, use it
-                    if self.showing_suggestions {
-                        if let Some(idx) = self.suggestions_state.selected() {
-                            if let Some(suggestion) = self.suggestions.get(idx).cloned() {
-                                if let InputType::Textbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                    if self.autocomplete.showing {
+                        if let Some(idx) = self.autocomplete.state.selected() {
+                            if let Some(suggestion) =
+                                self.autocomplete.suggestions.get(idx).cloned()
+                            {
+                                if let InputType::Textbox(TextboxInput { value, .. }) =
+                                    self.inputs.focused_mut()
+                                {
                                     *value = suggestion;
                                 }
-                                self.showing_suggestions = false;
+                                self.autocomplete.showing = false;
                                 self.search(ctx);
                                 ctx.render()?;
                                 return Ok(());
@@ -945,8 +1043,10 @@ impl Pane for SearchPaneV2 {
                     }
 
                     self.inputs.insert_mode = false;
-                    self.showing_suggestions = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                    self.autocomplete.showing = false;
+                    if let InputType::Numberbox(TextboxInput { value, .. }) =
+                        self.inputs.focused_mut()
+                    {
                         if value.is_empty() {
                             value.push('0');
                         }
@@ -955,23 +1055,23 @@ impl Pane for SearchPaneV2 {
                     self.search(ctx);
                     ctx.render()?;
                 }
-                Some(CommonAction::Down) if self.showing_suggestions => {
-                    // Navigate suggestions down
-                    let len = self.suggestions.len();
+                Some(CommonAction::Down) if self.autocomplete.showing => {
+                    let len = self.autocomplete.suggestions.len();
                     if len > 0 {
-                        let next = self.suggestions_state.selected()
-                            .map_or(0, |i| (i + 1) % len);
-                        self.suggestions_state.select(Some(next));
+                        let next = self.autocomplete.state.selected().map_or(0, |i| (i + 1) % len);
+                        self.autocomplete.state.select(Some(next));
                         ctx.render()?;
                     }
                 }
-                Some(CommonAction::Up) if self.showing_suggestions => {
-                    // Navigate suggestions up
-                    let len = self.suggestions.len();
+                Some(CommonAction::Up) if self.autocomplete.showing => {
+                    let len = self.autocomplete.suggestions.len();
                     if len > 0 {
-                        let prev = self.suggestions_state.selected()
+                        let prev = self
+                            .autocomplete
+                            .state
+                            .selected()
                             .map_or(len - 1, |i| (i + len - 1) % len);
-                        self.suggestions_state.select(Some(prev));
+                        self.autocomplete.state.select(Some(prev));
                         ctx.render()?;
                     }
                 }
@@ -1006,21 +1106,29 @@ impl Pane for SearchPaneV2 {
 
             // Check if query changed and trigger suggestions
             let new_query = self.get_current_query_string();
+            log::debug!(
+                "SearchPaneV2: phase={:?}, insert_mode={}, query changed: '{}' -> '{}' (len={})",
+                self.phase,
+                self.inputs.insert_mode,
+                old_query,
+                new_query,
+                new_query.len()
+            );
             if new_query != old_query {
-                self.last_suggestion_query = new_query.clone();
+                self.autocomplete.last_query = new_query.clone();
                 if !new_query.is_empty() && new_query.len() > 1 {
-                    // Trigger suggestions query
+                    log::debug!("SearchPaneV2: triggering suggestions query for '{}'", new_query);
                     ctx.query()
-                        .id(SEARCH_ID)
-                        .replace_id("search_suggestions_v2")
+                        .id(SUGGESTIONS_ID)
+                        .replace_id(SUGGESTIONS_ID)
                         .target(PaneType::Search)
                         .query(move |client| {
                             let suggestions = client.get_search_suggestions(new_query)?;
                             Ok(QueryResult::SearchSuggestions(suggestions))
                         });
                 } else {
-                    self.showing_suggestions = false;
-                    self.suggestions.clear();
+                    self.autocomplete.showing = false;
+                    self.autocomplete.suggestions.clear();
                 }
             }
 
@@ -1048,11 +1156,14 @@ impl Pane for SearchPaneV2 {
         match (id, data) {
             // NEW: Handle sectioned search results (ADR-section-as-container)
             (SEARCH_ID, QueryResult::SearchResultSectioned(results)) => {
-                log::debug!("SearchPaneV2::on_query_finished received sectioned results with {} sections",
-                    results.sections.len());
+                log::debug!(
+                    "SearchPaneV2::on_query_finished received sectioned results with {} sections",
+                    results.sections.len()
+                );
 
                 // Apply config ordering (presentation concern - UI layer only)
-                let ordered_sections = Self::apply_config_order(results.sections, &ctx.config.search.sections);
+                let ordered_sections =
+                    Self::apply_config_order(results.sections, &ctx.config.search.sections);
 
                 // Convert sections to DetailItems for existing SearchResultsContent
                 let items = Self::sections_to_detail_items(ordered_sections);
@@ -1068,8 +1179,12 @@ impl Pane for SearchPaneV2 {
                 log::debug!("SearchPaneV2::on_query_finished received {} flat results", data.len());
                 if let Some(first) = data.first() {
                     use crate::domain::media_item::Displayable;
-                    log::info!("[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
-                        first.title(), first.content_type(), first.thumbnail_url());
+                    log::info!(
+                        "[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
+                        first.title(),
+                        first.content_type(),
+                        first.thumbnail_url()
+                    );
                 }
                 // Reorder by config sections (top_results first, then songs, artists, etc.)
                 let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);
@@ -1092,11 +1207,21 @@ impl Pane for SearchPaneV2 {
                 // Push artist content to stack
                 self.view.push(SearchableContent::Artist(details));
             }
-            (SEARCH_ID, QueryResult::SearchSuggestions(suggestions)) => {
-                // Update suggestions list
-                self.suggestions = suggestions;
-                self.showing_suggestions = !self.suggestions.is_empty();
-                self.suggestions_state.select(None);
+            (SUGGESTIONS_ID, QueryResult::SearchSuggestions(suggestions)) => {
+                let current_query = self.get_current_query_string();
+                log::debug!(
+                    "SearchPaneV2: received {} suggestions, current='{}', last='{}', match={}",
+                    suggestions.len(),
+                    current_query,
+                    self.autocomplete.last_query,
+                    current_query == self.autocomplete.last_query
+                );
+                if current_query == self.autocomplete.last_query && !current_query.is_empty() {
+                    self.autocomplete.suggestions = suggestions;
+                    self.autocomplete.showing = !self.autocomplete.suggestions.is_empty();
+                    self.autocomplete.state.select(None);
+                    log::debug!("SearchPaneV2: autocomplete.showing={}", self.autocomplete.showing);
+                }
             }
             _ => {}
         }
@@ -1117,8 +1242,9 @@ impl Pane for SearchPaneV2 {
 // NEW ARCHITECTURE: NavigatorPane + TabPane Implementation
 // =============================================================================
 //
-// These implementations allow SearchPaneV2 to work with the new Navigator system
-// while preserving ALL existing functionality from the legacy Pane trait.
+// These implementations allow SearchPaneV2 to work with the new Navigator
+// system while preserving ALL existing functionality from the legacy Pane
+// trait.
 
 impl NavigatorPane for SearchPaneV2 {
     fn id(&self) -> PaneId {
@@ -1185,9 +1311,10 @@ impl NavigatorPane for SearchPaneV2 {
 
                     Phase::BrowseResults => {
                         // Use unified ContentView key handling
-                        use crate::ui::widgets::content_view::ContentAction;
-                        use crate::domain::DetailItem;
-                        use crate::domain::content::ContentType;
+                        use crate::{
+                            domain::{DetailItem, content::ContentType},
+                            ui::widgets::content_view::ContentAction,
+                        };
 
                         // Handle Esc specifically for phase transition
                         if matches!(key.code(), KeyCode::Esc) {
@@ -1241,21 +1368,23 @@ impl NavigatorPane for SearchPaneV2 {
                                 ctx.render()?;
                                 return Ok(PaneAction::Handled);
                             }
-                            ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
+                            ContentAction::MoveUp(_)
+                            | ContentAction::MoveDown(_)
+                            | ContentAction::Delete(_) => {
                                 // Not applicable in SearchPane
                                 return Ok(PaneAction::Handled);
                             }
                             ContentAction::Enqueue(items) => {
                                 // 'a' key: Add to queue without playing
-                                let songs: Vec<crate::domain::Song> = items
-                                    .iter()
-                                    .filter_map(|i| i.as_song())
-                                    .cloned()
-                                    .collect();
+                                let songs: Vec<crate::domain::Song> =
+                                    items.iter().filter_map(|i| i.as_song()).cloned().collect();
                                 if !songs.is_empty() {
                                     // Use the action system for enqueue
                                     return Ok(PaneAction::Enqueue(songs));
                                 }
+                                return Ok(PaneAction::Handled);
+                            }
+                            ContentAction::Passthrough => {
                                 return Ok(PaneAction::Handled);
                             }
                         }
@@ -1275,11 +1404,14 @@ impl NavigatorPane for SearchPaneV2 {
         match (id, data) {
             // NEW: Handle sectioned search results (ADR-section-as-container)
             (SEARCH_ID, crate::QueryResult::SearchResultSectioned(results)) => {
-                log::debug!("NavigatorPane::on_query_finished received sectioned results with {} sections",
-                    results.sections.len());
+                log::debug!(
+                    "NavigatorPane::on_query_finished received sectioned results with {} sections",
+                    results.sections.len()
+                );
 
                 // Apply config ordering (presentation concern - UI layer only)
-                let ordered_sections = Self::apply_config_order(results.sections, &ctx.config.search.sections);
+                let ordered_sections =
+                    Self::apply_config_order(results.sections, &ctx.config.search.sections);
 
                 // Convert sections to DetailItems for existing SearchResultsContent
                 let items = Self::sections_to_detail_items(ordered_sections);
@@ -1290,11 +1422,18 @@ impl NavigatorPane for SearchPaneV2 {
             }
             // LEGACY: Handle flat search results (backward compatibility)
             ("search_v2", crate::QueryResult::SearchResult { data }) => {
-                log::debug!("NavigatorPane::on_query_finished received {} flat results", data.len());
+                log::debug!(
+                    "NavigatorPane::on_query_finished received {} flat results",
+                    data.len()
+                );
                 if let Some(first) = data.first() {
                     use crate::domain::media_item::Displayable;
-                    log::info!("[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",
-                        first.title(), first.content_type(), first.thumbnail_url());
+                    log::info!(
+                        "[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",
+                        first.title(),
+                        first.content_type(),
+                        first.thumbnail_url()
+                    );
                 }
                 // Reorder by config sections (top_results first, then songs, artists, etc.)
                 let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);

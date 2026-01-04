@@ -9,7 +9,7 @@
 //! - Owns a stack of `ContentLevel<C>` (content + SectionList)
 //! - Provides unified `handle_key()` → `ContentAction`
 //! - Delegates key handling to SectionList
-//! - Translates SectionAction to ContentAction
+//! - Stack-based navigation (push content, go back)
 //!
 //! ## Usage
 //!
@@ -28,15 +28,15 @@
 
 use ratatui::{Frame, prelude::Rect};
 
-use crate::actions::Selection;
-use crate::ctx::Ctx;
-use crate::domain::ContentViewable;
-use crate::shared::key_event::KeyEvent;
-use crate::ui::widgets::detail_stack::build_sections;
-use crate::ui::widgets::section_list::SectionList;
-
 // Re-export ContentAction from navigator_types for backwards compatibility
-pub use crate::ui::panes::navigator_types::{ContentAction, InputMode, SectionAction};
+pub use crate::ui::panes::navigator_types::{ContentAction, InputMode};
+use crate::{
+    actions::Selection,
+    ctx::Ctx,
+    domain::ContentViewable,
+    shared::key_event::KeyEvent,
+    ui::widgets::{detail_stack::build_sections, section_list::SectionList},
+};
 
 // =============================================================================
 // CONTENT LEVEL
@@ -61,10 +61,7 @@ impl<C: ContentViewable> ContentLevel<C> {
         let sections = build_sections(&details);
         let section_list = SectionList::new(sections).with_title(title);
 
-        Self {
-            content,
-            section_list,
-        }
+        Self { content, section_list }
     }
 }
 
@@ -77,7 +74,7 @@ impl<C: ContentViewable> ContentLevel<C> {
 /// Generic over content type `C`. Provides:
 /// - Stack management (push/pop/clear)
 /// - Unified key handling via SectionList
-/// - Action translation (SectionAction → ContentAction)
+/// - Stack-based navigation (push content, go back)
 /// - Rendering delegation to SectionList
 #[derive(Debug, Clone, Default)]
 pub struct ContentView<C: ContentViewable> {
@@ -149,11 +146,7 @@ impl<C: ContentViewable> ContentView<C> {
 
     /// Get breadcrumb path.
     pub fn breadcrumb(&self) -> String {
-        self.stack
-            .iter()
-            .map(|l| l.content.title())
-            .collect::<Vec<_>>()
-            .join(" > ")
+        self.stack.iter().map(|l| l.content.title()).collect::<Vec<_>>().join(" > ")
     }
 
     /// Get the current selection for Intent creation.
@@ -161,9 +154,7 @@ impl<C: ContentViewable> ContentView<C> {
     /// Returns marked items if any are marked, otherwise the current item.
     /// Delegates to SectionList for selection logic.
     pub fn get_selection(&self) -> Selection {
-        self.current()
-            .map(|l| l.section_list.get_selection())
-            .unwrap_or_else(Selection::empty)
+        self.current().map(|l| l.section_list.get_selection()).unwrap_or_else(Selection::empty)
     }
 
     // =========================================================================
@@ -172,9 +163,7 @@ impl<C: ContentViewable> ContentView<C> {
 
     /// Get the current input mode.
     pub fn mode(&self) -> InputMode {
-        self.current()
-            .map(|l| l.section_list.mode())
-            .unwrap_or(InputMode::Normal)
+        self.current().map(|l| l.section_list.mode()).unwrap_or(InputMode::Normal)
     }
 
     // =========================================================================
@@ -184,37 +173,23 @@ impl<C: ContentViewable> ContentView<C> {
     /// Handle a key event.
     ///
     /// Delegates to SectionList and BUBBLES the result to pane.
-    /// Per ADR: ContentView does NOT interpret actions - pane decides what Activate means.
+    /// Per ADR: ContentView does NOT interpret actions - pane decides what
+    /// Activate means.
     pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &Ctx) -> ContentAction {
         let Some(level) = self.current_mut() else {
             return ContentAction::Back;
         };
 
         match level.section_list.handle_key(key, ctx) {
-            SectionAction::Handled => ContentAction::Handled,
-
-            // BUBBLE: Let pane decide what activation means
-            SectionAction::Activate(item) => ContentAction::Activate(item),
-
-            SectionAction::Back => {
-                // Try to pop stack first
+            ContentAction::Back => {
                 if self.pop() {
                     ContentAction::Handled
                 } else {
                     ContentAction::Back
                 }
             }
-
-            // BUBBLE: Let pane handle marked items
-            SectionAction::Mark(items) => ContentAction::Mark(items),
-
-            // BUBBLE: Let pane handle move/delete (Queue, Library, etc.)
-            SectionAction::MoveUp(items) => ContentAction::MoveUp(items),
-            SectionAction::MoveDown(items) => ContentAction::MoveDown(items),
-            SectionAction::Delete(items) => ContentAction::Delete(items),
-            SectionAction::Enqueue(items) => ContentAction::Enqueue(items),
-
-            SectionAction::Passthrough => ContentAction::Handled,
+            ContentAction::Passthrough => ContentAction::Handled,
+            action => action,
         }
     }
 

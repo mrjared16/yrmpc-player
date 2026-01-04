@@ -11,13 +11,22 @@ use ratatui::{Frame, prelude::Rect};
 
 use crate::{
     ctx::Ctx,
-    domain::{AlbumContent, DetailItem},
-    domain::content::ContentType,
+    domain::{AlbumContent, DetailItem, content::ContentType},
     shared::key_event::KeyEvent,
-    ui::panes::navigator_types::{
-        ContentAction, DetailId, DetailPane, EntityContent, EntityRef, InputMode, NavigatorPane, PaneAction, PaneId,
+    ui::{
+        panes::navigator_types::{
+            ContentAction,
+            DetailId,
+            DetailPane,
+            EntityContent,
+            EntityRef,
+            InputMode,
+            NavigatorPane,
+            PaneAction,
+            PaneId,
+        },
+        widgets::content_view::ContentView,
     },
-    ui::widgets::content_view::ContentView,
 };
 
 // =============================================================================
@@ -69,17 +78,10 @@ impl NavigatorPane for AlbumDetailPane {
             }
             ContentAction::Enqueue(items) => {
                 // 'a' key: Add to queue without playing
-                let songs: Vec<_> = items
-                    .iter()
-                    .filter_map(|i| i.as_song())
-                    .cloned()
-                    .collect();
-                if !songs.is_empty() {
-                    PaneAction::Enqueue(songs)
-                } else {
-                    PaneAction::Handled
-                }
+                let songs: Vec<_> = items.iter().filter_map(|i| i.as_song()).cloned().collect();
+                if !songs.is_empty() { PaneAction::Enqueue(songs) } else { PaneAction::Handled }
             }
+            ContentAction::Passthrough => PaneAction::Handled,
         })
     }
 }
@@ -97,9 +99,7 @@ impl AlbumDetailPane {
 
                 if songs.len() > 1 {
                     // Multiple songs selected - play all starting from activated song
-                    let start_index = selection
-                        .find_song_index(&song.uri)
-                        .unwrap_or(0);
+                    let start_index = selection.find_song_index(&song.uri).unwrap_or(0);
                     PaneAction::PlayAll { songs, start_index }
                 } else {
                     // Single song - play it

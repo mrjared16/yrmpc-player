@@ -1,12 +1,14 @@
 //! SectionList - Sectioned list component for detail panes.
 //!
-//! Provides a flat-navigable list with preserved section structure for rendering.
-//! Used by DetailPanes (Artist, Album, Playlist) to display hierarchical content.
+//! Provides a flat-navigable list with preserved section structure for
+//! rendering. Used by DetailPanes (Artist, Album, Playlist) to display
+//! hierarchical content.
 //!
 //! ## Design (SOLID - SRP)
 //!
 //! - **Flat navigation**: j/k moves through all items across sections
-//! - **Sectioned rendering**: Each section can have different layout (list/grid)
+//! - **Sectioned rendering**: Each section can have different layout
+//!   (list/grid)
 //! - **Section navigation**: Tab/Shift-Tab jumps between sections
 //! - **Delegates to InteractiveListView**: For list state and key handling
 //! - **Translates ListAction → SectionAction**: Adding item context
@@ -23,7 +25,8 @@
 //!
 //! ## Architecture Note
 //!
-//! `flat_items` uses `ListItem` (UI layer) not `DetailItem` (domain layer) because:
+//! `flat_items` uses `ListItem` (UI layer) not `DetailItem` (domain layer)
+//! because:
 //! - Headers are a UI concern, not domain data
 //! - `ListItem::Header` is non-focusable and non-actionable
 //! - Domain items are wrapped in `ListItem::Content(DetailItem)`
@@ -44,19 +47,31 @@
 
 use crossterm::event::KeyCode;
 use ratatui::{
+    Frame,
     layout::Rect,
     widgets::{Block, Borders},
-    Frame,
 };
 
-use crate::actions::Selection;
-use crate::ctx::Ctx;
-use crate::domain::DetailItem;
-use crate::shared::key_event::KeyEvent;
-use crate::ui::panes::navigator_types::{InputMode, ListAction, SectionAction, EscResult, BackspaceResult};
-use crate::ui::widgets::detail_stack::SectionView;
-use crate::ui::widgets::list_item::ListItem;
-use crate::ui::widgets::selectable_list::{SelectableList, NavConfig};
+use crate::{
+    actions::Selection,
+    ctx::Ctx,
+    domain::DetailItem,
+    shared::key_event::KeyEvent,
+    ui::{
+        panes::navigator_types::{
+            BackspaceResult,
+            ContentAction,
+            EscResult,
+            InputMode,
+            ListAction,
+        },
+        widgets::{
+            detail_stack::SectionView,
+            list_item::ListItem,
+            selectable_list::{NavConfig, SelectableList},
+        },
+    },
+};
 
 // =============================================================================
 // SECTION LIST
@@ -64,8 +79,8 @@ use crate::ui::widgets::selectable_list::{SelectableList, NavConfig};
 
 /// A navigable list with preserved section structure.
 ///
-/// Wraps `Vec<SectionView>` with an `InteractiveListView` for unified navigation.
-/// Sections are preserved for layout but navigation is flat.
+/// Wraps `Vec<SectionView>` with an `InteractiveListView` for unified
+/// navigation. Sections are preserved for layout but navigation is flat.
 ///
 /// Uses `ListItem` (UI layer) internally to properly separate:
 /// - Domain data (`DetailItem`) - actionable content
@@ -103,24 +118,17 @@ impl SectionList {
             list_view.select(Some(first));
         }
 
-        Self {
-            sections,
-            flat_items,
-            list_view,
-            title: String::new(),
-        }
+        Self { sections, flat_items, list_view, title: String::new() }
     }
 
-    /// Flatten sections into a Vec<ListItem>, inserting headers at section boundaries.
+    /// Flatten sections into a Vec<ListItem>, inserting headers at section
+    /// boundaries.
     fn flatten_sections(sections: &[SectionView]) -> Vec<ListItem> {
         sections
             .iter()
             .flat_map(|s| {
-                let header_iter = if s.title.is_empty() {
-                    None
-                } else {
-                    Some(ListItem::header(&s.title))
-                };
+                let header_iter =
+                    if s.title.is_empty() { None } else { Some(ListItem::header(&s.title)) };
                 header_iter.into_iter().chain(s.items.iter().cloned().map(ListItem::from))
             })
             .collect()
@@ -174,9 +182,11 @@ impl SectionList {
         self.list_view.selected()
     }
 
-    /// Get selected item (returns DetailItem if content, None if header/spacer).
+    /// Get selected item (returns DetailItem if content, None if
+    /// header/spacer).
     pub fn selected_item(&self) -> Option<&DetailItem> {
-        self.list_view.selected()
+        self.list_view
+            .selected()
             .and_then(|idx| self.flat_items.get(idx))
             .and_then(|item| item.as_content())
     }
@@ -299,16 +309,12 @@ impl SectionList {
 
     /// Get a Selection for the Intent system.
     ///
-    /// Returns marked items if any are marked, otherwise returns the current item.
-    /// This is the primary method for panes to get items for action execution.
+    /// Returns marked items if any are marked, otherwise returns the current
+    /// item. This is the primary method for panes to get items for action
+    /// execution.
     pub fn get_selection(&self) -> Selection {
         if self.has_marked() {
-            Selection::new(
-                self.marked_items()
-                    .into_iter()
-                    .cloned()
-                    .collect()
-            )
+            Selection::new(self.marked_items().into_iter().cloned().collect())
         } else if let Some(item) = self.selected_item() {
             Selection::single(item.clone())
         } else {
@@ -322,7 +328,8 @@ impl SectionList {
 
     /// Render the section list.
     ///
-    /// Currently renders as a flat list. Future: render per-section with layout hints.
+    /// Currently renders as a flat list. Future: render per-section with layout
+    /// hints.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) {
         let config = &ctx.config;
 
@@ -362,23 +369,16 @@ impl SectionList {
         self.list_view.set_viewport_height(inner.height);
 
         // Render items with "currently playing" highlight callback
-        self.list_view.render(
-            frame,
-            inner,
-            ctx,
-            &self.flat_items,
-            None,
-            |_idx, item| {
-                // Check if this item is the currently playing song
-                if let Some(song) = item.as_song() {
-                    ctx.find_current_song_in_queue()
-                        .map(|(_, current)| current.uri == song.uri)
-                        .unwrap_or(false)
-                } else {
-                    false
-                }
-            },
-        );
+        self.list_view.render(frame, inner, ctx, &self.flat_items, None, |_idx, item| {
+            // Check if this item is the currently playing song
+            if let Some(song) = item.as_song() {
+                ctx.find_current_song_in_queue()
+                    .map(|(_, current)| current.uri == song.uri)
+                    .unwrap_or(false)
+            } else {
+                false
+            }
+        });
     }
 
     // =========================================================================
@@ -401,10 +401,10 @@ impl SectionList {
     ///   ↓ translates to
     /// SectionAction (with DetailItem context)
     /// ```
-    pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &Ctx) -> SectionAction {
+    pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &Ctx) -> ContentAction {
         // Edit mode: passthrough to pane
         if self.mode() == InputMode::Edit {
-            return SectionAction::Passthrough;
+            return ContentAction::Passthrough;
         }
 
         // Section navigation (SectionList's unique responsibility)
@@ -413,12 +413,12 @@ impl SectionList {
                 KeyCode::Tab => {
                     self.next_section();
                     key.stop_propagation();
-                    return SectionAction::Handled;
+                    return ContentAction::Handled;
                 }
                 KeyCode::BackTab => {
                     self.prev_section();
                     key.stop_propagation();
-                    return SectionAction::Handled;
+                    return ContentAction::Handled;
                 }
                 _ => {}
             }
@@ -427,7 +427,7 @@ impl SectionList {
         // Delegate to InteractiveListView
         let list_action = self.list_view.handle_key(key, &self.flat_items, ctx);
 
-        // Translate ListAction to SectionAction
+        // Translate ListAction to ContentAction
         self.translate_list_action(list_action)
     }
 
@@ -435,46 +435,46 @@ impl SectionList {
     ///
     /// Extracts `DetailItem` from `ListItem::Content` for actions.
     /// Headers/spacers at action indices are ignored (return Handled).
-    fn translate_list_action(&self, action: ListAction) -> SectionAction {
+    fn translate_list_action(&self, action: ListAction) -> ContentAction {
         match action {
-            ListAction::Handled => SectionAction::Handled,
+            ListAction::Handled => ContentAction::Handled,
 
             ListAction::Activate(idx) => {
                 if let Some(item) = self.flat_items.get(idx).and_then(|i| i.as_content()) {
-                    SectionAction::Activate(item.clone())
+                    ContentAction::Activate(item.clone())
                 } else {
-                    SectionAction::Handled
+                    ContentAction::Handled
                 }
             }
 
             ListAction::Mark(indices) => {
                 let items = self.indices_to_items(&indices);
-                SectionAction::Mark(items)
+                ContentAction::Mark(items)
             }
 
             ListAction::MoveUp(indices) => {
                 let items = self.indices_to_items(&indices);
-                SectionAction::MoveUp(items)
+                ContentAction::MoveUp(items)
             }
 
             ListAction::MoveDown(indices) => {
                 let items = self.indices_to_items(&indices);
-                SectionAction::MoveDown(items)
+                ContentAction::MoveDown(items)
             }
 
             ListAction::Delete(indices) => {
                 let items = self.indices_to_items(&indices);
-                SectionAction::Delete(items)
+                ContentAction::Delete(items)
             }
 
             ListAction::Enqueue(indices) => {
                 let items = self.indices_to_items(&indices);
-                SectionAction::Enqueue(items)
+                ContentAction::Enqueue(items)
             }
 
-            ListAction::Back => SectionAction::Back,
+            ListAction::Back => ContentAction::Back,
 
-            ListAction::Passthrough => SectionAction::Passthrough,
+            ListAction::Passthrough => ContentAction::Passthrough,
         }
     }
 
@@ -508,9 +508,8 @@ impl SectionList {
                 if i + 1 < self.sections.len() {
                     let next_start = section_end;
                     // Find first focusable in next section
-                    if let Some(idx) = self.flat_items[next_start..]
-                        .iter()
-                        .position(|item| item.is_focusable())
+                    if let Some(idx) =
+                        self.flat_items[next_start..].iter().position(|item| item.is_focusable())
                     {
                         self.list_view.select(Some(next_start + idx));
                     }
@@ -561,27 +560,18 @@ impl SectionList {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::content::SectionKey;
-    use crate::ui::panes::navigator_types::EscResult;
+    use crate::{domain::content::SectionKey, ui::panes::navigator_types::EscResult};
 
     fn make_test_sections() -> Vec<SectionView> {
         vec![
-            SectionView::new(
-                SectionKey::Stats,
-                "Section 1",
-                vec![
-                    // Note: No DetailItem::Header here - headers are added by SectionList
-                    DetailItem::artist("a1", "Artist 1"),
-                    DetailItem::artist("a2", "Artist 2"),
-                ],
-            ),
-            SectionView::new(
-                SectionKey::Albums,
-                "Section 2",
-                vec![
-                    DetailItem::album("al1", "Album 1"),
-                ],
-            ),
+            SectionView::new(SectionKey::Stats, "Section 1", vec![
+                // Note: No DetailItem::Header here - headers are added by SectionList
+                DetailItem::artist("a1", "Artist 1"),
+                DetailItem::artist("a2", "Artist 2"),
+            ]),
+            SectionView::new(SectionKey::Albums, "Section 2", vec![DetailItem::album(
+                "al1", "Album 1",
+            )]),
         ]
     }
 
@@ -662,10 +652,10 @@ mod tests {
         // Test Activate translation - index 1 is Artist 1 (first focusable item)
         let action = list.translate_list_action(ListAction::Activate(1));
         match action {
-            SectionAction::Activate(item) => {
+            ContentAction::Activate(item) => {
                 assert!(matches!(item, DetailItem::Ref(_)));
             }
-            _ => panic!("Expected SectionAction::Activate"),
+            _ => panic!("Expected ContentAction::Activate"),
         }
     }
 
@@ -677,20 +667,22 @@ mod tests {
         // Test Delete translation - indices 1 and 2 are Artist 1 and Artist 2
         let action = list.translate_list_action(ListAction::Delete(vec![1, 2]));
         match action {
-            SectionAction::Delete(items) => {
+            ContentAction::Delete(items) => {
                 assert_eq!(items.len(), 2);
             }
-            _ => panic!("Expected SectionAction::Delete"),
+            _ => panic!("Expected ContentAction::Delete"),
         }
     }
 
     /// BUG: tasks-39,40,41 - Items don't show "currently playing" indicator
     ///
-    /// EXPECTED BEHAVIOR: Currently playing song should have highlight/indicator
-    /// ACTUAL BEHAVIOR: No playing indicator because render_simple() hardcodes highlight to false
+    /// EXPECTED BEHAVIOR: Currently playing song should have
+    /// highlight/indicator ACTUAL BEHAVIOR: No playing indicator because
+    /// render_simple() hardcodes highlight to false
     ///
-    /// ROOT CAUSE: SectionList.render() line 366 uses render_simple() which doesn't
-    /// accept a highlight callback, so the "is_playing" indicator never shows.
+    /// ROOT CAUSE: SectionList.render() line 366 uses render_simple() which
+    /// doesn't accept a highlight callback, so the "is_playing" indicator
+    /// never shows.
     #[test]
     fn render_should_accept_highlight_callback_for_playing_indicator() {
         let sections = make_test_sections();
@@ -699,8 +691,9 @@ mod tests {
         // This test documents the architectural issue:
         // render_simple() is called which hardcodes |_, _| false for highlight
         //
-        // Expected: Should call render() with a callback that checks ctx.find_current_song_in_queue()
-        // Actual: Always passes false, so no "currently playing" visual indicator
+        // Expected: Should call render() with a callback that checks
+        // ctx.find_current_song_in_queue() Actual: Always passes false, so no
+        // "currently playing" visual indicator
         //
         // This affects:
         // - Task 39: All items look the same (no playing indicator)
@@ -710,8 +703,8 @@ mod tests {
         // TODO: Change line 366 in section_list.rs from:
         //   self.list_view.render_simple(frame, inner, ctx, &self.flat_items, None);
         // To:
-        //   self.list_view.render(frame, inner, ctx, &self.flat_items, None, |idx, item| {
-        //       // Check if item is currently playing
+        //   self.list_view.render(frame, inner, ctx, &self.flat_items, None, |idx,
+        // item| {       // Check if item is currently playing
         //       if let Some(song) = item.as_song() {
         //           ctx.find_current_song_in_queue()
         //               .map(|(_, current)| current.uri == song.uri)
@@ -720,7 +713,7 @@ mod tests {
         //           false
         //       }
         //   });
-        
+
         // For now, just assert the structure exists
         assert!(list.items().len() > 0, "Should have items to render");
     }
@@ -732,7 +725,7 @@ mod tests {
 
         // Activating a header (index 0) should return Handled, not Activate
         let action = list.translate_list_action(ListAction::Activate(0));
-        assert!(matches!(action, SectionAction::Handled));
+        assert!(matches!(action, ContentAction::Handled));
     }
 
     #[test]
