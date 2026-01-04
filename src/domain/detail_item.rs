@@ -1,6 +1,7 @@
 //! DetailItem - Domain items for navigation stacks.
 //!
-//! This enum represents **actionable content** that can appear in a navigation list:
+//! This enum represents **actionable content** that can appear in a navigation
+//! list:
 //! - Songs (playable)
 //! - ContentRefs (navigable - albums, artists, playlists)
 //!
@@ -42,7 +43,7 @@
 //!     ListItem::Content(DetailItem::Song(song2)),
 //! ];
 //! ```
-//!
+//! 
 //! Extract actionable items for Intent/Selection:
 //! ```rust,ignore
 //! let actionable: Vec<DetailItem> = items
@@ -53,12 +54,15 @@
 //! ```
 
 use std::borrow::Cow;
+
 use ratatui::style::{Color, Style};
 
-use super::display::ListItemDisplay;
-use super::song::Song;
-use super::content::{ContentRef, ContentType};
-use super::search::{SearchItem, PlayableItem, BrowsableItem};
+use super::{
+    content::{ContentRef, ContentType},
+    display::ListItemDisplay,
+    search::{BrowsableItem, PlayableItem, SearchItem},
+    song::Song,
+};
 
 /// A unified item type for navigation lists.
 ///
@@ -73,7 +77,6 @@ pub enum DetailItem {
 }
 
 impl DetailItem {
-
     /// Create a song item.
     pub fn song(song: Song) -> Self {
         Self::Song(song)
@@ -370,7 +373,13 @@ impl From<Song> for DetailItem {
 // CONVERSION FROM MEDIAITEM (strongly-typed, no data loss)
 // =============================================================================
 
-use crate::domain::media_item::{MediaItem, Track, Artist as MediaArtist, Album as MediaAlbum, Playlist as MediaPlaylist};
+use crate::domain::media_item::{
+    Album as MediaAlbum,
+    Artist as MediaArtist,
+    MediaItem,
+    Playlist as MediaPlaylist,
+    Track,
+};
 
 impl From<MediaItem> for DetailItem {
     fn from(media: MediaItem) -> Self {
@@ -449,11 +458,11 @@ mod tests {
         assert_eq!(playlist.type_icon(), "📁");
     }
 
-    /// Test: From<SearchItem> correctly converts to DetailItem with proper types
-    /// This is the NEW type-safe conversion (no metadata parsing)
+    /// Test: From<SearchItem> correctly converts to DetailItem with proper
+    /// types This is the NEW type-safe conversion (no metadata parsing)
     #[test]
     fn test_search_item_to_detail_item_artist() {
-        use crate::domain::search::{SearchItem, BrowsableItem, ArtistItem};
+        use crate::domain::search::{ArtistItem, BrowsableItem, SearchItem};
 
         let artist_item = ArtistItem {
             browse_id: Some("UC123".into()),
@@ -474,7 +483,7 @@ mod tests {
     /// Test: From<SearchItem> correctly converts albums
     #[test]
     fn test_search_item_to_detail_item_album() {
-        use crate::domain::search::{SearchItem, BrowsableItem, AlbumItem};
+        use crate::domain::search::{AlbumItem, BrowsableItem, SearchItem};
 
         let album_item = AlbumItem {
             album_id: "MPREb123".into(),
@@ -520,7 +529,8 @@ mod tests {
         assert!(matches!(&item, DetailItem::Song(_)));
     }
 
-    /// Test: All DetailItems are focusable (headers are in ListItem, not DetailItem)
+    /// Test: All DetailItems are focusable (headers are in ListItem, not
+    /// DetailItem)
     #[test]
     fn test_all_detail_items_are_focusable() {
         let artist = DetailItem::artist("a", "Artist");

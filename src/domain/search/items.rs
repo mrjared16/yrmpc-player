@@ -1,7 +1,7 @@
 //! Item struct definitions for search results
 
-use std::time::Duration;
-use std::collections::HashMap;
+use std::{collections::HashMap, time::Duration};
+
 use crate::domain::Song;
 
 /// A song from search results
@@ -67,7 +67,7 @@ impl From<&SongItem> for Song {
         metadata.insert("title".to_string(), vec![item.title.clone()]);
         metadata.insert("artist".to_string(), vec![item.artist.clone()]);
         metadata.insert("type".to_string(), vec!["song".to_string()]);
-        
+
         if let Some(ref album) = item.album {
             metadata.insert("album".to_string(), vec![album.clone()]);
         }
@@ -139,12 +139,7 @@ impl Default for VideoItem {
 
 impl Default for ArtistItem {
     fn default() -> Self {
-        Self {
-            browse_id: None,
-            name: String::new(),
-            subscribers: None,
-            thumbnail: None,
-        }
+        Self { browse_id: None, name: String::new(), subscribers: None, thumbnail: None }
     }
 }
 
@@ -178,8 +173,8 @@ impl Default for PlaylistItem {
 // These construct ContentUri on-the-fly from existing ID fields
 // for backwards compatibility during migration.
 
+use super::{BrowsableItem, PlayableItem, SearchItem};
 use crate::domain::content_uri::ContentUri;
-use super::{PlayableItem, BrowsableItem, SearchItem};
 
 impl SongItem {
     /// Get the ContentUri for this song
@@ -246,4 +241,3 @@ impl SearchItem {
         }
     }
 }
-

@@ -29,18 +29,12 @@ pub struct QueueEntry {
 impl QueueEntry {
     /// Create a new queue entry from a playable item
     pub fn new(content: PlayableItem) -> Self {
-        Self {
-            content,
-            backend_id: None,
-        }
+        Self { content, backend_id: None }
     }
 
     /// Create a new queue entry with a backend ID
     pub fn with_backend_id(content: PlayableItem, backend_id: u32) -> Self {
-        Self {
-            content,
-            backend_id: Some(backend_id),
-        }
+        Self { content, backend_id: Some(backend_id) }
     }
 
     /// Get the video ID for playback
@@ -81,7 +75,7 @@ impl super::search::Displayable for QueueEntry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::search::{SongItem, PlayableItem};
+    use crate::domain::search::{PlayableItem, SongItem};
 
     #[test]
     fn test_queue_entry_creation() {
@@ -113,10 +107,7 @@ mod tests {
 
     #[test]
     fn test_content_uri() {
-        let song = SongItem {
-            video_id: "dQw4w9WgXcQ".to_string(),
-            ..Default::default()
-        };
+        let song = SongItem { video_id: "dQw4w9WgXcQ".to_string(), ..Default::default() };
 
         let entry = QueueEntry::new(PlayableItem::Song(song));
         let uri = entry.content_uri();

@@ -1,8 +1,10 @@
 //! Conversions from ytmapi-rs types to SearchItem types
 //!
-//! These conversions are thin - minimal transformation, keep data close to source.
+//! These conversions are thin - minimal transformation, keep data close to
+//! source.
 
 use std::time::Duration;
+
 use ytmapi_rs::common::YoutubeID;
 
 use super::*;
@@ -12,9 +14,7 @@ use super::*;
 /// Parse duration string "MM:SS" or "HH:MM:SS" to Duration
 pub fn parse_duration(s: &str) -> Option<Duration> {
     s.split(':')
-        .try_fold(0u64, |acc, part| {
-            part.parse::<u64>().map(|v| acc * 60 + v).ok()
-        })
+        .try_fold(0u64, |acc, part| part.parse::<u64>().map(|v| acc * 60 + v).ok())
         .map(Duration::from_secs)
 }
 
@@ -23,10 +23,7 @@ pub fn best_thumbnail<'a, I>(thumbnails: I) -> Option<String>
 where
     I: IntoIterator<Item = &'a ytmapi_rs::common::Thumbnail>,
 {
-    thumbnails
-        .into_iter()
-        .max_by_key(|t| t.width)
-        .map(|t| t.url.clone())
+    thumbnails.into_iter().max_by_key(|t| t.width).map(|t| t.url.clone())
 }
 
 // ============ From implementations for ytmapi-rs types ============
@@ -134,33 +131,39 @@ impl From<ytmapi_rs::parse::SearchResultFeaturedPlaylist> for SearchItem {
 /// Convert video search result to SearchItem
 impl TryFrom<ytmapi_rs::parse::SearchResultVideo> for SearchItem {
     type Error = ();
-    
+
     fn try_from(r: ytmapi_rs::parse::SearchResultVideo) -> Result<Self, Self::Error> {
         match r {
-            ytmapi_rs::parse::SearchResultVideo::Video { 
-                title, channel_name, video_id, views, length, thumbnails, .. 
-            } => {
-                Ok(SearchItem::Playable(PlayableItem::Video(VideoItem {
-                    video_id: video_id.get_raw().to_string(),
-                    title,
-                    channel: channel_name,
-                    views: Some(views),
-                    duration: parse_duration(&length),
-                    thumbnail: thumbnails.last().map(|t| t.url.clone()),
-                })))
-            }
-            ytmapi_rs::parse::SearchResultVideo::VideoEpisode { 
-                title, channel_name, episode_id, thumbnails, .. 
-            } => {
-                Ok(SearchItem::Playable(PlayableItem::Video(VideoItem {
-                    video_id: episode_id.get_raw().to_string(),
-                    title,
-                    channel: channel_name,
-                    views: None,
-                    duration: None,
-                    thumbnail: thumbnails.last().map(|t| t.url.clone()),
-                })))
-            }
+            ytmapi_rs::parse::SearchResultVideo::Video {
+                title,
+                channel_name,
+                video_id,
+                views,
+                length,
+                thumbnails,
+                ..
+            } => Ok(SearchItem::Playable(PlayableItem::Video(VideoItem {
+                video_id: video_id.get_raw().to_string(),
+                title,
+                channel: channel_name,
+                views: Some(views),
+                duration: parse_duration(&length),
+                thumbnail: thumbnails.last().map(|t| t.url.clone()),
+            }))),
+            ytmapi_rs::parse::SearchResultVideo::VideoEpisode {
+                title,
+                channel_name,
+                episode_id,
+                thumbnails,
+                ..
+            } => Ok(SearchItem::Playable(PlayableItem::Video(VideoItem {
+                video_id: episode_id.get_raw().to_string(),
+                title,
+                channel: channel_name,
+                views: None,
+                duration: None,
+                thumbnail: thumbnails.last().map(|t| t.url.clone()),
+            }))),
         }
     }
 }
@@ -168,10 +171,10 @@ impl TryFrom<ytmapi_rs::parse::SearchResultVideo> for SearchItem {
 /// Convert TopResult to SearchItem - requires special handling
 impl TryFrom<ytmapi_rs::parse::TopResult> for SearchItem {
     type Error = TopResultConversionError;
-    
+
     fn try_from(r: ytmapi_rs::parse::TopResult) -> Result<Self, Self::Error> {
         use ytmapi_rs::parse::TopResultType;
-        
+
         match r.result_type {
             Some(TopResultType::Song) | Some(TopResultType::Video) => {
                 let video_id = r.video_id.ok_or(TopResultConversionError::MissingVideoId)?;
@@ -238,12 +241,17 @@ impl TryFrom<ytmapi_rs::parse::TopResult> for SearchItem {
                         thumbnail: r.thumbnails.last().map(|t| t.url.clone()),
                     })))
                 } else if r.byline.is_some() || r.artist.is_some() {
-                    // Has byline or artist but no IDs - this is a "featured" top result like "Jazz Radio"
-                    // Treat as a playlist/station - it can be displayed but not played directly
-                    // Use a synthetic ID so it can at least be shown
-                    let author = r.byline.or(r.artist).unwrap_or_else(|| "YouTube Music".to_string());
+                    // Has byline or artist but no IDs - this is a "featured" top result like "Jazz
+                    // Radio" Treat as a playlist/station - it can be displayed
+                    // but not played directly Use a synthetic ID so it can at
+                    // least be shown
+                    let author =
+                        r.byline.or(r.artist).unwrap_or_else(|| "YouTube Music".to_string());
                     Ok(SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
-                        playlist_id: format!("featured:{}", r.result_name.chars().take(20).collect::<String>()),
+                        playlist_id: format!(
+                            "featured:{}",
+                            r.result_name.chars().take(20).collect::<String>()
+                        ),
                         title: r.result_name,
                         author,
                         track_count: None,

@@ -9,8 +9,8 @@ use ratatui::style::Style;
 
 /// Unified display trait for items rendered in lists.
 ///
-/// Implementors provide data extraction; the widget handles layout and rendering.
-/// This decouples domain models from the UI framework (ratatui).
+/// Implementors provide data extraction; the widget handles layout and
+/// rendering. This decouples domain models from the UI framework (ratatui).
 ///
 /// # Example
 /// ```ignore
@@ -45,7 +45,8 @@ pub trait ListItemDisplay {
     }
 
     /// Style for the type icon (enables type-specific colors).
-    /// Default: white. Override for semantic coloring per ui-ux-provised.md 4.1.
+    /// Default: white. Override for semantic coloring per ui-ux-provised.md
+    /// 4.1.
     fn icon_style(&self) -> Style {
         Style::default()
     }
@@ -62,8 +63,15 @@ pub trait ListItemDisplay {
         false
     }
 
-    /// Whether this item is a section header (e.g., "Top Results", "Songs", "Artists").
-    /// Headers are rendered with distinct styling: bold, centered, single row.
+    /// Whether this item is next in playback order (for shuffle mode
+    /// indicator). When true, renderer shows ▷ icon or "NEXT" label.
+    fn is_next(&self) -> bool {
+        false
+    }
+
+    /// Whether this item is a section header (e.g., "Top Results", "Songs",
+    /// "Artists"). Headers are rendered with distinct styling: bold,
+    /// centered, single row.
     fn is_header(&self) -> bool {
         false
     }
@@ -71,7 +79,8 @@ pub trait ListItemDisplay {
     /// Whether this item can receive focus/selection during navigation.
     /// Default: true for regular items, false for headers.
     /// Returning false causes navigation to skip this item.
-    /// Future-proof: can be overridden to enable selectable headers for actions.
+    /// Future-proof: can be overridden to enable selectable headers for
+    /// actions.
     fn is_focusable(&self) -> bool {
         !self.is_header()
     }

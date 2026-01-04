@@ -1,4 +1,5 @@
 use std::time::Duration;
+
 use serde::{Deserialize, Serialize};
 
 /// Playback state
@@ -7,7 +8,6 @@ pub enum State {
     Play,
     Pause,
     Stop,
-
 }
 impl std::fmt::Display for State {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -65,13 +65,13 @@ impl OnOffOneshot {
 pub struct Status {
     /// Current playback state
     pub state: State,
-    
+
     /// Volume (0-100)
     pub volume: u8,
-    
+
     /// Repeat mode enabled
     pub repeat: bool,
-    
+
     /// Random/shuffle mode enabled
     pub random: bool,
 
@@ -86,25 +86,28 @@ pub struct Status {
 
     /// Playlist length
     pub playlistlength: u32,
-    
+
     /// Elapsed time in current song
     pub elapsed: Option<Duration>,
-    
+
     /// Total duration of current song
     pub duration: Option<Duration>,
-    
+
     /// Current song ID (MPD uses 'songid')
     pub songid: Option<u32>,
-    
+
     /// Next song ID (if applicable)
     pub next_songid: Option<u32>,
-    
+
     /// Current position in queue (if applicable)
     pub song_position: Option<u32>,
-    
+
+    /// Next position in queue (for shuffle mode visual indicator)
+    pub next_song_position: Option<u32>,
+
     /// Bitrate in kbps (if available)
     pub bitrate: Option<u32>,
-    
+
     /// Error message (if any)
     pub error: Option<String>,
 
@@ -137,6 +140,7 @@ impl Default for Status {
             songid: None,
             next_songid: None,
             song_position: None,
+            next_song_position: None,
             bitrate: None,
             error: None,
             updating_db: None,
@@ -195,6 +199,7 @@ impl From<crate::mpd::commands::status::Status> for Status {
             songid: mpd_status.songid,
             next_songid: mpd_status.nextsongid,
             song_position: mpd_status.song,
+            next_song_position: mpd_status.nextsong,
             bitrate: mpd_status.bitrate,
             error: mpd_status.error,
             updating_db: mpd_status.updating_db,

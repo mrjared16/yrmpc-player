@@ -1,18 +1,19 @@
 //! Search result types for YouTube Music
 //!
 //! This module provides type-safe representation of search results,
-//! separating playable items (songs/videos) from browsable items (artists/albums/playlists).
+//! separating playable items (songs/videos) from browsable items
+//! (artists/albums/playlists).
 //!
 //! Design rationale: See docs/design-choices.md
 
-mod items;
-mod display;
 mod convert;
-
-pub use items::*;
-pub use display::Displayable;
+mod display;
+mod items;
 
 use std::time::Duration;
+
+pub use display::Displayable;
+pub use items::*;
 
 /// Top-level search result type
 ///
@@ -82,11 +83,12 @@ pub enum QueueAction {
 
 /// A section of search results with a title header
 ///
-/// This preserves the API's section structure (e.g., "Top Result", "Songs", "Artists")
-/// without mixing header metadata into the domain item types.
+/// This preserves the API's section structure (e.g., "Top Result", "Songs",
+/// "Artists") without mixing header metadata into the domain item types.
 #[derive(Debug, Clone, PartialEq)]
 pub struct SearchSection {
-    /// Section key for config ordering (e.g., "top_results", "songs", "artists")
+    /// Section key for config ordering (e.g., "top_results", "songs",
+    /// "artists")
     pub key: String,
     /// Section title for display (e.g., "Top Result", "Songs", "Artists")
     pub title: String,
@@ -97,11 +99,7 @@ pub struct SearchSection {
 impl SearchSection {
     /// Create a new search section
     pub fn new(key: impl Into<String>, title: impl Into<String>, items: Vec<SearchItem>) -> Self {
-        Self {
-            key: key.into(),
-            title: title.into(),
-            items,
-        }
+        Self { key: key.into(), title: title.into(), items }
     }
 
     /// Check if this section is empty
@@ -138,10 +136,7 @@ impl SearchResults {
     /// Flatten all items from all sections into a single Vec
     /// (for backwards compatibility with code expecting Vec<SearchItem>)
     pub fn flatten(&self) -> Vec<SearchItem> {
-        self.sections
-            .iter()
-            .flat_map(|s| s.items.clone())
-            .collect()
+        self.sections.iter().flat_map(|s| s.items.clone()).collect()
     }
 
     /// Get total item count across all sections
@@ -232,8 +227,9 @@ impl BrowsableItem {
 /// Convert api::Item to SearchItem
 impl From<crate::backends::api::Item> for SearchItem {
     fn from(item: crate::backends::api::Item) -> Self {
+        use items::{AlbumItem, ArtistItem, PlaylistItem, SongItem, VideoItem};
+
         use crate::domain::ContentType;
-        use items::{SongItem, VideoItem, ArtistItem, AlbumItem, PlaylistItem};
 
         match item.content_type {
             ContentType::Track => SearchItem::Playable(PlayableItem::Song(SongItem {
@@ -294,8 +290,6 @@ impl From<crate::backends::api::SearchSection> for SearchSection {
 /// Convert api::SearchResults to domain SearchResults
 impl From<crate::backends::api::SearchResults> for SearchResults {
     fn from(results: crate::backends::api::SearchResults) -> Self {
-        SearchResults {
-            sections: results.sections.into_iter().map(SearchSection::from).collect(),
-        }
+        SearchResults { sections: results.sections.into_iter().map(SearchSection::from).collect() }
     }
 }

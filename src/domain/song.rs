@@ -1,5 +1,5 @@
-use std::collections::HashMap;
-use std::time::Duration;
+use std::{collections::HashMap, time::Duration};
+
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
@@ -16,7 +16,7 @@ pub struct Song {
     /// - MPD: "Music/Artist/Album/Track.flac"
     /// - YouTube: "dQw4w9WgXcQ" (video ID)
     /// - Browse: "artist:UC12345", "album:MPREb_xyz"
-    #[serde(alias = "file")]  // Backward compat for existing config/cache files
+    #[serde(alias = "file")] // Backward compat for existing config/cache files
     pub uri: String,
 
     /// Duration of the song
@@ -49,27 +49,17 @@ impl Default for Song {
 impl Song {
     /// Get the title from metadata, or URI as fallback
     pub fn title(&self) -> &str {
-        self.metadata
-            .get("title")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
-            .unwrap_or(&self.uri)
+        self.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or(&self.uri)
     }
 
     /// Get the artist from metadata
     pub fn artist(&self) -> Option<&str> {
-        self.metadata
-            .get("artist")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
+        self.metadata.get("artist").and_then(|v| v.first()).map(|s| s.as_str())
     }
 
     /// Get the album from metadata
     pub fn album(&self) -> Option<&str> {
-        self.metadata
-            .get("album")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
+        self.metadata.get("album").and_then(|v| v.first()).map(|s| s.as_str())
     }
 }
 
@@ -77,20 +67,25 @@ impl Song {
 impl From<crate::mpd::commands::current_song::Song> for Song {
     fn from(mpd_song: crate::mpd::commands::current_song::Song) -> Self {
         use crate::mpd::commands::metadata_tag::MetadataTag;
-        
-        // Convert metadata from HashMap<String, MetadataTag> to HashMap<String, Vec<String>>
-        let metadata = mpd_song.metadata.into_iter().map(|(key, tag)| {
-            // Convert MetadataTag enum to Vec<String>
-            let values = match tag {
-                MetadataTag::Single(s) => vec![s],
-                MetadataTag::Multiple(v) => v,
-            };
-            (key, values)
-        }).collect();
+
+        // Convert metadata from HashMap<String, MetadataTag> to HashMap<String,
+        // Vec<String>>
+        let metadata = mpd_song
+            .metadata
+            .into_iter()
+            .map(|(key, tag)| {
+                // Convert MetadataTag enum to Vec<String>
+                let values = match tag {
+                    MetadataTag::Single(s) => vec![s],
+                    MetadataTag::Multiple(v) => v,
+                };
+                (key, values)
+            })
+            .collect();
 
         Self {
             id: Some(mpd_song.id),
-            uri: mpd_song.file,  // MPD uses 'file' as the field name
+            uri: mpd_song.file, // MPD uses 'file' as the field name
             duration: mpd_song.duration,
             metadata,
             last_modified: Some(mpd_song.last_modified),
@@ -100,24 +95,23 @@ impl From<crate::mpd::commands::current_song::Song> for Song {
 }
 
 // Implement ListItemDisplay for rich list rendering
-use crate::domain::display::ListItemDisplay;
-use ratatui::style::{Color, Style};
 use std::borrow::Cow;
 
+use ratatui::style::{Color, Style};
+
+use crate::domain::display::ListItemDisplay;
+
 impl Song {
-    /// Get the item type from metadata (used for icon/style selection, focusability checks).
+    /// Get the item type from metadata (used for icon/style selection,
+    /// focusability checks).
     pub fn item_type(&self) -> Option<&str> {
-        self.metadata.get("type")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
+        self.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str())
     }
 
     /// Get the browse ID for navigable items (albums, artists, playlists).
     /// This is the ID used to fetch details from the backend.
     pub fn browse_id(&self) -> Option<&str> {
-        self.metadata.get("browse_id")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str())
+        self.metadata.get("browse_id").and_then(|v| v.first()).map(|s| s.as_str())
     }
 }
 
@@ -132,7 +126,7 @@ impl ListItemDisplay for Song {
         if let Some(subtitle) = self.metadata.get("subtitle").and_then(|v| v.first()) {
             return Some(Cow::Borrowed(subtitle.as_str()));
         }
-        
+
         // For playable items (songs/videos), use artist · album
         match (self.artist(), self.album()) {
             (Some(a), Some(b)) => Some(Cow::Owned(format!("{} · {}", a, b))),
@@ -152,9 +146,9 @@ impl ListItemDisplay for Song {
             Some("album") => "💿",
             Some("playlist") => "📁",
             Some("video") => "🎬",
-            Some("header") => "─",  // Header shows dash
-            Some("song") => "🎵",   // Explicit song type shows music note
-            _ => "",  // Unknown types or no metadata show nothing
+            Some("header") => "─", // Header shows dash
+            Some("song") => "🎵",  // Explicit song type shows music note
+            _ => "",               // Unknown types or no metadata show nothing
         }
     }
 
@@ -272,4 +266,3 @@ mod tests {
         assert_eq!(song.thumbnail_url(), Some("https://example.com/cover.jpg"));
     }
 }
-

@@ -1,15 +1,21 @@
 //! Type-Safe Hybrid ContentDetails architecture.
 //!
-//! This module provides backend-agnostic content detail types using a hybrid approach:
-//! - **Type-specific structs** (`AlbumContent`, `ArtistContent`, `PlaylistContent`) for semantic guarantees
-//! - **Extensions container** for dynamic/optional sections that vary by backend
+//! This module provides backend-agnostic content detail types using a hybrid
+//! approach:
+//! - **Type-specific structs** (`AlbumContent`, `ArtistContent`,
+//!   `PlaylistContent`) for semantic guarantees
+//! - **Extensions container** for dynamic/optional sections that vary by
+//!   backend
 //!
 //! # Design Principles
 //!
 //! 1. **Core fields are required** - `id`, `title`, `tracks` are always present
-//! 2. **Optional metadata uses `Option<T>`** - `thumbnail`, `year`, `description`
-//! 3. **Dynamic sections via Extensions** - backends return only what they support
-//! 4. **No empty vectors masquerading as missing features** - missing section = not supported
+//! 2. **Optional metadata uses `Option<T>`** - `thumbnail`, `year`,
+//!    `description`
+//! 3. **Dynamic sections via Extensions** - backends return only what they
+//!    support
+//! 4. **No empty vectors masquerading as missing features** - missing section =
+//!    not supported
 //!
 //! # Example
 //!
@@ -39,8 +45,8 @@
 //! ```
 
 use std::time::Duration;
-use super::Song;
-use super::DetailItem;
+
+use super::{DetailItem, Song};
 
 // =============================================================================
 // CONTENT DETAILS ENUM
@@ -108,7 +114,7 @@ impl ContentDetails {
 
     /// Get the extensions container.
     pub fn extensions(&self) -> &Extensions {
-        static EMPTY_EXTENSIONS: std::sync::LazyLock<Extensions> = 
+        static EMPTY_EXTENSIONS: std::sync::LazyLock<Extensions> =
             std::sync::LazyLock::new(Extensions::new);
         match self {
             Self::Search(_) => &EMPTY_EXTENSIONS,
@@ -197,9 +203,11 @@ impl ContentDetails {
                         key: SectionKey::SearchResults,
                         title: String::new(),
                         content: SectionData::Items(
-                            search.items.iter()
+                            search
+                                .items
+                                .iter()
                                 .filter_map(|item| item.as_content_ref().cloned())
-                                .collect()
+                                .collect(),
                         ),
                     });
                 }
@@ -253,15 +261,14 @@ impl ContentDetails {
                             sections.push(Section {
                                 key: SectionKey::NowPlaying,
                                 title: "Now Playing".to_string(),
-                                content: SectionData::Tracks(vec![queue.songs[current_idx].clone()]),
+                                content: SectionData::Tracks(vec![
+                                    queue.songs[current_idx].clone(),
+                                ]),
                             });
 
                             // Up Next
-                            let up_next: Vec<Song> = queue.songs
-                                .iter()
-                                .skip(current_idx + 1)
-                                .cloned()
-                                .collect();
+                            let up_next: Vec<Song> =
+                                queue.songs.iter().skip(current_idx + 1).cloned().collect();
                             if !up_next.is_empty() {
                                 sections.push(Section {
                                     key: SectionKey::UpNext,
@@ -372,7 +379,7 @@ pub struct PlaylistContent {
 }
 
 /// Search results content with items grouped by type.
-/// 
+///
 /// Unlike other content types, search results are already `DetailItem`s
 /// (songs, albums, artists, playlists mixed together with headers).
 /// Section ordering is controlled by `config.search.sections`.
@@ -404,11 +411,7 @@ impl SearchResultsContent {
     /// Create new search results.
     pub fn new(query: impl Into<String>, items: Vec<DetailItem>) -> Self {
         let query = query.into();
-        let title = if query.is_empty() { 
-            "Results".to_string() 
-        } else { 
-            format!("\"{}\"", query)
-        };
+        let title = if query.is_empty() { "Results".to_string() } else { format!("\"{}\"", query) };
         Self { query, title, items }
     }
 }
@@ -417,20 +420,16 @@ impl QueueContent {
     /// Create new queue content.
     pub fn new(songs: Vec<Song>, current_index: Option<usize>) -> Self {
         let count = songs.len();
-        Self {
-            songs,
-            title: format!("Queue ({} items)", count),
-            current_index,
-        }
+        Self { songs, title: format!("Queue ({} items)", count), current_index }
     }
 
     /// Create with a custom title.
-    pub fn with_title(songs: Vec<Song>, title: impl Into<String>, current_index: Option<usize>) -> Self {
-        Self {
-            songs,
-            title: title.into(),
-            current_index,
-        }
+    pub fn with_title(
+        songs: Vec<Song>,
+        title: impl Into<String>,
+        current_index: Option<usize>,
+    ) -> Self {
+        Self { songs, title: title.into(), current_index }
     }
 }
 
@@ -572,13 +571,13 @@ impl super::display::ListItemDisplay for ContentRef {
 
     fn type_icon(&self) -> &str {
         match self.content_type {
-            ContentType::Artist => " ",  // Nerd Font artist icon
-            ContentType::Album => " ",   // Nerd Font disc icon
-            ContentType::Playlist => " ", // Nerd Font list icon
+            ContentType::Artist => " ",    // Nerd Font artist icon
+            ContentType::Album => " ",     // Nerd Font disc icon
+            ContentType::Playlist => " ",  // Nerd Font list icon
             ContentType::Directory => " ", // Nerd Font folder icon
-            ContentType::Video => " ",   // Nerd Font video icon
-            ContentType::Track => " ",   // Nerd Font music icon
-            ContentType::Header => "─",  // Section divider
+            ContentType::Video => " ",     // Nerd Font video icon
+            ContentType::Track => " ",     // Nerd Font music icon
+            ContentType::Header => "─",    // Section divider
         }
     }
 
@@ -593,7 +592,7 @@ impl super::display::ListItemDisplay for ContentRef {
 
 /// Type of content for navigation and rendering hints.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
-#[non_exhaustive]  // Allow adding variants without breaking changes
+#[non_exhaustive] // Allow adding variants without breaking changes
 pub enum ContentType {
     #[default]
     Track,
@@ -621,8 +620,8 @@ pub enum ReleaseType {
 
 /// Container for optional/dynamic sections.
 ///
-/// Backends return only the sections they support. Missing section = feature not supported.
-/// This avoids the ambiguity of empty vectors.
+/// Backends return only the sections they support. Missing section = feature
+/// not supported. This avoids the ambiguity of empty vectors.
 #[derive(Debug, Clone, Default)]
 pub struct Extensions {
     sections: Vec<Section>,
@@ -806,12 +805,13 @@ impl ExtensionsBuilder {
     }
 
     /// Add a custom section.
-    pub fn section(mut self, key: SectionKey, title: impl Into<String>, content: SectionData) -> Self {
-        self.sections.push(Section {
-            key,
-            title: title.into(),
-            content,
-        });
+    pub fn section(
+        mut self,
+        key: SectionKey,
+        title: impl Into<String>,
+        content: SectionData,
+    ) -> Self {
+        self.sections.push(Section { key, title: title.into(), content });
         self
     }
 
@@ -845,17 +845,17 @@ pub enum SectionKey {
     Actions,
 
     // Content sections
-    Tracks,         // Album/playlist tracks
-    TopSongs,       // Artist top songs
-    SearchResults,  // Search result items (legacy)
-    NowPlaying,     // Queue current track
-    UpNext,         // Queue upcoming tracks
+    Tracks,        // Album/playlist tracks
+    TopSongs,      // Artist top songs
+    SearchResults, // Search result items (legacy)
+    NowPlaying,    // Queue current track
+    UpNext,        // Queue upcoming tracks
 
     // Search result sections (grouped by content type)
-    Songs,          // Search: song results
-    Artists,        // Search: artist results
-    Playlists,      // Search: playlist results
-    Videos,         // Search: video results
+    Songs,     // Search: song results
+    Artists,   // Search: artist results
+    Playlists, // Search: playlist results
+    Videos,    // Search: video results
 
     // Related content
     RelatedAlbums,
@@ -884,11 +884,7 @@ pub enum SectionData {
     /// Available actions
     Actions(Vec<Action>),
     /// Paginated content (for large sections)
-    Paginated {
-        items: Vec<ContentRef>,
-        total: usize,
-        has_more: bool,
-    },
+    Paginated { items: Vec<ContentRef>, total: usize, has_more: bool },
     /// Error loading this section (partial failure)
     Error(String),
 }
@@ -911,11 +907,7 @@ pub struct Stat {
 impl Stat {
     /// Create a year stat.
     pub fn year(year: u16) -> Self {
-        Self {
-            key: StatKey::Year,
-            label: "Year".into(),
-            value: StatValue::Number(year as i64),
-        }
+        Self { key: StatKey::Year, label: "Year".into(), value: StatValue::Number(year as i64) }
     }
 
     /// Create a track count stat.
@@ -947,11 +939,7 @@ impl Stat {
 
     /// Create a custom text stat.
     pub fn text(key: StatKey, label: impl Into<String>, value: impl Into<String>) -> Self {
-        Self {
-            key,
-            label: label.into(),
-            value: StatValue::Text(value.into()),
-        }
+        Self { key, label: label.into(), value: StatValue::Text(value.into()) }
     }
 }
 
@@ -1204,7 +1192,7 @@ mod tests {
     fn test_content_ref_builders() {
         let artist = ContentRef::artist("id1", "The Beatles")
             .with_thumbnail("https://example.com/beatles.jpg");
-        
+
         assert_eq!(artist.id, "id1");
         assert_eq!(artist.name, "The Beatles");
         assert_eq!(artist.content_type, ContentType::Artist);
@@ -1215,9 +1203,7 @@ mod tests {
     fn test_extensions_builder() {
         let extensions = Extensions::builder()
             .stats(vec![Stat::year(1969), Stat::track_count(17)])
-            .related_albums("More by The Beatles", vec![
-                ContentRef::album("album2", "Let It Be"),
-            ])
+            .related_albums("More by The Beatles", vec![ContentRef::album("album2", "Let It Be")])
             .actions(vec![Action::play(), Action::shuffle()])
             .build();
 
@@ -1242,8 +1228,8 @@ mod tests {
     #[test]
     fn test_empty_sections_not_added() {
         let extensions = Extensions::builder()
-            .stats(vec![])  // Empty - should not be added
-            .related_albums("Title", vec![])  // Empty - should not be added
+            .stats(vec![]) // Empty - should not be added
+            .related_albums("Title", vec![]) // Empty - should not be added
             .build();
 
         assert!(extensions.is_empty());

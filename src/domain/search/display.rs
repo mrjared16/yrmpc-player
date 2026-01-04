@@ -1,6 +1,7 @@
 //! Displayable trait for UI rendering
 //!
-//! UI widgets depend on this trait, not concrete types (SOLID: Dependency Inversion)
+//! UI widgets depend on this trait, not concrete types (SOLID: Dependency
+//! Inversion)
 
 use super::*;
 
@@ -8,13 +9,13 @@ use super::*;
 pub trait Displayable {
     /// Primary text (title/name)
     fn primary_line(&self) -> &str;
-    
+
     /// Secondary text (artist · album · duration)
     fn secondary_line(&self) -> Option<String>;
-    
+
     /// Thumbnail URL if available
     fn thumbnail(&self) -> Option<&str>;
-    
+
     /// Icon for this item type
     fn type_icon(&self) -> &'static str;
 }
@@ -166,9 +167,11 @@ fn format_duration(dur: std::time::Duration) -> String {
 
 // ============ ListItemDisplay Implementation ============
 
-use crate::domain::display::ListItemDisplay;
-use ratatui::style::{Color, Style};
 use std::borrow::Cow;
+
+use ratatui::style::{Color, Style};
+
+use crate::domain::display::ListItemDisplay;
 
 impl ListItemDisplay for SearchItem {
     fn primary_text(&self) -> Cow<'_, str> {
@@ -235,7 +238,7 @@ mod tests {
             explicit: false,
         };
         let playable = PlayableItem::Song(song);
-        
+
         assert_eq!(playable.primary_line(), "Test Song");
         assert_eq!(playable.secondary_line(), Some("Test Artist · Test Album · 3:00".into()));
         assert_eq!(playable.type_icon(), "♪");

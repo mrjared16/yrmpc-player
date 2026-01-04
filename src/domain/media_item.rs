@@ -4,8 +4,7 @@
 //! variants for each content type. This eliminates the "Lossy Adapter Chain"
 //! anti-pattern where conversions silently dropped fields.
 
-use std::borrow::Cow;
-use std::time::Duration;
+use std::{borrow::Cow, time::Duration};
 
 use ratatui::style::{Color, Style};
 use serde::{Deserialize, Serialize};
@@ -28,7 +27,9 @@ pub enum MediaItem {
     Album(Album),
     Playlist(Playlist),
     /// Visual separator for lists (search results, library sections)
-    Header { title: String },
+    Header {
+        title: String,
+    },
 }
 
 // =============================================================================
@@ -217,10 +218,7 @@ impl Displayable for MediaItem {
     }
 
     fn is_navigable(&self) -> bool {
-        matches!(
-            self,
-            MediaItem::Artist(_) | MediaItem::Album(_) | MediaItem::Playlist(_)
-        )
+        matches!(self, MediaItem::Artist(_) | MediaItem::Album(_) | MediaItem::Playlist(_))
     }
 }
 
@@ -311,8 +309,10 @@ impl MediaItem {
 // CONVERSIONS FROM EXISTING TYPES
 // =============================================================================
 
-use crate::backends::api::{Item, ContentType as ApiContentType};
-use crate::domain::Song;
+use crate::{
+    backends::api::{ContentType as ApiContentType, Item},
+    domain::Song,
+};
 
 /// Convert api::Item to MediaItem (lossless conversion)
 impl From<Item> for MediaItem {
@@ -577,7 +577,7 @@ impl From<MediaItem> for Song {
 // CONVERSIONS FROM SEARCH TYPES
 // =============================================================================
 
-use crate::domain::search::{SearchItem, PlayableItem, BrowsableItem};
+use crate::domain::search::{BrowsableItem, PlayableItem, SearchItem};
 
 /// Convert SearchItem to MediaItem (edge adapter - single conversion point)
 impl From<SearchItem> for MediaItem {
@@ -707,7 +707,11 @@ mod tests {
         });
 
         let json = serde_json::to_string(&yt_data).unwrap();
-        assert!(json.contains("you_tube") || json.contains("YouTube"), "Expected youtube variant in: {}", json);
+        assert!(
+            json.contains("you_tube") || json.contains("YouTube"),
+            "Expected youtube variant in: {}",
+            json
+        );
         assert!(json.contains("dQw4w9WgXcQ"));
 
         let parsed: BackendExtension = serde_json::from_str(&json).unwrap();

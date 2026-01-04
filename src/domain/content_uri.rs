@@ -11,7 +11,8 @@
 //!
 //! Where:
 //! - `scheme`: Backend identifier ("yt", "mpd", "sp")
-//! - `type`: Content type ("v" = video, "t" = track, "a" = artist, "al" = album, "p" = playlist)
+//! - `type`: Content type ("v" = video, "t" = track, "a" = artist, "al" =
+//!   album, "p" = playlist)
 //! - `id`: Backend-specific identifier
 //!
 //! # Examples
@@ -71,11 +72,7 @@ impl ContentUri {
     pub fn parse(&self) -> Option<UriComponents<'_>> {
         let parts: Vec<&str> = self.0.splitn(3, ':').collect();
         if parts.len() >= 3 {
-            Some(UriComponents {
-                scheme: parts[0],
-                content_type: parts[1],
-                id: parts[2],
-            })
+            Some(UriComponents { scheme: parts[0], content_type: parts[1], id: parts[2] })
         } else {
             None
         }
