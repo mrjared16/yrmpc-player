@@ -11,16 +11,6 @@ use ratatui::{Terminal, layout::Rect, prelude::Backend};
 use super::command::{create_env, run_external};
 use crate::{
     WorkRequest,
-    config::{
-        Config,
-        cli::{Command, RemoteCommandQuery},
-    },
-    ctx::Ctx,
-    domain::PlaybackState as State,
-    mpd::{
-        commands::{IdleEvent, volume::Volume},
-        mpd_client::SaveMode,
-    },
     backends::{
         BackendActions,
         EXTERNAL_COMMAND,
@@ -30,6 +20,16 @@ use crate::{
         GLOBAL_VOLUME_UPDATE,
         QueryResult,
         run_status_update,
+    },
+    config::{
+        Config,
+        cli::{Command, RemoteCommandQuery},
+    },
+    ctx::Ctx,
+    domain::PlaybackState as State,
+    mpd::{
+        commands::{IdleEvent, volume::Volume},
+        mpd_client::SaveMode,
     },
     shared::{
         events::{AppEvent, WorkDone},
@@ -102,7 +102,8 @@ fn main_task<B: Backend + std::io::Write>(
     }
 
     // For YouTube backend: Start status polling (adaptive based on state)
-    // This is the architectural fix - YouTube client has no event system, so we must poll
+    // This is the architectural fix - YouTube client has no event system, so we
+    // must poll
     let is_youtube = matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube);
 
     if is_youtube {
@@ -114,20 +115,16 @@ fn main_task<B: Backend + std::io::Write>(
         } else {
             5000 // 5 seconds when not playing - just to detect state changes
         };
-        _update_loop_guard = Some(ctx.scheduler.repeated(
-            Duration::from_millis(interval),
-            run_status_update,
-        ));
+        _update_loop_guard =
+            Some(ctx.scheduler.repeated(Duration::from_millis(interval), run_status_update));
 
         // If already playing at startup, also start the render timer for progress bar
         if ctx.status.state == State::Play {
-            _playback_render_guard = Some(ctx.scheduler.repeated(
-                Duration::from_secs(1),
-                |(tx, _)| {
+            _playback_render_guard =
+                Some(ctx.scheduler.repeated(Duration::from_secs(1), |(tx, _)| {
                     tx.send(AppEvent::RequestRender)?;
                     Ok(())
-                },
-            ));
+                }));
         }
 
         ctx.song_played = ctx.status.elapsed;
@@ -144,13 +141,11 @@ fn main_task<B: Backend + std::io::Write>(
                     .map(|interval| ctx.scheduler.repeated(interval, run_status_update));
 
                 // Also start render timer for progress bar
-                _playback_render_guard = Some(ctx.scheduler.repeated(
-                    Duration::from_secs(1),
-                    |(tx, _)| {
+                _playback_render_guard =
+                    Some(ctx.scheduler.repeated(Duration::from_secs(1), |(tx, _)| {
                         tx.send(AppEvent::RequestRender)?;
                         Ok(())
-                    },
-                ));
+                    }));
 
                 ctx.song_played = ctx.status.elapsed;
             }
@@ -166,9 +161,8 @@ fn main_task<B: Backend + std::io::Write>(
 
         let event = if render_wanted {
             // Calculate time until next frame
-            let timeout = min_frame_duration
-                .checked_sub(now - last_render)
-                .unwrap_or(Duration::ZERO);
+            let timeout =
+                min_frame_duration.checked_sub(now - last_render).unwrap_or(Duration::ZERO);
             // Ensure minimum 1ms sleep to prevent busy-waiting and reduce CPU usage
             let timeout = timeout.max(Duration::from_millis(1));
             match event_receiver.recv_timeout(timeout) {
@@ -430,8 +424,10 @@ fn main_task<B: Backend + std::io::Write>(
                             }
 
                             // For YouTube backend: Use adaptive polling intervals
-                            // Playing = fast polling (1000ms), Paused/Stopped = slow polling (5000ms)
-                            let is_youtube = matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube);
+                            // Playing = fast polling (1000ms), Paused/Stopped = slow polling
+                            // (5000ms)
+                            let is_youtube =
+                                matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube);
 
                             match ctx.status.state {
                                 State::Play if previous_state == ctx.status.state => {
@@ -443,12 +439,16 @@ fn main_task<B: Backend + std::io::Write>(
                                     // Transitioning TO Play state
                                     if is_youtube {
                                         // YouTube: Switch to fast polling (1000ms)
-                                        let interval = ctx.config.status_update_interval_ms.unwrap_or(1000);
+                                        let interval =
+                                            ctx.config.status_update_interval_ms.unwrap_or(1000);
                                         _update_loop_guard = Some(ctx.scheduler.repeated(
                                             Duration::from_millis(interval),
                                             run_status_update,
                                         ));
-                                        log::debug!("YouTube: switched to fast polling ({}ms)", interval);
+                                        log::debug!(
+                                            "YouTube: switched to fast polling ({}ms)",
+                                            interval
+                                        );
                                     } else {
                                         // MPD: Start the timer when transitioning to Play
                                         _update_loop_guard = ctx
@@ -461,7 +461,8 @@ fn main_task<B: Backend + std::io::Write>(
                                     }
 
                                     // Start render timer for progress bar updates (1 second)
-                                    // This is SEPARATE from status polling - just triggers re-render
+                                    // This is SEPARATE from status polling - just triggers
+                                    // re-render
                                     _playback_render_guard = Some(ctx.scheduler.repeated(
                                         Duration::from_secs(1),
                                         |(tx, _)| {
@@ -514,17 +515,15 @@ fn main_task<B: Backend + std::io::Write>(
                                     let mut env = create_env(&ctx, std::iter::empty());
 
                                     let prev_song_file = (previous_status.state != State::Stop)
-                                        .then_some(
-                                            previous_status
-                                                .songid
-                                                .and_then(|id| {
-                                                    ctx.queue
-                                                        .iter()
-                                                        .enumerate()
-                                                        .find(|(_, song)| song.id == Some(id))
-                                                })
-                                                .map(|(_, s)| s.uri.clone()),
-                                        )
+                                        .then(|| {
+                                            previous_status.songid.and_then(|id| {
+                                                ctx.queue_store()
+                                                    .read()
+                                                    .iter()
+                                                    .find(|song| song.id == Some(id))
+                                                    .map(|s| s.uri.clone())
+                                            })
+                                        })
                                         .flatten();
 
                                     if let (Some(prev_song), Some(played)) =
@@ -551,9 +550,11 @@ fn main_task<B: Backend + std::io::Write>(
                             ctx.last_status_update = Instant::now();
 
                             // Smart render decision: only re-render if something visually changed
-                            // For YouTube backend, we poll frequently but most polls return same data
-                            // Comparing elapsed time would always trigger render during playback
-                            // So we compare everything EXCEPT elapsed (which is interpolated client-side)
+                            // For YouTube backend, we poll frequently but most polls return same
+                            // data Comparing elapsed time would always
+                            // trigger render during playback
+                            // So we compare everything EXCEPT elapsed (which is interpolated
+                            // client-side)
                             let needs_render = previous_state != ctx.status.state  // play/pause/stop changed
                                 || previous_status.volume != ctx.status.volume  // volume changed
                                 || previous_status.repeat != ctx.status.repeat  // repeat changed
@@ -562,7 +563,7 @@ fn main_task<B: Backend + std::io::Write>(
                                 || previous_status.songid != ctx.status.songid  // song changed
                                 || previous_status.playlistlength != ctx.status.playlistlength  // queue changed
                                 || previous_status.duration != ctx.status.duration  // song duration changed
-                                || song_changed;  // song actually changed
+                                || song_changed; // song actually changed
 
                             if needs_render {
                                 log::debug!("Status change requires render");
@@ -575,18 +576,15 @@ fn main_task<B: Backend + std::io::Write>(
                         }
                         // Handle Queue result from ANY query - result type determines state update
                         (id, _, QueryResult::Queue(queue)) => {
-                            ctx.queue = queue.unwrap_or_default();
+                            let queue = queue.unwrap_or_default();
+                            ctx.queue_store().reconcile(queue);
                             render_wanted = true;
-                            log::debug!(id, len = ctx.queue.len(); "Queue updated");
+                            log::debug!(id, len = ctx.queue_store().len(); "Queue updated");
                             if let Err(err) = ui.on_event(UiEvent::QueueChanged, &mut ctx) {
                                 status_error!(error:? = err; "Ui failed to handle queue changed event, error: '{}'", err.to_status());
                             }
                         }
-                        (
-                            EXTERNAL_COMMAND,
-                            None,
-                            QueryResult::ExternalCommand(command, songs),
-                        ) => {
+                        (EXTERNAL_COMMAND, None, QueryResult::ExternalCommand(command, songs)) => {
                             let songs = songs.iter().map(|s| s.uri.as_str());
                             run_external(command, create_env(&ctx, songs));
                         }
@@ -728,14 +726,19 @@ fn main_task<B: Backend + std::io::Write>(
             }
 
             // DEBUG: Track render frequency
-            static RENDER_COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+            static RENDER_COUNT: std::sync::atomic::AtomicU64 =
+                std::sync::atomic::AtomicU64::new(0);
             static LAST_LOG: std::sync::LazyLock<std::sync::Mutex<Instant>> =
                 std::sync::LazyLock::new(|| std::sync::Mutex::new(Instant::now()));
 
             let count = RENDER_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             if let Ok(mut last) = LAST_LOG.try_lock() {
                 if last.elapsed() >= Duration::from_secs(5) {
-                    log::warn!("Render stats: {} renders in last 5 seconds ({:.1} FPS)", count, count as f64 / 5.0);
+                    log::warn!(
+                        "Render stats: {} renders in last 5 seconds ({:.1} FPS)",
+                        count,
+                        count as f64 / 5.0
+                    );
                     RENDER_COUNT.store(0, std::sync::atomic::Ordering::Relaxed);
                     *last = Instant::now();
                 }
@@ -761,13 +764,10 @@ fn main_task<B: Backend + std::io::Write>(
 fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<UiEvent>) {
     match event {
         IdleEvent::Mixer if ctx.supported_commands.contains("getvol") => {
-            ctx.query()
-                .id(GLOBAL_VOLUME_UPDATE)
-                .replace_id("volume")
-                .query(move |client| {
-                    let status = client.get_status()?;
-                    Ok(QueryResult::Volume(Volume::new(status.volume as u32)))
-                });
+            ctx.query().id(GLOBAL_VOLUME_UPDATE).replace_id("volume").query(move |client| {
+                let status = client.get_status()?;
+                Ok(QueryResult::Volume(Volume::new(status.volume as u32)))
+            });
         }
         IdleEvent::Mixer => {
             ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status").query(move |client| {
@@ -796,15 +796,10 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
         IdleEvent::Playlist => {
             log::debug!("Queue update requested");
             let app_state = ctx.app_state.clone();
-            ctx.query()
-                .id(GLOBAL_QUEUE_UPDATE)
-                .replace_id("playlist")
-                .query(move |client| {
-                    let queue = client.playlist_info()?;
-                    // Sync to AppState
-                    app_state.write().unwrap().replace_queue(queue.clone());
-                    Ok(QueryResult::Queue(Some(queue)))
-                });
+            ctx.query().id(GLOBAL_QUEUE_UPDATE).replace_id("playlist").query(move |client| {
+                let queue = client.playlist_info()?;
+                Ok(QueryResult::Queue(Some(queue)))
+            });
             if ctx.config.reflect_changes_to_playlist {
                 // Do not replace because we want to update currently loaded playlist if any
                 ctx.query().id(GLOBAL_STATUS_UPDATE).replace_id("status_from_playlist").query(
@@ -821,9 +816,7 @@ fn handle_idle_event(event: IdleEvent, ctx: &Ctx, result_ui_evs: &mut HashSet<Ui
             if ctx.stickers_supported.into() {
                 let songs: Vec<_> = ctx.stickers().keys().cloned().collect();
                 ctx.query().id(GLOBAL_STICKERS_UPDATE).replace_id("global_stickers_update").query(
-                    move |client| {
-                        Ok(QueryResult::SongStickers(client.fetch_song_stickers(songs)?))
-                    },
+                    move |client| Ok(QueryResult::SongStickers(client.fetch_song_stickers(songs)?)),
                 );
             }
         }

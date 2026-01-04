@@ -16,24 +16,25 @@ use crate::{
     Query,
     QueryResult,
     WorkRequest,
-    backends::api::Capability,
+    backends::{BackendActions, BackendDispatcher, QuerySync, api::Capability},
     config::{
         Config,
         album_art::ImageMethod,
         tabs::{PaneType, TabName},
     },
-    core::scheduler::{Scheduler, time_provider::DefaultTimeProvider},
-    domain::{PlaybackState as State, Song, Status},
-    mpd::{
-        version::Version,
+    core::{
+        controllers::Controllers,
+        queue_store::QueueStore,
+        scheduler::{Scheduler, time_provider::DefaultTimeProvider},
     },
-    backends::{BackendDispatcher, BackendActions, QuerySync},
+    domain::{PlaybackState as State, Song, Status},
+    mpd::version::Version,
     shared::{
         events::ClientRequest,
+        image_cache::ImageCache,
         lrc::{Lrc, LrcIndex, get_lrc_path},
         macros::{status_error, status_warn},
         ring_vec::RingVec,
-        image_cache::ImageCache,
     },
     ui::StatusMessage,
 };
@@ -47,10 +48,11 @@ pub struct Ctx {
     pub(crate) backend_version: Version,
     pub(crate) config: std::sync::Arc<Config>,
     pub(crate) status: Status,
-    pub(crate) queue: Vec<Song>,
     pub(crate) image_cache: ImageCache,
     /// Application state with in-memory queue management
     pub(crate) app_state: Arc<RwLock<crate::app_state::AppState>>,
+    #[debug(skip)]
+    pub(crate) controllers: Controllers,
     #[cfg(test)]
     pub(crate) stickers: HashMap<String, HashMap<String, String>>,
     #[cfg(not(test))]
@@ -115,19 +117,25 @@ impl Ctx {
 
         let status = client.get_status()?;
         let queue = client.playlist_info()?;
-        
-        // Sync AppState with current backend queue
-        app_state.write().unwrap().replace_queue(queue.clone());
 
-        // Album art check - only warn for MPD backend (YouTube uses thumbnails from API)
+        // Album art check - only warn for MPD backend (YouTube uses thumbnails from
+        // API)
         if config.backend == crate::config::PlayerBackend::Mpd {
-            if !supported_commands.contains("albumart") && !supported_commands.contains("readpicture") {
+            if !supported_commands.contains("albumart")
+                && !supported_commands.contains("readpicture")
+            {
                 config.album_art.method = ImageMethod::None;
                 status_warn!("Album art is disabled because it is not supported by MPD server");
             }
         }
 
         log::info!(config:? = config; "Resolved config");
+
+        let controllers = Controllers::new(
+            queue.clone(),
+            app_event_sender.clone(),
+            client_request_sender.clone(),
+        );
 
         let active_tab = config.tabs.names.first().context("Expected at least one tab")?.clone();
         scheduler.start();
@@ -136,8 +144,8 @@ impl Ctx {
             lrc_index: LrcIndex::default(),
             config: std::sync::Arc::new(config),
             status,
-            queue,
             app_state,
+            controllers,
             stickers: HashMap::new(),
             active_tab,
             supported_commands,
@@ -165,6 +173,10 @@ impl Ctx {
         self.debug_ui_log = path;
     }
 
+    pub fn queue_store(&self) -> &QueueStore {
+        &self.controllers.queue
+    }
+
     // =========================================================================
     // BACKEND CAPABILITY CHECKS
     // =========================================================================
@@ -181,9 +193,10 @@ impl Ctx {
     }
 
     /// Check if this backend supports a specific capability.
-    /// 
-    /// Uses static slice lookup - O(n) for n=6 capabilities, faster than HashSet for small n.
-    /// 
+    ///
+    /// Uses static slice lookup - O(n) for n=6 capabilities, faster than
+    /// HashSet for small n.
+    ///
     /// # Example
     /// ```ignore
     /// if !ctx.supports(BackendCapability::Stickers) {
@@ -220,10 +233,7 @@ impl Ctx {
                     // what exactly is wrong.
                     self.command(|client| {
                         if let Err(err) = client.sticker("", "test") {
-                            status_error!(
-                                "Stickers are not supported by MPD server: '{}'",
-                                err
-                            );
+                            status_error!("Stickers are not supported by MPD server: '{}'", err);
                         } else {
                             status_error!("Stickers are not supported by MPD server");
                         }
@@ -298,14 +308,19 @@ impl Ctx {
         }
     }
 
-    pub(crate) fn find_current_song_in_queue(&self) -> Option<(usize, &Song)> {
+    pub(crate) fn find_current_song_in_queue(&self) -> Option<(usize, Song)> {
         if self.status.state == State::Stop {
             return None;
         }
 
-        self.status
-            .songid
-            .and_then(|id| self.queue.iter().enumerate().find(|(_, song)| song.id == Some(id)))
+        self.status.songid.and_then(|id| {
+            self.queue_store()
+                .read()
+                .iter()
+                .enumerate()
+                .find(|(_, song)| song.id == Some(id))
+                .map(|(idx, s)| (idx, s.clone()))
+        })
     }
 
     pub(crate) fn find_lrc(&self) -> Result<Option<Lrc>> {
@@ -329,7 +344,7 @@ impl Ctx {
             }
         }
 
-        if let Ok(Some(lrc)) = self.lrc_index.find_lrc_for_song(song) {
+        if let Ok(Some(lrc)) = self.lrc_index.find_lrc_for_song(&song) {
             return Ok(Some(lrc));
         }
 
@@ -363,6 +378,18 @@ impl Ctx {
 
     pub(crate) fn stickers(&self) -> &HashMap<String, HashMap<String, String>> {
         &self.stickers
+    }
+
+    /// Refresh queue state from backend.
+    ///
+    /// Use when you need to sync UI with backend queue state.
+    pub(crate) fn refresh_queue(&self) {
+        log::debug!("Refreshing queue from backend");
+
+        self.query().id("queue_refresh").query(move |client| {
+            let queue = client.playlist_info()?;
+            Ok(QueryResult::Queue(Some(queue)))
+        });
     }
 }
 

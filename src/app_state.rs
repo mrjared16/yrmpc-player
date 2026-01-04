@@ -1,8 +1,8 @@
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::{collections::VecDeque, time::Instant};
+
 use anyhow::{Result, bail};
 
-use crate::domain::{Song, QueuePosition};
+use crate::domain::{QueuePosition, Song};
 
 /// Represents an item in the application queue
 #[derive(Debug, Clone)]
@@ -17,16 +17,12 @@ pub struct QueueItem {
 
 impl QueueItem {
     pub fn new(id: u32, song: Song) -> Self {
-        Self {
-            id,
-            song,
-            added_at: Instant::now(),
-        }
+        Self { id, song, added_at: Instant::now() }
     }
 }
 
 /// Application state managing the playback queue
-/// 
+///
 /// This struct maintains an in-memory queue independent of the backend,
 /// allowing for consistent queue management across different backends
 /// (MPD, YouTube Music, etc.)
@@ -34,16 +30,16 @@ impl QueueItem {
 pub struct AppState {
     /// The queue of songs
     queue: VecDeque<QueueItem>,
-    
+
     /// Current playing position (index into queue)
     current_index: Option<usize>,
-    
+
     /// Queue version - incremented on any change
     version: u32,
-    
+
     /// Last modification time
     last_modified: Instant,
-    
+
     /// Next available ID for queue items
     next_id: u32,
 }
@@ -73,9 +69,9 @@ impl AppState {
     pub fn add(&mut self, song: Song, position: Option<QueuePosition>) -> u32 {
         let id = self.next_id;
         self.next_id += 1;
-        
+
         let item = QueueItem::new(id, song);
-        
+
         match position {
             None | Some(QueuePosition::End) => {
                 // Add to end of queue
@@ -84,7 +80,7 @@ impl AppState {
             Some(QueuePosition::Absolute(pos)) => {
                 let insert_pos = (pos as usize).min(self.queue.len());
                 self.queue.insert(insert_pos, item);
-                
+
                 // Adjust current_index if needed
                 if let Some(current) = self.current_index {
                     if current >= insert_pos {
@@ -116,7 +112,7 @@ impl AppState {
                 }
             }
         }
-        
+
         self.bump_version();
         id
     }
@@ -125,7 +121,7 @@ impl AppState {
     pub fn delete_id(&mut self, id: u32) -> Result<()> {
         if let Some(pos) = self.queue.iter().position(|item| item.id == id) {
             self.queue.remove(pos);
-            
+
             // Adjust current_index if needed
             if let Some(current) = self.current_index {
                 if current == pos {
@@ -134,7 +130,7 @@ impl AppState {
                     self.current_index = Some(current - 1);
                 }
             }
-            
+
             self.bump_version();
             Ok(())
         } else {
@@ -151,27 +147,29 @@ impl AppState {
 
     /// Move a queue item from one ID to another position
     pub fn move_id(&mut self, from_id: u32, to_id: u32) -> Result<()> {
-        let from_pos = self.queue.iter().position(|item| item.id == from_id)
+        let from_pos = self
+            .queue
+            .iter()
+            .position(|item| item.id == from_id)
             .ok_or_else(|| anyhow::anyhow!("Source item with ID {} not found", from_id))?;
-        
-        let to_pos = self.queue.iter().position(|item| item.id == to_id)
+
+        let to_pos = self
+            .queue
+            .iter()
+            .position(|item| item.id == to_id)
             .ok_or_else(|| anyhow::anyhow!("Target item with ID {} not found", to_id))?;
-        
+
         if from_pos == to_pos {
             return Ok(());
         }
-        
+
         let item = self.queue.remove(from_pos).unwrap();
-        
+
         // Adjust to_pos if removing affected it
-        let adjusted_to_pos = if from_pos < to_pos {
-            to_pos
-        } else {
-            to_pos
-        };
-        
+        let adjusted_to_pos = if from_pos < to_pos { to_pos } else { to_pos };
+
         self.queue.insert(adjusted_to_pos, item);
-        
+
         // Adjust current_index
         if let Some(current) = self.current_index {
             self.current_index = Some(match current {
@@ -181,7 +179,7 @@ impl AppState {
                 c => c,
             });
         }
-        
+
         self.bump_version();
         Ok(())
     }
@@ -255,13 +253,13 @@ impl AppState {
     pub fn replace_queue(&mut self, songs: Vec<Song>) {
         self.queue.clear();
         self.current_index = None;
-        
+
         for song in songs {
             let id = self.next_id;
             self.next_id += 1;
             self.queue.push_back(QueueItem::new(id, song));
         }
-        
+
         self.bump_version();
     }
 
@@ -275,15 +273,14 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::collections::HashMap;
+
+    use super::*;
 
     fn create_test_song(name: &str) -> Song {
         Song {
             uri: format!("{}.mp3", name),
-            metadata: HashMap::from([
-                ("title".to_string(), vec![name.to_string()]),
-            ]),
+            metadata: HashMap::from([("title".to_string(), vec![name.to_string()])]),
             ..Default::default()
         }
     }
@@ -293,10 +290,10 @@ mod tests {
         let mut state = AppState::new();
         let song1 = create_test_song("song1");
         let song2 = create_test_song("song2");
-        
+
         let id1 = state.add(song1, None);
         let id2 = state.add(song2, None);
-        
+
         assert_eq!(state.len(), 2);
         assert_eq!(state.get_queue()[0].id, id1);
         assert_eq!(state.get_queue()[1].id, id2);
@@ -308,11 +305,11 @@ mod tests {
         let song1 = create_test_song("song1");
         let song2 = create_test_song("song2");
         let song3 = create_test_song("song3");
-        
+
         state.add(song1, None);
         state.add(song2, None);
         let id3 = state.add(song3, Some(QueuePosition::Absolute(1)));
-        
+
         assert_eq!(state.len(), 3);
         assert_eq!(state.get_queue()[1].id, id3);
     }
@@ -322,10 +319,10 @@ mod tests {
         let mut state = AppState::new();
         let song1 = create_test_song("song1");
         let song2 = create_test_song("song2");
-        
+
         let id1 = state.add(song1, None);
         state.add(song2, None);
-        
+
         assert!(state.delete_id(id1).is_ok());
         assert_eq!(state.len(), 1);
         assert!(state.delete_id(999).is_err());
@@ -336,7 +333,7 @@ mod tests {
         let mut state = AppState::new();
         state.add(create_test_song("song1"), None);
         state.add(create_test_song("song2"), None);
-        
+
         state.clear();
         assert_eq!(state.len(), 0);
         assert!(state.is_empty());
@@ -348,10 +345,10 @@ mod tests {
         let id1 = state.add(create_test_song("song1"), None);
         let id2 = state.add(create_test_song("song2"), None);
         let id3 = state.add(create_test_song("song3"), None);
-        
+
         // Move song1 to position of song3
         assert!(state.move_id(id1, id3).is_ok());
-        
+
         // Order should now be: song2, song3, song1
         assert_eq!(state.get_queue()[0].id, id2);
         assert_eq!(state.get_queue()[1].id, id3);
@@ -363,9 +360,9 @@ mod tests {
         let mut state = AppState::new();
         let id1 = state.add(create_test_song("song1"), None);
         state.add(create_test_song("song2"), None);
-        
+
         assert!(state.get_current().is_none());
-        
+
         assert!(state.set_current_by_id(id1).is_ok());
         assert_eq!(state.get_current_index(), Some(0));
         assert!(state.get_current().is_some());
@@ -375,10 +372,10 @@ mod tests {
     fn test_version_tracking() {
         let mut state = AppState::new();
         let initial_version = state.get_version();
-        
+
         state.add(create_test_song("song1"), None);
         assert!(state.get_version() > initial_version);
-        
+
         let version_after_add = state.get_version();
         state.clear();
         assert!(state.get_version() > version_after_add);
@@ -388,12 +385,9 @@ mod tests {
     fn test_replace_queue() {
         let mut state = AppState::new();
         state.add(create_test_song("old1"), None);
-        
-        let new_songs = vec![
-            create_test_song("new1"),
-            create_test_song("new2"),
-        ];
-        
+
+        let new_songs = vec![create_test_song("new1"), create_test_song("new2")];
+
         state.replace_queue(new_songs);
         assert_eq!(state.len(), 2);
         assert!(state.get_queue()[0].song.uri.contains("new1"));

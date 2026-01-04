@@ -1,5 +1,4 @@
-use std::borrow::Cow;
-use std::collections::HashSet;
+use std::{borrow::Cow, collections::HashSet};
 
 use anyhow::Result;
 use crossterm::event::KeyCode;
@@ -17,6 +16,7 @@ use ratatui::{
 use super::{CommonAction, Pane};
 use crate::{
     QueryResult,
+    backends::{BackendActions, BackendDispatcher, Capability, Enqueue},
     config::{
         keys::{
             GlobalAction,
@@ -31,12 +31,8 @@ use crate::{
     },
     core::command::{create_env, run_external},
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
-    domain::{Song, QueuePosition},
-    ui::panes::browser::SongExt,
-    mpd::{
-        mpd_client::SingleOrRange,
-    },
-    backends::{Capability, BackendDispatcher, Enqueue, BackendActions},
+    domain::{QueuePosition, Song},
+    mpd::mpd_client::SingleOrRange,
     shared::{
         ext::{btreeset_ranges::BTreeSetRanges, rect::RectExt},
         key_event::KeyEvent,
@@ -61,6 +57,7 @@ use crate::{
             },
             select_modal::SelectModal,
         },
+        panes::browser::SongExt,
         widgets::item_list::{ItemListConfig, ItemListWidget, ListRenderMode},
     },
 };
@@ -68,7 +65,7 @@ use crate::{
 #[derive(Debug)]
 pub struct QueuePane {
     queue: Dir<Song, TableState>,
-    list_state: ListState,  // For rich mode rendering
+    list_state: ListState, // For rich mode rendering
     render_mode: QueueRenderMode,
     filter_input_mode: bool,
     header: Vec<String>,
@@ -104,11 +101,12 @@ const ADD_TO_PLAYLIST_MULTIPLE: &str = "add_to_playlist_multiple";
 struct QueueSongView<'a> {
     song: &'a Song,
     is_current: bool,
+    is_next: bool,
 }
 
 impl<'a> QueueSongView<'a> {
-    fn new(song: &'a Song, is_current: bool) -> Self {
-        Self { song, is_current }
+    fn new(song: &'a Song, is_current: bool, is_next: bool) -> Self {
+        Self { song, is_current, is_next }
     }
 }
 
@@ -136,6 +134,10 @@ impl crate::domain::display::ListItemDisplay for QueueSongView<'_> {
     fn is_playing(&self) -> bool {
         self.is_current
     }
+
+    fn is_next(&self) -> bool {
+        self.is_next
+    }
 }
 
 impl QueuePane {
@@ -143,9 +145,9 @@ impl QueuePane {
         let (header, column_widths, column_formats) = Self::init(ctx);
 
         Self {
-            queue: Dir::new(ctx.queue.clone()),
+            queue: Dir::new(ctx.queue_store().snapshot().to_vec()),
             list_state: ListState::default(),
-            render_mode: QueueRenderMode::Rich,  // Default to Rich mode for streaming
+            render_mode: QueueRenderMode::Rich, // Default to Rich mode for streaming
             filter_input_mode: false,
             header,
             column_widths,
@@ -202,46 +204,45 @@ impl QueuePane {
     /// Render the queue using the rich 2-line format with thumbnails
     fn render_rich(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> anyhow::Result<()> {
         let config = &ctx.config;
-        
-        // Find current song ID for is_playing detection
-        let current_song_id = ctx.find_current_song_in_queue()
-            .map(|(_, song)| song.id);
-        
+
+        let current_song_id = ctx.find_current_song_in_queue().map(|(_, song)| song.id);
+        let next_position = ctx.status.next_song_position;
+
         // Create wrapper items with playing context
-        let items: Vec<QueueSongView<'_>> = self.queue.items.iter()
-            .map(|song| {
+        let items: Vec<QueueSongView<'_>> = self
+            .queue
+            .items
+            .iter()
+            .enumerate()
+            .map(|(idx, song)| {
                 let is_current = current_song_id.is_some_and(|id| id == song.id);
-                QueueSongView::new(song, is_current)
+                let is_next = next_position.is_some_and(|pos| pos as usize == idx);
+                QueueSongView::new(song, is_current, is_next)
             })
             .collect();
-        
+
         // Sync list_state selection with queue state
         if let Some(selected) = self.queue.state.inner.selected() {
             self.list_state.select(Some(selected));
         }
-        
+
         // Configure ItemListWidget for rich mode
-        let item_config = ItemListConfig {
-            mode: ListRenderMode::Rich,
-            thumbnail_width: 6,
-            row_height: 3,
-        };
-        
+        let item_config =
+            ItemListConfig { mode: ListRenderMode::Rich, thumbnail_width: 6, row_height: 3 };
+
         let widget = ItemListWidget::new(&items, ctx)
             .config(item_config)
             .highlight_style(config.theme.current_item_style)
             .filter(self.queue.filter());
-        
+
         // Render with block border
         let border_style = config.as_border_style();
-        let block = Block::default()
-            .borders(Borders::TOP)
-            .border_style(border_style);
-        
+        let block = Block::default().borders(Borders::TOP).border_style(border_style);
+
         let inner = block.inner(area);
         frame.render_widget(block, area);
         frame.render_stateful_widget(widget, inner, &mut self.list_state);
-        
+
         // Render scrollbar if configured
         if let Some(scrollbar) = config.as_styled_scrollbar()
             && self.areas[Areas::Scrollbar].width > 0
@@ -252,7 +253,7 @@ impl QueuePane {
                 self.queue.state.as_scrollbar_state_ref(),
             );
         }
-        
+
         Ok(())
     }
 
@@ -353,13 +354,11 @@ impl QueuePane {
                     })
                     .item("Clear queue", |ctx| {
                         // Use query (not command) to trigger UI refresh
-                        ctx.query()
-                            .id("queue_clear_action")
-                            .query(|client| {
-                                client.clear()?;
-                                let queue = client.playlist_info()?;
-                                Ok(crate::QueryResult::Queue(Some(queue)))
-                            });
+                        ctx.query().id("queue_clear_action").query(|client| {
+                            client.clear()?;
+                            let queue = client.playlist_info()?;
+                            Ok(crate::QueryResult::Queue(Some(queue)))
+                        });
                         Ok(())
                     });
                 Some(section)
@@ -603,8 +602,8 @@ impl Pane for QueuePane {
         if self.should_center_cursor_on_current {
             let to_select = ctx
                 .find_current_song_in_queue()
-                .or(self.queue.selected_with_idx())
                 .map(|(idx, _)| idx)
+                .or_else(|| self.queue.selected_with_idx().map(|(idx, _)| idx))
                 .or(Some(0));
             self.queue.select_idx_opt(to_select, usize::MAX);
             self.should_center_cursor_on_current = false;
@@ -612,8 +611,8 @@ impl Pane for QueuePane {
             let to_select = self
                 .queue
                 .selected_with_idx()
-                .or(ctx.find_current_song_in_queue())
-                .map(|v| v.0)
+                .map(|(idx, _)| idx)
+                .or_else(|| ctx.find_current_song_in_queue().map(|(idx, _)| idx))
                 .or(Some(0));
             self.queue.select_idx_opt(to_select, usize::MAX);
         }
@@ -629,8 +628,8 @@ impl Pane for QueuePane {
         let to_select = self
             .queue
             .selected_with_idx()
-            .or(ctx.find_current_song_in_queue())
-            .map(|v| v.0)
+            .map(|(idx, _)| idx)
+            .or_else(|| ctx.find_current_song_in_queue().map(|(idx, _)| idx))
             .or(Some(0));
         self.queue.select_idx_opt(to_select, ctx.config.scrolloff);
         ctx.render()?;
@@ -640,11 +639,11 @@ impl Pane for QueuePane {
     fn on_event(&mut self, event: &mut UiEvent, is_visible: bool, ctx: &Ctx) -> Result<()> {
         match event {
             UiEvent::Database => {
-                self.queue.items.clone_from(&ctx.queue);
+                self.queue.items = ctx.queue_store().snapshot().to_vec();
                 self.queue.unmark_all();
             }
             UiEvent::QueueChanged => {
-                self.queue.items.clone_from(&ctx.queue);
+                self.queue.items = ctx.queue_store().snapshot().to_vec();
             }
             UiEvent::SongChanged => {
                 if let Some((idx, _)) = ctx.find_current_song_in_queue()
@@ -900,14 +899,12 @@ impl Pane for QueuePane {
                             .action(Action::Single {
                                 on_confirm: Box::new(|ctx| {
                                     // Use query (not command) to trigger UI refresh
-                                    ctx.query()
-                                        .id("queue_clear_action")
-                                        .query(|client| {
-                                            client.clear()?;
-                                            // Return empty queue for instant UI refresh
-                                            let queue = client.playlist_info()?;
-                                            Ok(crate::QueryResult::Queue(Some(queue)))
-                                        });
+                                    ctx.query().id("queue_clear_action").query(|client| {
+                                        client.clear()?;
+                                        // Return empty queue for instant UI refresh
+                                        let queue = client.playlist_info()?;
+                                        Ok(crate::QueryResult::Queue(Some(queue)))
+                                    });
                                     Ok(())
                                 }),
                                 confirm_label: Some("Clear"),

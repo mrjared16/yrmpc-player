@@ -24,11 +24,11 @@ use shared::{
 };
 
 use crate::{
+    backends::{BackendDispatcher, PlayerCommand, Query, QueryResult},
     config::{
         ConfigFile,
         cli::{Args, Command},
     },
-    backends::{BackendDispatcher, PlayerCommand, Query, QueryResult},
     shared::{
         dependencies::{DEPENDENCIES, FFMPEG, FFPROBE, PYTHON3, PYTHON3MUTAGEN, UEBERZUGPP, YTDLP},
         env::ENV,
@@ -45,11 +45,11 @@ mod tests {
 }
 
 mod actions;
+mod app_state;
 mod config;
 mod core;
 mod ctx;
 mod domain;
-mod app_state;
 use app_state::AppState;
 mod backends;
 // Re-export mpd protocol for backward compatibility with crate::mpd
@@ -192,14 +192,19 @@ fn main() -> Result<()> {
                 }
             };
 
-            let mpd_info =
-                BackendDispatcher::init(config.address.clone(), config.password.clone(), "debug", None, false)
-                    .and_then(|mut client| -> Result<_, _> {
-                        let version = client.version();
-                        let commands = client.commands()?;
-                        let not_commands = client.not_commands()?;
-                        Ok((version, commands, not_commands))
-                    });
+            let mpd_info = BackendDispatcher::init(
+                config.address.clone(),
+                config.password.clone(),
+                "debug",
+                None,
+                false,
+            )
+            .and_then(|mut client| -> Result<_, _> {
+                let version = client.version();
+                let commands = client.commands()?;
+                let not_commands = client.not_commands()?;
+                Ok((version, commands, not_commands))
+            });
 
             println!(
                 "rmpc {}{}",
@@ -373,10 +378,6 @@ fn main() -> Result<()> {
             )
             .context("Failed to connect to backend")?;
 
-            if matches!(config.backend, crate::config::PlayerBackend::Mpd) {
-                let queue = client.playlist_info()?;
-                app_state.write().unwrap().replace_queue(queue);
-            }
             client.set_read_timeout(Some(config.mpd_read_timeout))?;
             client.set_write_timeout(Some(config.mpd_write_timeout))?;
 
