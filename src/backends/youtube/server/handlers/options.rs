@@ -1,6 +1,7 @@
 //! Options and volume handlers.
 
 use std::sync::Arc;
+
 use crossbeam::channel::Sender;
 
 use crate::backends::youtube::{

@@ -18,12 +18,14 @@
 //! On Play → AudioCache.get_path(video_id) → Some(path) → Build EDL URL
 //! ```
 
-use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::Write;
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::{
+    collections::HashMap,
+    fs::{self, File},
+    io::Write,
+    path::{Path, PathBuf},
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{Context, Result};
 use parking_lot::RwLock;
@@ -51,9 +53,9 @@ impl Default for AudioCacheConfig {
                 .join("rmpc")
                 .join("audio"),
             prefetch_duration_secs: 10.0,
-            max_size_bytes: 100 * 1024 * 1024, // 100 MB
+            max_size_bytes: 100 * 1024 * 1024,          // 100 MB
             max_age: Duration::from_secs(24 * 60 * 60), // 24 hours
-            default_bitrate_bps: 160_000, // 160 kbps (Opus default)
+            default_bitrate_bps: 160_000,               // 160 kbps (Opus default)
         }
     }
 }
@@ -96,11 +98,7 @@ impl AudioCache {
             .build()
             .context("Failed to create HTTP client")?;
 
-        let cache = Self {
-            config,
-            entries: RwLock::new(HashMap::new()),
-            client,
-        };
+        let cache = Self { config, entries: RwLock::new(HashMap::new()), client };
 
         // Load existing cache entries
         cache.scan_cache_dir();
@@ -173,10 +171,8 @@ impl AudioCache {
         }
 
         // Calculate bytes to download
-        let bytes_needed = self.calculate_bytes(
-            self.config.prefetch_duration_secs,
-            self.config.default_bitrate_bps,
-        );
+        let bytes_needed = self
+            .calculate_bytes(self.config.prefetch_duration_secs, self.config.default_bitrate_bps);
 
         log::debug!(
             "Prefetching {} bytes (~{}s) for {}",
@@ -186,7 +182,8 @@ impl AudioCache {
         );
 
         // Download with Range header
-        let response = self.client
+        let response = self
+            .client
             .get(stream_url)
             .header("Range", format!("bytes=0-{}", bytes_needed - 1))
             .send()
@@ -194,18 +191,15 @@ impl AudioCache {
 
         // Check response status
         if !response.status().is_success() && response.status().as_u16() != 206 {
-            anyhow::bail!(
-                "HTTP error {} fetching audio for {}",
-                response.status(),
-                video_id
-            );
+            anyhow::bail!("HTTP error {} fetching audio for {}", response.status(), video_id);
         }
 
         // Get actual content length
         let content_length = response.content_length().unwrap_or(bytes_needed);
 
         // Read response body
-        let bytes = response.bytes()
+        let bytes = response
+            .bytes()
             .with_context(|| format!("Failed to read audio bytes for {}", video_id))?;
 
         // Save to cache file
@@ -226,12 +220,7 @@ impl AudioCache {
             });
         }
 
-        log::info!(
-            "Cached {} bytes of audio for {} at {:?}",
-            bytes.len(),
-            video_id,
-            cache_path
-        );
+        log::info!("Cached {} bytes of audio for {} at {:?}", bytes.len(), video_id, cache_path);
 
         // Check if we need to evict old entries
         self.maybe_evict();
@@ -254,16 +243,15 @@ impl AudioCache {
             }
 
             // Create a simple client for this thread
-            let client = match reqwest::blocking::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-            {
-                Ok(c) => c,
-                Err(e) => {
-                    log::warn!("Failed to create HTTP client for prefetch: {}", e);
-                    return;
-                }
-            };
+            let client =
+                match reqwest::blocking::Client::builder().timeout(Duration::from_secs(30)).build()
+                {
+                    Ok(c) => c,
+                    Err(e) => {
+                        log::warn!("Failed to create HTTP client for prefetch: {}", e);
+                        return;
+                    }
+                };
 
             let bytes_needed = ((bitrate as f64 / 8.0) * prefetch_duration * 1.2) as u64;
 
@@ -278,7 +266,11 @@ impl AudioCache {
                             let cache_path = cache_dir.join(format!("{}.opus", video_id));
                             if let Ok(mut file) = File::create(&cache_path) {
                                 if file.write_all(&bytes).is_ok() {
-                                    log::info!("Background cached {} bytes for {}", bytes.len(), video_id);
+                                    log::info!(
+                                        "Background cached {} bytes for {}",
+                                        bytes.len(),
+                                        video_id
+                                    );
                                 }
                             }
                         }

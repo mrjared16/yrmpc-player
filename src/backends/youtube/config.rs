@@ -1,8 +1,8 @@
 //! YouTube backend configuration
 
+use std::{path::PathBuf, time::Duration};
+
 use serde::Deserialize;
-use std::path::PathBuf;
-use std::time::Duration;
 
 /// Stream URL extractor type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
@@ -46,7 +46,7 @@ pub struct YouTubeConfig {
 pub struct DaemonConfig {
     /// Auto-start daemon if not running
     pub auto_start: bool,
-    
+
     /// Maximum connection retries
     pub max_retries: u32,
 }
@@ -57,10 +57,10 @@ pub struct DaemonConfig {
 pub struct MpvConfig {
     /// Extra MPV arguments
     pub extra_args: Vec<String>,
-    
+
     /// Default volume (0-100)
     pub volume: u8,
-    
+
     /// Audio device
     pub audio_device: Option<String>,
 }
@@ -81,7 +81,8 @@ pub struct ApiConfig {
 
     /// Stream URL extractor type
     /// - "ytdlp" (default): Uses yt-dlp CLI, reliable and widely used
-    /// - "pytubefix": Uses pytubefix Python library, faster but requires installation
+    /// - "pytubefix": Uses pytubefix Python library, faster but requires
+    ///   installation
     pub extractor: ExtractorType,
 }
 
@@ -100,10 +101,7 @@ impl Default for YouTubeConfig {
 
 impl Default for DaemonConfig {
     fn default() -> Self {
-        Self {
-            auto_start: true,
-            max_retries: 3,
-        }
+        Self { auto_start: true, max_retries: 3 }
     }
 }
 
@@ -141,14 +139,10 @@ impl YouTubeConfig {
 
     /// Load from default location (~/.config/yrmpc/youtube.toml)
     pub fn load() -> anyhow::Result<Self> {
-        let config_dir = dirs::config_dir()
-            .ok_or_else(|| anyhow::anyhow!("No config directory found"))?;
+        let config_dir =
+            dirs::config_dir().ok_or_else(|| anyhow::anyhow!("No config directory found"))?;
         let path = config_dir.join("yrmpc/youtube.toml");
-        
-        if path.exists() {
-            Self::from_file(&path)
-        } else {
-            Ok(Self::default())
-        }
+
+        if path.exists() { Self::from_file(&path) } else { Ok(Self::default()) }
     }
 }

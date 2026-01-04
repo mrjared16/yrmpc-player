@@ -86,7 +86,6 @@ pub enum Capability {
     // =========================================================================
     // Optional Common Features (multiple backends may support)
     // =========================================================================
-    
     /// Can list/view user playlists
     Playlists,
     /// Can create new playlists
@@ -103,29 +102,26 @@ pub enum Capability {
     SearchSuggestions,
     /// Rich metadata (thumbnails, full artist info)
     RichMetadata,
-    
+
     // =========================================================================
     // Queue Behavior Modes (local logic, flag indicates if implemented)
     // =========================================================================
-    
     /// Stop playback after current track finishes
     SingleMode,
     /// Remove tracks from queue after playing
     ConsumeMode,
-    
+
     // =========================================================================
     // Audio Effects
     // =========================================================================
-    
     /// Crossfade between tracks
     Crossfade,
     /// Gapless playback (no silence between tracks)
     GaplessPlayback,
-    
+
     // =========================================================================
     // Backend-Specific (only one backend has these)
     // =========================================================================
-    
     /// MPD audio outputs control
     MpdOutputs,
     /// MPD database rescan
@@ -134,11 +130,10 @@ pub enum Capability {
     MpdStickers,
     /// MPD partitions (multi-room audio)
     MpdPartitions,
-    
+
     // =========================================================================
     // Legacy (deprecated - use specific names above)
     // =========================================================================
-    
     #[deprecated(since = "0.1.0", note = "Use Playlists instead")]
     SavedPlaylists,
     #[deprecated(since = "0.1.0", note = "Use MpdStickers instead")]
@@ -157,20 +152,20 @@ pub enum Capability {
 
 impl From<&crate::domain::Song> for Item {
     fn from(song: &crate::domain::Song) -> Self {
-        let title = song.metadata.get("title")
+        let title = song
+            .metadata
+            .get("title")
             .and_then(|v| v.first())
             .cloned()
             .unwrap_or_else(|| song.uri.clone());
 
-        let subtitle = song.metadata.get("artist")
-            .and_then(|v| v.first())
-            .cloned();
+        let subtitle = song.metadata.get("artist").and_then(|v| v.first()).cloned();
 
-        let thumbnail = song.metadata.get("thumbnail")
-            .and_then(|v| v.first())
-            .cloned();
+        let thumbnail = song.metadata.get("thumbnail").and_then(|v| v.first()).cloned();
 
-        let content_type = song.metadata.get("type")
+        let content_type = song
+            .metadata
+            .get("type")
             .and_then(|v| v.first())
             .map(|t| match t.as_str() {
                 "album" => ContentType::Album,

@@ -60,7 +60,7 @@ pub mod config;
 pub mod details;
 pub mod error;
 pub mod extractor;
-pub mod mpv;  // MPV IPC module - internal to YouTube backend
+pub mod mpv; // MPV IPC module - internal to YouTube backend
 pub mod protocol;
 pub mod server;
 pub mod services;
@@ -69,9 +69,8 @@ pub mod url_resolver;
 pub use client::YouTubeProxy;
 pub use config::YouTubeConfig;
 pub use details::{AlbumDetails, ArtistDetails, PlaylistDetails};
-pub use error::{YouTubeError, Result};
+pub use error::{Result, YouTubeError};
+// Re-export MPV types for internal use
+pub use mpv::{MpvEvent, MpvIpc};
 pub use server::YouTubeServer;
 pub use services::{ApiService, PlaybackService, QueueService};
-
-// Re-export MPV types for internal use
-pub use mpv::{MpvIpc, MpvEvent};

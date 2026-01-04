@@ -3,6 +3,7 @@
 //! Controls the playback state: play, pause, stop, seek, volume.
 
 use std::time::Duration;
+
 use anyhow::Result;
 
 /// Playback state
@@ -48,11 +49,11 @@ pub trait Playback: Send + Sync {
     fn seek(&mut self, position: Duration) -> Result<()>;
     fn seek_relative(&mut self, delta_secs: i64) -> Result<()>;
     fn status(&mut self) -> Result<Status>;
-    
+
     // =========================================================================
     // Audio Effects (optional - default no-op)
     // =========================================================================
-    
+
     /// Set crossfade duration in seconds (0 to disable).
     ///
     /// Crossfade blends audio between tracks for smooth transitions.
@@ -61,7 +62,7 @@ pub trait Playback: Send + Sync {
         let _ = seconds;
         Ok(())
     }
-    
+
     /// Enable or disable gapless playback.
     ///
     /// Gapless playback removes silence between tracks.

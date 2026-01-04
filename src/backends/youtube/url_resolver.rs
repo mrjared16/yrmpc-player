@@ -5,14 +5,20 @@
 //!
 //! For direct access to extractors, use the `extractor` module.
 
-use std::sync::Arc;
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 use anyhow::Result;
 
-use super::config::ExtractorType;
-use super::extractor::{
-    CacheConfig, CachedExtractor, Extractor, FallbackExtractor, YtDlpExtractor, YtxExtractor,
+use super::{
+    config::ExtractorType,
+    extractor::{
+        CacheConfig,
+        CachedExtractor,
+        Extractor,
+        FallbackExtractor,
+        YtDlpExtractor,
+        YtxExtractor,
+    },
 };
 
 /// URL resolver facade.
@@ -80,17 +86,11 @@ impl UrlResolver {
             }
             ExtractorType::YtDlp => {
                 // yt-dlp is the fallback, so no fallback needed
-                Arc::new(CachedExtractor::with_config(
-                    YtDlpExtractor::new(),
-                    cache_config,
-                ))
+                Arc::new(CachedExtractor::with_config(YtDlpExtractor::new(), cache_config))
             }
         };
 
-        Self {
-            inner,
-            extractor_type,
-        }
+        Self { inner, extractor_type }
     }
 
     /// Create with default extractor (yt-dlp).
@@ -100,11 +100,7 @@ impl UrlResolver {
 
     /// Create with custom cache TTL.
     pub fn with_cache_ttl(extractor_type: ExtractorType, ttl: Duration) -> Self {
-        Self::with_config(
-            extractor_type,
-            CacheConfig::default().with_ttl(ttl),
-            true,
-        )
+        Self::with_config(extractor_type, CacheConfig::default().with_ttl(ttl), true)
     }
 
     /// Get the configured extractor type.
@@ -121,7 +117,10 @@ impl UrlResolver {
     ///
     /// Efficient for queue prefetching - only uncached IDs are extracted.
     /// Returns a map of video_id → Result<url>.
-    pub fn get_urls(&self, video_ids: &[String]) -> std::collections::HashMap<String, Result<String>> {
+    pub fn get_urls(
+        &self,
+        video_ids: &[String],
+    ) -> std::collections::HashMap<String, Result<String>> {
         self.inner.extract_batch(video_ids)
     }
 
@@ -155,7 +154,10 @@ impl Default for UrlResolver {
 
 // Make UrlResolver usable as an Extractor trait object
 impl Extractor for UrlResolver {
-    fn extract_batch(&self, video_ids: &[String]) -> std::collections::HashMap<String, Result<String>> {
+    fn extract_batch(
+        &self,
+        video_ids: &[String],
+    ) -> std::collections::HashMap<String, Result<String>> {
         self.inner.extract_batch(video_ids)
     }
 

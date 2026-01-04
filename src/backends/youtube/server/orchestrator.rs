@@ -5,7 +5,8 @@
 //! - Track-ended handling (auto-advance, repeat modes)
 //! - Play position logic with MPRIS updates
 //!
-//! This module is used by both the main server and the internal event processor.
+//! This module is used by both the main server and the internal event
+//! processor.
 
 use std::sync::Arc;
 
@@ -13,7 +14,7 @@ use anyhow::Result;
 
 use crate::backends::youtube::{
     protocol::{ServerResponse, SongData},
-    services::{PlaybackService, QueueService, RepeatMode, PlaybackState, PlaybackStateTracker},
+    services::{PlaybackService, PlaybackState, PlaybackStateTracker, QueueService, RepeatMode},
 };
 
 /// Prefetch window size for gapless playback
@@ -82,18 +83,23 @@ pub fn play_position(
                             let is_edl = url.starts_with("edl://");
                             log::debug!(
                                 "Prefetched track {} (queue pos {}){}",
-                                i, idx,
+                                i,
+                                idx,
                                 if is_edl { " [EDL: instant]" } else { "" }
                             );
 
                             // Save metadata for MPRIS (first track only)
                             if first_track {
                                 first_track = false;
-                                let title = song.metadata.get("title")
+                                let title = song
+                                    .metadata
+                                    .get("title")
                                     .and_then(|v| v.first())
                                     .cloned()
                                     .unwrap_or_else(|| video_id.clone());
-                                let artist = song.metadata.get("artist")
+                                let artist = song
+                                    .metadata
+                                    .get("artist")
                                     .and_then(|v| v.first())
                                     .cloned()
                                     .unwrap_or_default();
@@ -104,7 +110,10 @@ pub fn play_position(
                     Err(e) => {
                         log::error!("Failed to resolve stream URL for {}: {}", video_id, e);
                         if first_track {
-                            return ServerResponse::Error(format!("Failed to resolve stream: {}", e));
+                            return ServerResponse::Error(format!(
+                                "Failed to resolve stream: {}",
+                                e
+                            ));
                         }
                     }
                 }
@@ -190,14 +199,19 @@ fn handle_eof(
     let repeat_mode = queue.repeat_mode();
     let current_idx = queue.current_index();
     let queue_len = queue.len();
-    log::info!("[DIAG-EOF] handle_eof: repeat_mode={:?} current_idx={:?} queue_len={}", repeat_mode, current_idx, queue_len);
+    log::info!(
+        "[DIAG-EOF] handle_eof: repeat_mode={:?} current_idx={:?} queue_len={}",
+        repeat_mode,
+        current_idx,
+        queue_len
+    );
 
     // Handle Repeat One - replay current track
     if repeat_mode == RepeatMode::One {
         log::info!("[DIAG-EOF] Repeat One: replaying current track");
         if let Some(current_idx) = queue.current_index() {
-             let _ = play_position_internal(playback, queue, current_idx, state_tracker);
-             return;
+            let _ = play_position_internal(playback, queue, current_idx, state_tracker);
+            return;
         }
         // Fallback to old behavior if no current index (shouldn't happen)
         if let Err(e) = playback.seek(0.0, "absolute") {
@@ -212,7 +226,8 @@ fn handle_eof(
 
     // Natural end - MPV auto-advanced to next track
     // Use queue.current_index() as source of truth (NOT mpv_pos) for reliability
-    // Check mpv_pos primarily to detect if we advanced within the window or if the window is done
+    // Check mpv_pos primarily to detect if we advanced within the window or if the
+    // window is done
     let mpv_pos = playback.get_playlist_pos().unwrap_or(-1);
     log::info!("[DIAG-EOF] handle_eof: mpv_pos={}", mpv_pos);
 
@@ -235,7 +250,12 @@ fn handle_end_of_window(
     log::info!("[DIAG-EOF] handle_end_of_window: start");
     if let Some(current) = queue.current_index() {
         let next_pos = current + 1;
-        log::info!("[DIAG-EOF] handle_end_of_window: current={} next_pos={} queue_len={}", current, next_pos, queue.len());
+        log::info!(
+            "[DIAG-EOF] handle_end_of_window: current={} next_pos={} queue_len={}",
+            current,
+            next_pos,
+            queue.len()
+        );
         if next_pos < queue.len() {
             // More songs in queue - start new prefetch window
             log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", next_pos);
@@ -265,7 +285,8 @@ fn handle_within_window_advance(
     mpv_pos: usize,
 ) {
     // KEY FIX: Use prefetch lookup instead of sequential arithmetic
-    // This respects shuffle order and repeat mode that were applied when building the window
+    // This respects shuffle order and repeat mode that were applied when building
+    // the window
     let new_queue_pos = match queue.get_prefetched_at(mpv_pos) {
         Some(idx) => idx,
         None => {
@@ -273,7 +294,8 @@ fn handle_within_window_advance(
             let base_index = queue.playback_base_index();
             log::warn!(
                 "[DIAG-EOF] Prefetch lookup failed for mpv_pos={}, falling back to base_index({}) + mpv_pos",
-                mpv_pos, base_index
+                mpv_pos,
+                base_index
             );
             base_index + mpv_pos
         }
@@ -281,7 +303,9 @@ fn handle_within_window_advance(
 
     log::info!(
         "[DIAG-EOF] handle_within_window_advance: mpv_pos={} new_queue_pos={} queue_len={}",
-        mpv_pos, new_queue_pos, queue.len()
+        mpv_pos,
+        new_queue_pos,
+        queue.len()
     );
 
     if new_queue_pos < queue.len() {
@@ -291,14 +315,14 @@ fn handle_within_window_advance(
 
         // Update MPRIS metadata for current track
         if let Ok(song) = queue.get_by_index(new_queue_pos) {
-            let title = song.metadata.get("title")
+            let title = song
+                .metadata
+                .get("title")
                 .and_then(|v| v.first())
                 .cloned()
                 .unwrap_or_else(|| song.uri.clone());
-            let artist = song.metadata.get("artist")
-                .and_then(|v| v.first())
-                .cloned()
-                .unwrap_or_default();
+            let artist =
+                song.metadata.get("artist").and_then(|v| v.first()).cloned().unwrap_or_default();
             let _ = playback.set_media_title(&title, &artist);
         }
 
@@ -335,12 +359,8 @@ fn handle_playback_error(
 pub fn prefetch_upcoming(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) {
     if let Some(current) = queue.current_index() {
         let all_songs = queue.get_all();
-        let video_ids: Vec<String> = all_songs
-            .iter()
-            .skip(current + 1)
-            .take(5)
-            .map(|s| s.uri.clone())
-            .collect();
+        let video_ids: Vec<String> =
+            all_songs.iter().skip(current + 1).take(5).map(|s| s.uri.clone()).collect();
 
         if !video_ids.is_empty() {
             playback.prefetch(video_ids);
@@ -349,7 +369,10 @@ pub fn prefetch_upcoming(playback: &Arc<PlaybackService>, queue: &Arc<QueueServi
 }
 
 /// Get the current song based on MPV's position
-pub fn get_current_song(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) -> ServerResponse {
+pub fn get_current_song(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+) -> ServerResponse {
     let mpv_playlist_pos = playback.get_playlist_pos().unwrap_or(-1);
     if mpv_playlist_pos < 0 {
         return ServerResponse::Song(None);
@@ -418,12 +441,13 @@ pub fn play_id(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::path::PathBuf;
-    use crate::backends::youtube::config::ExtractorType;
-    use crate::domain::Song;
 
-    fn setup_test_services() -> (Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>) {
+    use super::*;
+    use crate::{backends::youtube::config::ExtractorType, domain::Song};
+
+    fn setup_test_services() -> (Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>)
+    {
         // Mock socket path
         let socket = PathBuf::from("/tmp/test-mpv.sock");
 
@@ -470,12 +494,12 @@ mod tests {
         let (playback, queue, state_tracker) = setup_test_services();
         queue.add(test_song("Song 1"), None);
         queue.add(test_song("Song 2"), None);
-        queue.set_current(Some(1));  // Last song
+        queue.set_current(Some(1)); // Last song
         queue.set_repeat_mode(RepeatMode::All);
 
         handle_eof(&playback, &queue, &state_tracker);
 
-        assert_eq!(queue.current_index(), Some(0));  // Looped
+        assert_eq!(queue.current_index(), Some(0)); // Looped
     }
 
     #[test]
@@ -631,7 +655,8 @@ mod tests {
         // With RepeatAll, it should have added 0 (wrapped)
         // So prefetch_indices is now [0, 1, 2, 0]
         assert_eq!(
-            queue.get_prefetched_at(3), Some(0),
+            queue.get_prefetched_at(3),
+            Some(0),
             "After extending, pos 3 should wrap to queue index 0"
         );
 
@@ -640,9 +665,6 @@ mod tests {
         handle_within_window_advance(&playback, &queue, &state_tracker, 3);
 
         // With Repeat All, we should wrap to 0
-        assert_eq!(
-            queue.current_index(), Some(0),
-            "Repeat All should wrap to queue[0]"
-        );
+        assert_eq!(queue.current_index(), Some(0), "Repeat All should wrap to queue[0]");
     }
 }

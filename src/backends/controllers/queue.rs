@@ -4,7 +4,7 @@
 
 use anyhow::Result;
 
-use crate::backends::api::{Queue as QueueTrait, Item, InsertAt, AfterAdd, Repeat};
+use crate::backends::api::{AfterAdd, InsertAt, Item, Queue as QueueTrait, Repeat};
 
 /// Manages the playback queue
 ///

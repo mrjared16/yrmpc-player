@@ -13,4 +13,4 @@ pub mod queue_service;
 pub use api_service::ApiService;
 pub use playback_service::PlaybackService;
 pub use playback_state::{PlaybackState, PlaybackStateTracker};
-pub use queue_service::{QueueService, QueueItem, RepeatMode};
+pub use queue_service::{QueueItem, QueueService, RepeatMode};

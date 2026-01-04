@@ -15,6 +15,10 @@ use bon::Builder;
 use crossbeam::channel::Sender;
 use ratatui::{style::Style, widgets::ListItem};
 
+// Forward import for BackendDispatcher
+use super::BackendDispatcher;
+// Re-export from interaction module
+pub use super::interaction::PartitionedOutput;
 use crate::{
     config::tabs::PaneType,
     domain::{MediaItem, Song, Status},
@@ -22,12 +26,6 @@ use crate::{
     shared::macros::try_skip,
     ui::{dir_or_song::DirOrSong, dirstack::Path},
 };
-
-// Forward import for BackendDispatcher
-use super::BackendDispatcher;
-
-// Re-export from interaction module
-pub use super::interaction::PartitionedOutput;
 
 pub const EXTERNAL_COMMAND: &str = "external_command";
 pub const GLOBAL_STATUS_UPDATE: &str = "global_status_update";
@@ -97,17 +95,37 @@ impl PreviewGroup {
 #[derive(Debug)]
 #[allow(unused, clippy::large_enum_variant)]
 pub(crate) enum QueryResult {
-    SongsList { data: Vec<Song>, path: Option<Path> },
-    LsInfo { data: Vec<String>, path: Option<Path> },
-    DirOrSong { data: Vec<DirOrSong>, path: Option<Path> },
+    SongsList {
+        data: Vec<Song>,
+        path: Option<Path>,
+    },
+    LsInfo {
+        data: Vec<String>,
+        path: Option<Path>,
+    },
+    DirOrSong {
+        data: Vec<DirOrSong>,
+        path: Option<Path>,
+    },
     SearchSuggestions(Vec<String>),
-    SearchResult { data: Vec<MediaItem> },
+    SearchResult {
+        data: Vec<MediaItem>,
+    },
     /// Search results with proper section structure (no flat markers)
     SearchResultSectioned(crate::domain::search::SearchResults),
-    AddToPlaylist { playlists: Vec<String>, song_file: String },
-    AddToPlaylistMultiple { playlists: Vec<String>, song_files: Vec<String> },
+    AddToPlaylist {
+        playlists: Vec<String>,
+        song_file: String,
+    },
+    AddToPlaylistMultiple {
+        playlists: Vec<String>,
+        song_files: Vec<String>,
+    },
     AlbumArt(Option<Vec<u8>>),
-    Status { data: Status, source_event: Option<IdleEvent> },
+    Status {
+        data: Status,
+        source_event: Option<IdleEvent>,
+    },
     Queue(Option<Vec<Song>>),
     Volume(Volume),
     Outputs(Vec<PartitionedOutput>),
@@ -145,7 +163,9 @@ use crate::shared::events::AppEvent;
 
 /// Scheduled function to send periodic status updates
 #[allow(clippy::unnecessary_wraps)]
-pub(crate) fn run_status_update((_, client_tx): &(Sender<AppEvent>, Sender<ClientRequest>)) -> Result<()> {
+pub(crate) fn run_status_update(
+    (_, client_tx): &(Sender<AppEvent>, Sender<ClientRequest>),
+) -> Result<()> {
     try_skip!(
         client_tx.send(ClientRequest::Query(Query {
             id: GLOBAL_STATUS_UPDATE,

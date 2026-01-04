@@ -13,9 +13,16 @@ use ytmapi_rs::{
     common::{AlbumID, ArtistChannelID, PlaylistID, VideoID, YoutubeID},
     parse::{BasicSearchResultCommunityPlaylist, SearchResultVideo},
     query::{
-        GetAlbumQuery, GetArtistQuery, GetLibraryAlbumsQuery, GetLibraryArtistsQuery,
-        GetLibraryPlaylistsQuery, GetLibrarySongsQuery, GetWatchPlaylistQuery, SearchQuery,
-        GetSearchSuggestionsQuery, GetPlaylistDetailsQuery,
+        GetAlbumQuery,
+        GetArtistQuery,
+        GetLibraryAlbumsQuery,
+        GetLibraryArtistsQuery,
+        GetLibraryPlaylistsQuery,
+        GetLibrarySongsQuery,
+        GetPlaylistDetailsQuery,
+        GetSearchSuggestionsQuery,
+        GetWatchPlaylistQuery,
+        SearchQuery,
     },
 };
 
@@ -31,10 +38,7 @@ pub struct YouTubeApi {
 impl YouTubeApi {
     pub fn new() -> Result<Self> {
         let rt = Runtime::new().context("Failed to create Tokio runtime")?;
-        Ok(Self {
-            rt,
-            api: Arc::new(Mutex::new(None)),
-        })
+        Ok(Self { rt, api: Arc::new(Mutex::new(None)) })
     }
 
     /// Load cookies from file to authenticate API
@@ -90,14 +94,14 @@ impl YouTubeApi {
         if cleaned.is_empty() { None } else { Some(cleaned.to_string()) }
     }
 
-
     /// Search for music - returns structured SearchResults with sections
-    /// 
-    /// This is the new recommended search method that uses the domain::search types
-    /// for exhaustive type matching and proper separation of playable vs browsable items.
+    ///
+    /// This is the new recommended search method that uses the domain::search
+    /// types for exhaustive type matching and proper separation of playable
+    /// vs browsable items.
     pub fn search_items(&self, query: &str) -> Result<crate::domain::search::SearchResults> {
-        use crate::domain::search::{SearchItem, SearchSection, SearchResults};
-        
+        use crate::domain::search::{SearchItem, SearchResults, SearchSection};
+
         let raw_query = query;
         let query = match Self::sanitize_query(raw_query) {
             Some(q) => q,
@@ -126,11 +130,23 @@ impl YouTubeApi {
 
         // Top results
         if !results.top_results.is_empty() {
-            log::info!("search_items: {} top_results found for '{}'", results.top_results.len(), query_for_log);
+            log::info!(
+                "search_items: {} top_results found for '{}'",
+                results.top_results.len(),
+                query_for_log
+            );
             let mut items = Vec::new();
             for (idx, r) in results.top_results.into_iter().enumerate() {
-                log::debug!("  TopResult[{}]: name='{}', type={:?}, video_id={:?}, browse_id={:?}, byline={:?}, artist={:?}", 
-                    idx, r.result_name, r.result_type, r.video_id, r.browse_id, r.byline, r.artist);
+                log::debug!(
+                    "  TopResult[{}]: name='{}', type={:?}, video_id={:?}, browse_id={:?}, byline={:?}, artist={:?}",
+                    idx,
+                    r.result_name,
+                    r.result_type,
+                    r.video_id,
+                    r.browse_id,
+                    r.byline,
+                    r.artist
+                );
                 match SearchItem::try_from(r) {
                     Ok(item) => items.push(item),
                     Err(e) => log::warn!("  TopResult[{}] conversion failed: {}", idx, e),
@@ -161,27 +177,35 @@ impl YouTubeApi {
 
         // Videos
         if !results.videos.is_empty() {
-            let items: Vec<_> = results.videos
-                .into_iter()
-                .filter_map(|v| SearchItem::try_from(v).ok())
-                .collect();
+            let items: Vec<_> =
+                results.videos.into_iter().filter_map(|v| SearchItem::try_from(v).ok()).collect();
             search_results.add_section(SearchSection::new("videos", "Videos", items));
         }
 
         // Featured playlists (curated by YouTube Music)
         if !results.featured_playlists.is_empty() {
-            let items: Vec<_> = results.featured_playlists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("featured_playlists", "Featured Playlists", items));
+            let items: Vec<_> =
+                results.featured_playlists.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new(
+                "featured_playlists",
+                "Featured Playlists",
+                items,
+            ));
         }
 
         // Community playlists (user-created)
         if !results.community_playlists.is_empty() {
-            let items: Vec<_> = results.community_playlists.into_iter().map(SearchItem::from).collect();
+            let items: Vec<_> =
+                results.community_playlists.into_iter().map(SearchItem::from).collect();
             search_results.add_section(SearchSection::new("playlists", "Playlists", items));
         }
 
-        log::info!("search_items returned {} items in {} sections for '{}'", 
-            search_results.total_items(), search_results.sections.len(), query_for_log);
+        log::info!(
+            "search_items returned {} items in {} sections for '{}'",
+            search_results.total_items(),
+            search_results.sections.len(),
+            query_for_log
+        );
         Ok(search_results)
     }
 
@@ -207,10 +231,7 @@ impl YouTubeApi {
             })?;
 
         // Extract suggestion strings
-        let result: Vec<String> = suggestions
-            .into_iter()
-            .map(|s| s.get_text())
-            .collect();
+        let result: Vec<String> = suggestions.into_iter().map(|s| s.get_text()).collect();
 
         log::debug!("get_suggestions returned {} suggestions", result.len());
         Ok(result)
@@ -301,7 +322,11 @@ impl YouTubeApi {
         log::debug!("YouTube API: browse_playlist(playlist_id='{}')", playlist_id);
         let query = GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
         let playlist = self.rt.block_on(api.query(query)).map_err(|e| {
-            log::error!("YouTube API browse_playlist failed for playlist_id='{}': {}", playlist_id, e);
+            log::error!(
+                "YouTube API browse_playlist failed for playlist_id='{}': {}",
+                playlist_id,
+                e
+            );
             e
         })?;
 
@@ -324,24 +349,28 @@ impl YouTubeApi {
     // RICH DETAIL METHODS
     // =========================================================================
     // These return structured detail types with metadata and related content
-    
+
     /// Get detailed playlist info with tracks, metadata, and related content
-    pub fn get_playlist_details(&self, playlist_id: &str) -> Result<super::details::PlaylistDetails> {
-        use super::details::{PlaylistDetails, ArtistRef, PlaylistRef};
-        
+    pub fn get_playlist_details(
+        &self,
+        playlist_id: &str,
+    ) -> Result<super::details::PlaylistDetails> {
+        use super::details::{ArtistRef, PlaylistDetails, PlaylistRef};
+
         let api = self.api.lock();
         let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
-        
+
         log::debug!("YouTube API: get_playlist_details(playlist_id='{}')", playlist_id);
-        
+
         // First, get playlist metadata (title, description, author, etc.)
         let details_query = GetPlaylistDetailsQuery::new(PlaylistID::from_raw(playlist_id));
         let details = self.rt.block_on(api.query(details_query))?;
-        
+
         // Then, get the tracks from watch playlist query
-        let tracks_query = GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
+        let tracks_query =
+            GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
         let playlist_tracks = self.rt.block_on(api.query(tracks_query))?;
-        
+
         let mut tracks = Vec::new();
         for track in playlist_tracks {
             let mut s = Song::default();
@@ -354,12 +383,14 @@ impl YouTubeApi {
             s.duration = Self::parse_duration(&track.duration);
             tracks.push(s);
         }
-        
+
         // Get thumbnail from playlist metadata, fallback to first track
-        let thumbnail = details.thumbnails.last()
-            .map(|t| t.url.clone())
-            .or_else(|| tracks.first().and_then(|t| t.metadata.get("thumbnail").and_then(|v| v.first()).cloned()));
-        
+        let thumbnail = details.thumbnails.last().map(|t| t.url.clone()).or_else(|| {
+            tracks
+                .first()
+                .and_then(|t| t.metadata.get("thumbnail").and_then(|v| v.first()).cloned())
+        });
+
         Ok(PlaylistDetails {
             id: playlist_id.to_string(),
             title: details.title,
@@ -373,18 +404,18 @@ impl YouTubeApi {
             related_playlists: vec![],
         })
     }
-    
+
     /// Get detailed album info with tracks, metadata, and more from artist
     pub fn get_album_details(&self, album_id: &str) -> Result<super::details::AlbumDetails> {
-        use super::details::{AlbumDetails, ArtistRef, AlbumRef};
-        
+        use super::details::{AlbumDetails, AlbumRef, ArtistRef};
+
         let api = self.api.lock();
         let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
-        
+
         log::debug!("YouTube API: get_album_details(album_id='{}')", album_id);
         let query = GetAlbumQuery::new(AlbumID::from_raw(album_id));
         let album = self.rt.block_on(api.query(query))?;
-        
+
         let mut tracks = Vec::new();
         for track in album.tracks {
             let mut s = Song::default();
@@ -400,18 +431,22 @@ impl YouTubeApi {
             s.duration = Self::parse_duration(&track.duration);
             tracks.push(s);
         }
-        
+
         // Get artist info - use .id field if available, otherwise use name as fallback
-        let artist = album.artists.first().map(|a| ArtistRef {
-            id: a.id.as_ref().map(|id| id.get_raw().to_string()).unwrap_or_default(),
-            name: a.name.clone(),
-            thumbnail: None,
-        }).unwrap_or(ArtistRef {
-            id: String::new(),
-            name: "Unknown Artist".to_string(),
-            thumbnail: None,
-        });
-        
+        let artist = album
+            .artists
+            .first()
+            .map(|a| ArtistRef {
+                id: a.id.as_ref().map(|id| id.get_raw().to_string()).unwrap_or_default(),
+                name: a.name.clone(),
+                thumbnail: None,
+            })
+            .unwrap_or(ArtistRef {
+                id: String::new(),
+                name: "Unknown Artist".to_string(),
+                thumbnail: None,
+            });
+
         Ok(AlbumDetails {
             id: album_id.to_string(),
             title: album.title,
@@ -422,18 +457,18 @@ impl YouTubeApi {
             more_by_artist: vec![], // Would need additional API call
         })
     }
-    
+
     /// Get detailed artist info with top songs, albums, and related artists
     pub fn get_artist_details(&self, artist_id: &str) -> Result<super::details::ArtistDetails> {
-        use super::details::{ArtistDetails, ArtistRef, AlbumRef};
-        
+        use super::details::{AlbumRef, ArtistDetails, ArtistRef};
+
         let api = self.api.lock();
         let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
-        
+
         log::debug!("YouTube API: get_artist_details(artist_id='{}')", artist_id);
         let query = GetArtistQuery::new(ArtistChannelID::from_raw(artist_id));
         let artist = self.rt.block_on(api.query(query))?;
-        
+
         let mut top_songs = Vec::new();
         if let Some(songs) = artist.top_releases.songs {
             for song in songs.results {
@@ -445,29 +480,43 @@ impl YouTubeApi {
                 top_songs.push(s);
             }
         }
-        
-        let albums: Vec<AlbumRef> = artist.top_releases.albums.map(|a| {
-            a.results.into_iter().map(|album| AlbumRef {
-                id: album.album_id.get_raw().to_string(),
-                title: album.title,
-                year: Some(album.year),
-                thumbnail: album.thumbnails.last().map(|t| t.url.clone()),
-            }).collect()
-        }).unwrap_or_default();
-        
-        let singles: Vec<AlbumRef> = artist.top_releases.singles.map(|s| {
-            s.results.into_iter().map(|single| AlbumRef {
-                id: single.album_id.get_raw().to_string(),
-                title: single.title,
-                year: Some(single.year),
-                thumbnail: single.thumbnails.last().map(|t| t.url.clone()),
-            }).collect()
-        }).unwrap_or_default();
-        
+
+        let albums: Vec<AlbumRef> = artist
+            .top_releases
+            .albums
+            .map(|a| {
+                a.results
+                    .into_iter()
+                    .map(|album| AlbumRef {
+                        id: album.album_id.get_raw().to_string(),
+                        title: album.title,
+                        year: Some(album.year),
+                        thumbnail: album.thumbnails.last().map(|t| t.url.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let singles: Vec<AlbumRef> = artist
+            .top_releases
+            .singles
+            .map(|s| {
+                s.results
+                    .into_iter()
+                    .map(|single| AlbumRef {
+                        id: single.album_id.get_raw().to_string(),
+                        title: single.title,
+                        year: Some(single.year),
+                        thumbnail: single.thumbnails.last().map(|t| t.url.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
         // Note: related_artists field may not exist in this version of ytmapi_rs
         // Use empty vec as fallback
         let related_artists: Vec<ArtistRef> = vec![];
-        
+
         Ok(ArtistDetails {
             id: artist_id.to_string(),
             name: artist.name,
@@ -504,7 +553,10 @@ impl YouTubeApi {
                 } else {
                     // Use sanitized name as fallback ID - user can still see the artist
                     // but browsing won't work
-                    log::warn!("TopResult Artist '{}' has no browse_id, using name as fallback", result_name);
+                    log::warn!(
+                        "TopResult Artist '{}' has no browse_id, using name as fallback",
+                        result_name
+                    );
                     s.uri = format!("artist:name:{}", result_name.replace(' ', "_"));
                     s.metadata.insert("browsable".into(), vec!["false".into()]);
                 }
@@ -555,11 +607,11 @@ impl YouTubeApi {
         Some(s)
     }
 
-
-
     fn parse_video_result(&self, video: SearchResultVideo) -> Option<Song> {
         match video {
-            SearchResultVideo::Video { title, channel_name, video_id, length, thumbnails, .. } => {
+            SearchResultVideo::Video {
+                title, channel_name, video_id, length, thumbnails, ..
+            } => {
                 let mut s = Song::default();
                 s.uri = video_id.get_raw().to_string();
                 s.metadata.insert("title".into(), vec![title]);
@@ -572,11 +624,7 @@ impl YouTubeApi {
                 Some(s)
             }
             SearchResultVideo::VideoEpisode {
-                title,
-                channel_name,
-                episode_id,
-                thumbnails,
-                ..
+                title, channel_name, episode_id, thumbnails, ..
             } => {
                 let mut s = Song::default();
                 s.uri = episode_id.get_raw().to_string();
@@ -656,9 +704,12 @@ mod tests {
     // test helper for TopResult.
     #[cfg(feature = "ytmapi_test_helpers")]
     mod parse_top_result_tests {
+        use ytmapi_rs::{
+            common::Thumbnail,
+            parse::{TopResult, TopResultType},
+        };
+
         use super::*;
-        use ytmapi_rs::common::Thumbnail;
-        use ytmapi_rs::parse::{TopResult, TopResultType};
 
         fn create_test_api() -> YouTubeApi {
             YouTubeApi::new().unwrap()
@@ -703,14 +754,14 @@ mod tests {
                 plays: None,
                 publisher: None,
                 byline: None,
-                browse_id: None,  // No browse_id - this is the P1 bug case
+                browse_id: None, // No browse_id - this is the P1 bug case
                 video_id: None,
             };
 
             let song = api.parse_top_result(result);
             // P1 fix: Should not return None, should use fallback
             assert!(song.is_some(), "Artist without browse_id should still parse");
-            
+
             let song = song.unwrap();
             assert_eq!(song.uri, "artist:name:KIMLONG");
             assert_eq!(song.metadata.get("type"), Some(&vec!["artist".into()]));
@@ -733,7 +784,7 @@ mod tests {
                 publisher: None,
                 byline: None,
                 browse_id: None,
-                video_id: None,  // Songs need video_id
+                video_id: None, // Songs need video_id
             };
 
             let song = api.parse_top_result(result);

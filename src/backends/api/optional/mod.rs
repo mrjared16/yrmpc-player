@@ -28,9 +28,8 @@
 
 mod playlists;
 
-pub use playlists::Playlists;
-
 use anyhow::Result;
+pub use playlists::Playlists;
 
 // =============================================================================
 // LYRICS

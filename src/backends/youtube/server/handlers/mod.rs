@@ -12,14 +12,14 @@
 //! - `search`: Search, Browse, GetSearchSuggestions
 //! - `options`: SetRepeat, SetShuffle, Volume operations
 
+pub mod options;
 pub mod playback;
 pub mod queue;
-pub mod status;
 pub mod search;
-pub mod options;
+pub mod status;
 
+pub use options::*;
 pub use playback::*;
 pub use queue::*;
-pub use status::*;
 pub use search::*;
-pub use options::*;
+pub use status::*;

@@ -7,8 +7,10 @@
 //!
 //! # Design Principles
 //!
-//! 1. **Bulk operations** - `add(&[items])` not `add(&item)` - efficient for backends
-//! 2. **Intent-based** - `InsertAt::Next` not `position: Some(5)` - clear semantics
+//! 1. **Bulk operations** - `add(&[items])` not `add(&item)` - efficient for
+//!    backends
+//! 2. **Intent-based** - `InsertAt::Next` not `position: Some(5)` - clear
+//!    semantics
 //! 3. **Resolvable** - Albums/playlists can expand to tracks via `resolve()`
 //! 4. **Minimal** - Only what TUI actually needs
 //!
@@ -46,14 +48,13 @@ mod queue;
 mod status_query;
 
 // Re-export all types at api:: level
-pub use content::{ContentType, Item, Capability};
-pub use discovery::{Discovery, SearchQuery, SearchResults, SearchSection, BrowseResult};
-pub use playback::{Playback, Volume, State, Status, Repeat};
-pub use queue::{Queue, InsertAt, AfterAdd, ToggleMode};
-pub use status_query::StatusQuery;
-
+pub use content::{Capability, ContentType, Item};
+pub use discovery::{BrowseResult, Discovery, SearchQuery, SearchResults, SearchSection};
 // Re-export optional traits
-pub use optional::{Playlists, Lyrics, Radio, UserPreferences};
+pub use optional::{Lyrics, Playlists, Radio, UserPreferences};
+pub use playback::{Playback, Repeat, State, Status, Volume};
+pub use queue::{AfterAdd, InsertAt, Queue, ToggleMode};
+pub use status_query::StatusQuery;
 
 // Re-export ContentDetails from domain for convenience
 pub use crate::domain::ContentDetails;
@@ -72,8 +73,9 @@ pub trait Backend: Playback + Queue + Discovery + Volume {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::time::Duration;
+
+    use super::*;
 
     #[test]
     fn test_item_builder() {

@@ -3,8 +3,9 @@
 //! Stickers are arbitrary key-value metadata that can be attached to songs.
 //! Commonly used for ratings, play counts, etc.
 
-use anyhow::Result;
 use std::collections::HashMap;
+
+use anyhow::Result;
 
 use crate::backends::mpd::specific::Stickers;
 
@@ -58,7 +59,7 @@ impl StickerController<'_> {
         let stickers = self.backend.list(uri)?;
         Ok(stickers.contains_key(key))
     }
-    
+
     /// Delete all stickers for a song
     pub fn delete_all(&mut self, uri: &str) -> Result<()> {
         self.backend.delete_all(uri)

@@ -4,8 +4,10 @@
 
 use anyhow::Result;
 
-use crate::backends::api::StatusQuery;
-use crate::domain::{Song, Status};
+use crate::{
+    backends::api::StatusQuery,
+    domain::{Song, Status},
+};
 
 /// Provides playback status and song information
 ///

@@ -612,7 +612,7 @@ impl MpdClient for Client<'_> {
     #[allow(clippy::needless_range_loop)]
     fn add_random_songs(&mut self, count: usize, filter: Option<&[Filter<'_>]>) -> MpdResult<()> {
         let mut result = if let Some(filter) = filter {
-            self.find(filter)?.into_iter().map(|song| song.file).collect_vec()  // MPD Song uses .file
+            self.find(filter)?.into_iter().map(|song| song.file).collect_vec() // MPD Song uses .file
         } else {
             self.list_all(None)?.into_files().collect_vec()
         };

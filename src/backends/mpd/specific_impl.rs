@@ -3,13 +3,14 @@
 //! This module implements the MPD-specific traits defined in `specific.rs`.
 
 use std::collections::HashMap;
+
 use anyhow::Result;
 
-use crate::mpd::commands::Output;
-use crate::mpd::mpd_client::MpdClient as MpdClientTrait;
-
-use super::MpdBackend;
-use super::specific::{Stickers, Outputs, Database};
+use super::{
+    MpdBackend,
+    specific::{Database, Outputs, Stickers},
+};
+use crate::mpd::{commands::Output, mpd_client::MpdClient as MpdClientTrait};
 
 // =============================================================================
 // STICKERS
@@ -17,9 +18,7 @@ use super::specific::{Stickers, Outputs, Database};
 
 impl<'name> Stickers for MpdBackend<'name> {
     fn list(&mut self, uri: &str) -> Result<HashMap<String, String>> {
-        self.client.list_stickers(uri)
-            .map(|s| s.0)
-            .map_err(Into::into)
+        self.client.list_stickers(uri).map(|s| s.0).map_err(Into::into)
     }
 
     fn set(&mut self, uri: &str, key: &str, value: &str) -> Result<()> {
@@ -37,9 +36,7 @@ impl<'name> Stickers for MpdBackend<'name> {
 
 impl<'name> Outputs for MpdBackend<'name> {
     fn list(&mut self) -> Result<Vec<Output>> {
-        self.client.outputs()
-            .map(|o| o.0)
-            .map_err(Into::into)
+        self.client.outputs().map(|o| o.0).map_err(Into::into)
     }
 
     fn enable(&mut self, id: u32) -> Result<()> {
@@ -61,14 +58,10 @@ impl<'name> Outputs for MpdBackend<'name> {
 
 impl<'name> Database for MpdBackend<'name> {
     fn update(&mut self, path: Option<&str>) -> Result<u32> {
-        self.client.update(path)
-            .map(|u| u.job_id)
-            .map_err(Into::into)
+        self.client.update(path).map(|u| u.job_id).map_err(Into::into)
     }
 
     fn rescan(&mut self, path: Option<&str>) -> Result<u32> {
-        self.client.rescan(path)
-            .map(|u| u.job_id)
-            .map_err(Into::into)
+        self.client.rescan(path).map(|u| u.job_id).map_err(Into::into)
     }
 }

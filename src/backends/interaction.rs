@@ -3,19 +3,22 @@
 //! # Overview
 //!
 //! This module provides the [`BackendActions`] trait which defines high-level
-//! operations that work uniformly across all music backends (MPD, YouTube, etc.).
+//! operations that work uniformly across all music backends (MPD, YouTube,
+//! etc.).
 //!
 //! **For new developers:** This is the primary interface for TUI components to
-//! interact with the backend. Instead of calling low-level backend methods directly,
-//! use these high-level actions which handle:
+//! interact with the backend. Instead of calling low-level backend methods
+//! directly, use these high-level actions which handle:
 //! - Autoplay index calculation
 //! - Queue position resolution
 //! - Backend-specific quirks (e.g., YouTube queue refresh)
 //!
 //! # Key Types
 //!
-//! - [`BackendActions`]: Extension trait implemented on [`BackendDispatcher`](super::BackendDispatcher)
-//! - [`Enqueue`]: Items that can be added to the queue (files, directories, playlists)
+//! - [`BackendActions`]: Extension trait implemented on
+//!   [`BackendDispatcher`](super::BackendDispatcher)
+//! - [`Enqueue`]: Items that can be added to the queue (files, directories,
+//!   playlists)
 //! - [`DeleteTarget`]: Items that can be deleted (queue positions, ranges)
 //! - [`PartitionedOutput`]: Audio output information (MPD-specific)
 //!
@@ -44,7 +47,7 @@ use crate::{
         QueuePosition,
         commands::{State, outputs::Outputs, stickers::Stickers},
         errors::{ErrorCode, MpdError, MpdFailureResponse},
-        mpd_client::{Filter, FilterKind, MpdClient, Command, SingleOrRange, Tag},
+        mpd_client::{Command, Filter, FilterKind, MpdClient, SingleOrRange, Tag},
         proto_client::ProtoClient,
     },
     shared::macros::{status_info, status_warn},
@@ -52,8 +55,8 @@ use crate::{
 
 /// High-level actions for backend interaction.
 ///
-/// This trait provides a unified interface for queue operations, sticker management,
-/// and other common actions across all music backends.
+/// This trait provides a unified interface for queue operations, sticker
+/// management, and other common actions across all music backends.
 ///
 /// # Design Note
 ///
@@ -76,42 +79,21 @@ pub trait BackendActions {
     ) {
         let opts = AddOpts { autoplay, position, all: false };
         let replace = matches!(position, Position::Replace);
-        let (autoplay_idx, position) = match opts.autoplay_idx_and_queue_position(
-            &ctx.queue,
-            current_song_idx,
-            hovered_song_idx,
-        ) {
-            Ok(v) => v,
-            Err(err) => {
-                status_warn!("{}", err);
-                return;
-            }
-        };
-
-        // Clone app_state for the queue refresh query
-        let app_state = ctx.app_state.clone();
+        let queue = ctx.queue_store().read();
+        let (autoplay_idx, position) =
+            match opts.autoplay_idx_and_queue_position(&*queue, current_song_idx, hovered_song_idx)
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    status_warn!("{}", err);
+                    return;
+                }
+            };
 
         ctx.command(move |client| {
             client.enqueue_multiple(items, autoplay_idx, position, replace)?;
             Ok(())
         });
-
-        // For YouTube backend, trigger a queue refresh to update the UI
-        // This is necessary because YouTube backend doesn't have MPD-style idle events
-        if matches!(ctx.config.backend, crate::config::PlayerBackend::YouTube) {
-            log::debug!("Triggering queue refresh after YouTube enqueue");
-            ctx.query()
-                .id(super::messaging::GLOBAL_QUEUE_UPDATE)
-                .replace_id("playlist")
-                .query(move |client| {
-                    let queue = client.playlist_info()?;
-                    // Sync to AppState
-                    app_state.write().unwrap().replace_queue(queue.clone());
-                    Ok(super::messaging::QueryResult::Queue(Some(queue)))
-                });
-            // Status updates are handled by continuous polling in event_loop.rs
-            // No need for manual status refresh here
-        }
     }
 
     fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError>;
@@ -159,11 +141,19 @@ pub enum DeleteTarget {
 #[allow(dead_code, reason = "Search is currently unused")]
 #[derive(Debug, Clone)]
 pub enum Enqueue {
-    File { path: String },
+    File {
+        path: String,
+    },
     /// Song with full metadata (used by YouTube backend)
-    Song { song: crate::domain::Song },
-    Playlist { name: String },
-    Find { filter: Vec<(Tag, FilterKind, String)> },
+    Song {
+        song: crate::domain::Song,
+    },
+    Playlist {
+        name: String,
+    },
+    Find {
+        filter: Vec<(Tag, FilterKind, String)>,
+    },
 }
 
 impl<T: MpdClient + Command + ProtoClient> BackendActions for T {
@@ -493,7 +483,7 @@ impl<T: MpdClient + Command + ProtoClient> BackendActions for T {
                             .map(|(tag, kind, value)| Filter::new_with_kind(tag, value, kind))
                             .collect_vec(),
                     )?;
-                    uris.extend(songs.into_iter().map(|song| song.file));  // MPD Song uses .file
+                    uris.extend(songs.into_iter().map(|song| song.file)); // MPD Song uses .file
                 }
             }
         }
@@ -525,7 +515,7 @@ impl<T: MpdClient + Command + ProtoClient> BackendActions for T {
                             .map(|(tag, kind, value)| Filter::new_with_kind(tag, value, kind))
                             .collect_vec(),
                     )?;
-                    uris.extend(songs.into_iter().map(|song| song.file));  // MPD Song uses .file
+                    uris.extend(songs.into_iter().map(|song| song.file)); // MPD Song uses .file
                 }
             }
         }
@@ -564,7 +554,8 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
     fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError> {
         match self {
             crate::backends::BackendDispatcher::Mpd(b) => b.client.play_position_safe(queue_len),
-            crate::backends::BackendDispatcher::YouTube(_) => Ok(()), // Not applicable for MPV/YouTube
+            crate::backends::BackendDispatcher::YouTube(_) => Ok(()), /* Not applicable for
+                                                                       * MPV/YouTube */
         }
     }
 
@@ -581,14 +572,20 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
             }
             crate::backends::BackendDispatcher::YouTube(backend) => {
                 use crate::backends::api::{Queue, StatusQuery};
-                
-                log::debug!("enqueue_multiple for YouTube backend: {} items, replace={}, autoplay_idx={:?}", items.len(), replace, autoplay_idx);
+
+                log::debug!(
+                    "enqueue_multiple for YouTube backend: {} items, replace={}, autoplay_idx={:?}",
+                    items.len(),
+                    replace,
+                    autoplay_idx
+                );
 
                 if replace {
                     Queue::clear(backend)?;
                 }
 
-                let queue_len_before = StatusQuery::queue_songs(backend).map(|q| q.len()).unwrap_or(0);
+                let queue_len_before =
+                    StatusQuery::queue_songs(backend).map(|q| q.len()).unwrap_or(0);
 
                 // Add each item to the queue
                 for item in items.iter() {
@@ -597,10 +594,20 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
                             log::debug!("YouTube: adding file to queue (no metadata): {}", path);
                             // Create a minimal Item and use api::Queue
                             let item = crate::backends::api::Item::track(path, path);
-                            Queue::add(backend, &[item], crate::backends::api::InsertAt::End, crate::backends::api::AfterAdd::Nothing)?;
+                            Queue::add(
+                                backend,
+                                &[item],
+                                crate::backends::api::InsertAt::End,
+                                crate::backends::api::AfterAdd::Nothing,
+                            )?;
                         }
                         Enqueue::Song { song } => {
-                            let title = song.metadata.get("title").and_then(|v| v.first()).map(|s| s.as_str()).unwrap_or(&song.uri);
+                            let title = song
+                                .metadata
+                                .get("title")
+                                .and_then(|v| v.first())
+                                .map(|s| s.as_str())
+                                .unwrap_or(&song.uri);
                             log::info!("YouTube: adding song to queue: {} ({})", title, &song.uri);
                             // Add song with full metadata using public method
                             backend.add_song(song, None)?;
@@ -608,7 +615,10 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
                         Enqueue::Playlist { name } => {
                             log::debug!("YouTube: loading playlist: {}", name);
                             // Playlists not fully supported on YouTube yet
-                            log::warn!("Playlist loading not yet supported for YouTube backend: {}", name);
+                            log::warn!(
+                                "Playlist loading not yet supported for YouTube backend: {}",
+                                name
+                            );
                         }
                         Enqueue::Find { filter: _ } => {
                             log::warn!("Find filter not supported for YouTube backend");
@@ -620,7 +630,12 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
                 if let Some(play_idx) = autoplay_idx {
                     // Calculate the actual position in the queue
                     let target_pos = if replace { play_idx } else { queue_len_before + play_idx };
-                    log::info!("YouTube: autoplay at position {} (replace={}, play_idx={})", target_pos, replace, play_idx);
+                    log::info!(
+                        "YouTube: autoplay at position {} (replace={}, play_idx={})",
+                        target_pos,
+                        replace,
+                        play_idx
+                    );
                     if let Err(e) = backend.play_pos(target_pos) {
                         log::error!("YouTube: failed to play position {}: {}", target_pos, e);
                     }
@@ -656,7 +671,9 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
         current_partition: &str,
     ) -> Result<Vec<PartitionedOutput>, MpdError> {
         match self {
-            crate::backends::BackendDispatcher::Mpd(b) => b.client.list_partitioned_outputs(current_partition),
+            crate::backends::BackendDispatcher::Mpd(b) => {
+                b.client.list_partitioned_outputs(current_partition)
+            }
             crate::backends::BackendDispatcher::YouTube(_) => Ok(Vec::new()),
         }
     }
@@ -708,14 +725,18 @@ impl BackendActions for crate::backends::BackendDispatcher<'_> {
         items: Vec<Enqueue>,
     ) -> Result<(), MpdError> {
         match self {
-            crate::backends::BackendDispatcher::Mpd(b) => b.client.set_sticker_multiple(key, value, items),
+            crate::backends::BackendDispatcher::Mpd(b) => {
+                b.client.set_sticker_multiple(key, value, items)
+            }
             crate::backends::BackendDispatcher::YouTube(_) => Ok(()),
         }
     }
 
     fn delete_sticker_multiple(&mut self, key: &str, items: Vec<Enqueue>) -> Result<(), MpdError> {
         match self {
-            crate::backends::BackendDispatcher::Mpd(b) => b.client.delete_sticker_multiple(key, items),
+            crate::backends::BackendDispatcher::Mpd(b) => {
+                b.client.delete_sticker_multiple(key, items)
+            }
             crate::backends::BackendDispatcher::YouTube(_) => Ok(()),
         }
     }
@@ -729,8 +750,8 @@ mod tests {
     use crate::{
         config::keys::actions::{AddOpts, AutoplayKind, Position},
         ctx::Ctx,
-        mpd::QueuePosition,
         domain::song::Song,
+        mpd::QueuePosition,
         tests::fixtures::ctx,
     };
 
@@ -740,19 +761,20 @@ mod tests {
         use super::*;
 
         #[fixture]
-        fn ctx_with_queue(mut ctx: Ctx) -> Ctx {
+        fn ctx_with_queue(ctx: Ctx) -> Ctx {
             let albums = ["a", "b", "b", "b", "c", "c", "d", "e", "e", "f"];
+            let mut songs = Vec::new();
             for i in 0..10 {
-                ctx.queue.push(Song {
+                songs.push(Song {
                     id: Some(i),
                     uri: format!("song{i}"),
-                    metadata: HashMap::from([(
-                        "album".to_owned(),
-                        vec![albums[i as usize].to_owned()],
-                    )]),
+                    metadata: HashMap::from([("album".to_owned(), vec![
+                        albums[i as usize].to_owned(),
+                    ])]),
                     ..Default::default()
                 });
             }
+            ctx.queue_store().reconcile(songs);
             ctx
         }
 
@@ -764,9 +786,9 @@ mod tests {
             let hovered = None;
             let opts = AddOpts { autoplay, position, all: false };
 
-            let (autoplay_idx, queue_position) = opts
-                .autoplay_idx_and_queue_position(&ctx_with_queue.queue, current_song_idx, hovered)
-                .unwrap();
+            let queue = ctx_with_queue.queue_store().read();
+            let (autoplay_idx, queue_position) =
+                opts.autoplay_idx_and_queue_position(&*queue, current_song_idx, hovered).unwrap();
 
             assert_eq!(queue_position, Some(QueuePosition::Absolute(6)));
             assert_eq!(autoplay_idx, Some(6));

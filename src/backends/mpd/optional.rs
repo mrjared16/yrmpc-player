@@ -22,13 +22,16 @@
 //! - [`Modes`] - MPD-specific playback modes (single, consume, crossfade)
 
 use std::collections::HashMap;
+
 use anyhow::Result;
 
-use crate::domain::{Song, QueuePosition};
-use crate::mpd::commands::{
-    Playlist, Output, SaveMode, OnOffOneshot,
+use crate::{
+    domain::{QueuePosition, Song},
+    mpd::{
+        SingleOrRange,
+        commands::{OnOffOneshot, Output, Playlist, SaveMode},
+    },
 };
-use crate::mpd::SingleOrRange;
 
 // =============================================================================
 // STICKERS

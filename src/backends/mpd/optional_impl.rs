@@ -1,17 +1,24 @@
 //! Optional trait implementations for MpdBackend.
 //!
-//! This module implements the MPD-specific optional traits defined in `optional.rs`.
+//! This module implements the MPD-specific optional traits defined in
+//! `optional.rs`.
 
 use std::collections::HashMap;
+
 use anyhow::Result;
 
-use crate::domain::{Song, QueuePosition};
-use crate::mpd::commands::{Playlist, Output, SaveMode, OnOffOneshot};
-use crate::mpd::SingleOrRange;
-use crate::mpd::mpd_client::MpdClient as MpdClientTrait;
-
-use super::MpdBackend;
-use super::optional::{Stickers, SavedPlaylists, Outputs, Database, Modes};
+use super::{
+    MpdBackend,
+    optional::{Database, Modes, Outputs, SavedPlaylists, Stickers},
+};
+use crate::{
+    domain::{QueuePosition, Song},
+    mpd::{
+        SingleOrRange,
+        commands::{OnOffOneshot, Output, Playlist, SaveMode},
+        mpd_client::MpdClient as MpdClientTrait,
+    },
+};
 
 // =============================================================================
 // STICKERS
@@ -19,9 +26,7 @@ use super::optional::{Stickers, SavedPlaylists, Outputs, Database, Modes};
 
 impl<'name> Stickers for MpdBackend<'name> {
     fn list(&mut self, uri: &str) -> Result<HashMap<String, String>> {
-        self.client.list_stickers(uri)
-            .map(|s| s.0)
-            .map_err(Into::into)
+        self.client.list_stickers(uri).map(|s| s.0).map_err(Into::into)
     }
 
     fn set(&mut self, uri: &str, key: &str, value: &str) -> Result<()> {
@@ -43,7 +48,8 @@ impl<'name> SavedPlaylists for MpdBackend<'name> {
     }
 
     fn get(&mut self, name: &str) -> Result<Vec<Song>> {
-        self.client.list_playlist_info(name, None)
+        self.client
+            .list_playlist_info(name, None)
             .map(|songs| songs.into_iter().map(|s| s.into()).collect())
             .map_err(Into::into)
     }
@@ -51,7 +57,9 @@ impl<'name> SavedPlaylists for MpdBackend<'name> {
     fn load(&mut self, name: &str, position: Option<QueuePosition>) -> Result<()> {
         let mpd_pos = position.map(|p| match p {
             QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
-            QueuePosition::Relative(i) if i >= 0 => crate::mpd::QueuePosition::RelativeAdd(i as usize),
+            QueuePosition::Relative(i) if i >= 0 => {
+                crate::mpd::QueuePosition::RelativeAdd(i as usize)
+            }
             QueuePosition::Relative(i) => crate::mpd::QueuePosition::RelativeSub((-i) as usize),
             QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX),
             QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1),
@@ -77,7 +85,9 @@ impl<'name> SavedPlaylists for MpdBackend<'name> {
 
     fn remove_song(&mut self, playlist: &str, position: u32) -> Result<()> {
         use crate::mpd::SingleOrRange;
-        self.client.delete_from_playlist(playlist, &SingleOrRange::single(position as usize)).map_err(Into::into)
+        self.client
+            .delete_from_playlist(playlist, &SingleOrRange::single(position as usize))
+            .map_err(Into::into)
     }
 
     fn move_songs(&mut self, playlist: &str, from: SingleOrRange, to: u32) -> Result<()> {
@@ -91,9 +101,7 @@ impl<'name> SavedPlaylists for MpdBackend<'name> {
 
 impl<'name> Outputs for MpdBackend<'name> {
     fn list(&mut self) -> Result<Vec<Output>> {
-        self.client.outputs()
-            .map(|o| o.0)
-            .map_err(Into::into)
+        self.client.outputs().map(|o| o.0).map_err(Into::into)
     }
 
     fn enable(&mut self, id: u32) -> Result<()> {
@@ -115,15 +123,11 @@ impl<'name> Outputs for MpdBackend<'name> {
 
 impl<'name> Database for MpdBackend<'name> {
     fn update(&mut self, path: Option<&str>) -> Result<u32> {
-        self.client.update(path)
-            .map(|u| u.job_id)
-            .map_err(Into::into)
+        self.client.update(path).map(|u| u.job_id).map_err(Into::into)
     }
 
     fn rescan(&mut self, path: Option<&str>) -> Result<u32> {
-        self.client.rescan(path)
-            .map(|u| u.job_id)
-            .map_err(Into::into)
+        self.client.rescan(path).map(|u| u.job_id).map_err(Into::into)
     }
 }
 

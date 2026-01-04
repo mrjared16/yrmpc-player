@@ -8,4 +8,4 @@
 
 pub mod ipc;
 
-pub use ipc::{MpvIpc, MpvEvent};
+pub use ipc::{MpvEvent, MpvIpc};

@@ -3,7 +3,7 @@
 //! **DEPRECATED**: This module contains the legacy `MusicBackend` trait.
 //! New code should use the `api::*` traits instead:
 //! - `api::Playback` for play/pause/stop/seek
-//! - `api::Queue` for queue management  
+//! - `api::Queue` for queue management
 //! - `api::Discovery` for search and browse
 //! - `api::Volume` for volume control
 //!
@@ -19,12 +19,15 @@
 //! - **Queue**: User's playlist of songs to play
 //! - **Buffer**: MPV's internal 3-track rolling window (YouTube backend only)
 //! - **id**: Queue position identifier (assigned when song added to queue)
-//! - **file**: Content identifier (YouTube video ID like "dQw4w9WgXcQ", or file path for MPD)
+//! - **file**: Content identifier (YouTube video ID like "dQw4w9WgXcQ", or file
+//!   path for MPD)
 //!
 //! ## When to use `id` vs `file`
 //!
-//! - Use `id` when navigating within the queue (same song can appear multiple times)
-//! - Use `file` when checking if it's the same content (search results, toggle detection)
+//! - Use `id` when navigating within the queue (same song can appear multiple
+//!   times)
+//! - Use `file` when checking if it's the same content (search results, toggle
+//!   detection)
 //!
 //! ## Trait Hierarchy
 //!
@@ -39,20 +42,23 @@
 //!
 //! ## Optional Features
 //!
-//! Methods like `list_playlists()`, `update()`, `outputs()` have default implementations
-//! that return empty results or errors. Use `supports(BackendCapability::X)` to check
-//! if a backend actually implements a feature.
+//! Methods like `list_playlists()`, `update()`, `outputs()` have default
+//! implementations that return empty results or errors. Use
+//! `supports(BackendCapability::X)` to check if a backend actually implements a
+//! feature.
 
 use std::collections::HashMap;
+
 use anyhow::{Result, bail};
 
 use crate::{
-    domain::{Song, Status, QueuePosition},
+    domain::{QueuePosition, Song, Status},
     mpd::{SingleOrRange, commands::*, mpd_client::Filter, version::Version},
 };
 
-// BackendCapability is now a type alias in backends/mod.rs pointing to api::Capability
-// The enum definition has been moved to api/content.rs as `Capability`
+// BackendCapability is now a type alias in backends/mod.rs pointing to
+// api::Capability The enum definition has been moved to api/content.rs as
+// `Capability`
 
 /// Trait for queue operations (Single Responsibility: only queue management)
 ///
@@ -81,8 +87,9 @@ pub trait QueueOperations: Send + Sync {
 
 /// Core music backend trait.
 ///
-/// **DEPRECATED**: Use `api::Playback`, `api::Queue`, `api::Discovery`, `api::Volume` instead.
-/// Access via `BackendDispatcher` controllers: `dispatcher.playback()`, `dispatcher.queue()`, etc.
+/// **DEPRECATED**: Use `api::Playback`, `api::Queue`, `api::Discovery`,
+/// `api::Volume` instead. Access via `BackendDispatcher` controllers:
+/// `dispatcher.playback()`, `dispatcher.queue()`, etc.
 ///
 /// All backends must implement the required methods (no default).
 /// Optional features have default no-op implementations.
@@ -109,11 +116,11 @@ pub trait MusicBackend: QueueOperations + Send + Sync {
         self.capabilities().contains(&capability)
     }
 
-    /// Returns whether this backend supports a specific command (for compatibility checks)
+    /// Returns whether this backend supports a specific command (for
+    /// compatibility checks)
     fn supports_command(&self, _command: &str) -> bool {
         true
     }
-
 
     // =========================================================================
     // PLAYBACK CONTROL (required)
@@ -147,7 +154,8 @@ pub trait MusicBackend: QueueOperations + Send + Sync {
 
     fn get_search_suggestions(&mut self, query: String) -> Result<Vec<String>>;
 
-    /// Get library data for a specific category (playlists, albums, artists, songs)
+    /// Get library data for a specific category (playlists, albums, artists,
+    /// songs)
     fn get_library(&mut self, category: super::LibraryCategory) -> Result<Vec<LsInfoEntry>>;
 
     fn lsinfo(&mut self, path: Option<&str>) -> Result<Vec<LsInfoEntry>>;
@@ -158,12 +166,24 @@ pub trait MusicBackend: QueueOperations + Send + Sync {
     // PLAYBACK OPTIONS (optional - defaults do nothing)
     // =========================================================================
 
-    fn repeat(&mut self, _repeat: bool) -> Result<()> { Ok(()) }
-    fn random(&mut self, _random: bool) -> Result<()> { Ok(()) }
-    fn single(&mut self, _single: OnOffOneshot) -> Result<()> { Ok(()) }
-    fn consume(&mut self, _consume: OnOffOneshot) -> Result<()> { Ok(()) }
-    fn crossfade(&mut self, _seconds: u32) -> Result<()> { Ok(()) }
-    fn shuffle(&mut self, _range: Option<SingleOrRange>) -> Result<()> { Ok(()) }
+    fn repeat(&mut self, _repeat: bool) -> Result<()> {
+        Ok(())
+    }
+    fn random(&mut self, _random: bool) -> Result<()> {
+        Ok(())
+    }
+    fn single(&mut self, _single: OnOffOneshot) -> Result<()> {
+        Ok(())
+    }
+    fn consume(&mut self, _consume: OnOffOneshot) -> Result<()> {
+        Ok(())
+    }
+    fn crossfade(&mut self, _seconds: u32) -> Result<()> {
+        Ok(())
+    }
+    fn shuffle(&mut self, _range: Option<SingleOrRange>) -> Result<()> {
+        Ok(())
+    }
 
     // =========================================================================
     // LIBRARY BROWSING (optional - defaults return empty)

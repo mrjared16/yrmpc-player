@@ -2,8 +2,9 @@
 //!
 //! Controls the playback state: play, pause, stop, seek, next, previous.
 
-use anyhow::Result;
 use std::time::Duration;
+
+use anyhow::Result;
 
 use crate::backends::api::{self, Playback as PlaybackTrait};
 
@@ -24,7 +25,8 @@ pub struct PlaybackController<'a> {
 pub enum SeekMode {
     /// Seek to absolute position from start
     Absolute(Duration),
-    /// Seek relative to current position (positive = forward, negative = backward)
+    /// Seek relative to current position (positive = forward, negative =
+    /// backward)
     Relative(f64),
 }
 
@@ -86,7 +88,7 @@ impl PlaybackController<'_> {
     pub fn seek_by(&mut self, delta: f64) -> Result<()> {
         self.backend.seek_relative(delta as i64)
     }
-    
+
     /// Get current playback status
     pub fn status(&mut self) -> Result<api::Status> {
         self.backend.status()

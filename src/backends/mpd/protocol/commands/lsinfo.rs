@@ -2,8 +2,10 @@ use anyhow::{Context, anyhow};
 use chrono::{DateTime, Utc};
 use derive_more::{AsMut, AsRef, Into, IntoIterator};
 
-use crate::domain::Song;
-use crate::mpd::{FromMpd, LineHandled, ParseErrorExt, errors::MpdError};
+use crate::{
+    domain::Song,
+    mpd::{FromMpd, LineHandled, ParseErrorExt, errors::MpdError},
+};
 
 #[derive(Debug, Default, IntoIterator, AsRef, AsMut, Into)]
 pub struct LsInfo(pub Vec<LsInfoEntry>);
@@ -190,7 +192,7 @@ Last-Modified: 2024-08-12T03:03:40Z";
 impl FromMpd for Song {
     fn next_internal(&mut self, key: &str, value: String) -> Result<LineHandled, MpdError> {
         match key {
-            "file" => self.uri = value,  // MPD protocol uses "file", domain uses "uri"
+            "file" => self.uri = value, // MPD protocol uses "file", domain uses "uri"
             "id" => {
                 if let Ok(id) = value.parse() {
                     self.id = Some(id);
@@ -208,10 +210,7 @@ impl FromMpd for Song {
                 self.added = value.parse().ok();
             }
             key => {
-                self.metadata
-                    .entry(key.to_owned())
-                    .or_default()
-                    .push(value);
+                self.metadata.entry(key.to_owned()).or_default().push(value);
             }
         }
         Ok(LineHandled::Yes)

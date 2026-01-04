@@ -36,9 +36,9 @@
 
 mod api_impl;
 mod backend;
+pub mod protocol;
 pub mod specific;
 mod specific_impl;
-pub mod protocol;
 
 // Legacy modules - deprecated, will be removed
 #[deprecated(since = "0.1.0", note = "Use specific module instead")]
@@ -47,8 +47,7 @@ pub mod optional;
 mod optional_impl;
 
 pub use backend::MpdBackend;
-pub use specific::{Stickers, Outputs, Database};
-
 // Re-export deprecated traits for backward compatibility
 #[allow(deprecated)]
-pub use optional::{SavedPlaylists, Modes};
+pub use optional::{Modes, SavedPlaylists};
+pub use specific::{Database, Outputs, Stickers};

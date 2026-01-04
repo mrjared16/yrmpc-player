@@ -6,8 +6,10 @@
 
 use anyhow::Result;
 
-use crate::backends::api::optional::Playlists;
-use crate::domain::content::{ContentRef, PlaylistContent};
+use crate::{
+    backends::api::optional::Playlists,
+    domain::content::{ContentRef, PlaylistContent},
+};
 
 /// Manages saved playlists
 ///
@@ -69,7 +71,7 @@ impl SavedPlaylistController<'_> {
     pub fn remove_tracks(&mut self, playlist: &str, positions: &[u32]) -> Result<()> {
         self.backend.remove_tracks(playlist, positions)
     }
-    
+
     /// Reorder a track within a playlist
     pub fn reorder(&mut self, playlist: &str, from: u32, to: u32) -> Result<()> {
         self.backend.reorder(playlist, from, to)

@@ -13,19 +13,27 @@ use anyhow::{Context, Result, anyhow};
 
 use super::protocol::{BrowseEntry, ServerCommand, ServerResponse, SongData, framing};
 use crate::{
+    backends::{
+        LibraryCategory,
+        api::{Item, SearchSection},
+        traits::{MusicBackend, QueueOperations},
+    },
     domain::{MediaItem, PlaybackState, QueuePosition, Song, Status},
     mpd::{
         commands::{
-            Decoder, LsInfoEntry, Output, Playlist, SaveMode, SeekPosition, ValueChange,
+            Decoder,
+            LsInfoEntry,
+            Output,
+            Playlist,
+            SaveMode,
+            SeekPosition,
+            ValueChange,
             lsinfo::Dir,
             status::OnOffOneshot,
         },
         mpd_client::{Filter, SingleOrRange, Tag},
         version::Version,
     },
-    backends::traits::{MusicBackend, QueueOperations},
-    backends::LibraryCategory,
-    backends::api::{SearchSection, Item},
 };
 
 fn song_from_playable(p: &super::protocol::PlayableData, item_type: &str) -> Song {
@@ -69,10 +77,12 @@ fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> S
     }
 }
 
-/// Parse a flat list of MediaItems (with Header markers) into structured sections.
+/// Parse a flat list of MediaItems (with Header markers) into structured
+/// sections.
 ///
-/// This implements the Section-as-Container pattern from ADR-section-as-container.md:
-/// Headers in the protocol are converted to section containers, not kept as markers.
+/// This implements the Section-as-Container pattern from
+/// ADR-section-as-container.md: Headers in the protocol are converted to
+/// section containers, not kept as markers.
 fn parse_media_items_to_sections(items: Vec<MediaItem>) -> Vec<SearchSection> {
     let mut sections: Vec<SearchSection> = Vec::new();
     let mut current_section: Option<SearchSection> = None;
@@ -92,9 +102,8 @@ fn parse_media_items_to_sections(items: Vec<MediaItem>) -> Vec<SearchSection> {
             }
             _ => {
                 // Add item to current section (or create unknown section)
-                let section = current_section.get_or_insert_with(|| {
-                    SearchSection::new("unknown", "Unknown", Vec::new())
-                });
+                let section = current_section
+                    .get_or_insert_with(|| SearchSection::new("unknown", "Unknown", Vec::new()));
                 section.items.push(Item::from(item));
             }
         }
@@ -206,13 +215,19 @@ impl YouTubeProxy {
         framing::write_message(&mut self.writer, &cmd)?;
         log::debug!("YouTubeClient::request - reading response");
         let response = framing::read_message(&mut self.reader);
-        log::debug!("YouTubeClient::request - got response: {:?}", response.as_ref().map(|r| format!("{:?}", r).chars().take(100).collect::<String>()));
+        log::debug!(
+            "YouTubeClient::request - got response: {:?}",
+            response.as_ref().map(|r| format!("{:?}", r).chars().take(100).collect::<String>())
+        );
         response
     }
 
     /// Send command and expect Ok response
     fn request_ok(&mut self, cmd: ServerCommand) -> Result<()> {
-        log::debug!("YouTubeClient::request_ok - sending command: {:?}", std::mem::discriminant(&cmd));
+        log::debug!(
+            "YouTubeClient::request_ok - sending command: {:?}",
+            std::mem::discriminant(&cmd)
+        );
         match self.request(cmd)? {
             ServerResponse::Ok => Ok(()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
@@ -232,21 +247,23 @@ impl YouTubeProxy {
     pub fn shutdown(&mut self) -> Result<()> {
         self.request_ok(ServerCommand::Shutdown)
     }
-    
+
     // =========================================================================
     // RICH BROWSE DETAIL METHODS
     // =========================================================================
     // These return structured detail types via IPC to the daemon
-    
+
     /// Get detailed playlist info with tracks and metadata
     pub fn browse_playlist_details(&mut self, playlist_id: &str) -> Result<super::PlaylistDetails> {
-        match self.request(ServerCommand::BrowsePlaylistDetails { playlist_id: playlist_id.to_string() })? {
+        match self.request(ServerCommand::BrowsePlaylistDetails {
+            playlist_id: playlist_id.to_string(),
+        })? {
             ServerResponse::PlaylistDetails(data) => Ok(data.to_details()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
         }
     }
-    
+
     /// Get detailed album info with tracks and metadata
     pub fn browse_album_details(&mut self, album_id: &str) -> Result<super::AlbumDetails> {
         match self.request(ServerCommand::BrowseAlbumDetails { album_id: album_id.to_string() })? {
@@ -255,10 +272,12 @@ impl YouTubeProxy {
             other => Err(anyhow!("Unexpected response: {:?}", other)),
         }
     }
-    
+
     /// Get detailed artist info with discography
     pub fn browse_artist_details(&mut self, artist_id: &str) -> Result<super::ArtistDetails> {
-        match self.request(ServerCommand::BrowseArtistDetails { artist_id: artist_id.to_string() })? {
+        match self
+            .request(ServerCommand::BrowseArtistDetails { artist_id: artist_id.to_string() })?
+        {
             ServerResponse::ArtistDetails(data) => Ok(data.to_details()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
@@ -296,15 +315,15 @@ impl YouTubeProxy {
 
         // Return timeout error so the idle thread yields to request thread
         Err(anyhow::Error::new(crate::mpd::errors::MpdError::TimedOut(
-            "YouTube backend idle timeout".into()
+            "YouTube backend idle timeout".into(),
         )))
     }
 
     /// Reconnect to server after connection loss
     ///
-    /// This is called by core/client.rs when the connection drops (e.g., "Broken pipe").
-    /// The outer reconnection loop will retry this until it succeeds or the daemon
-    /// becomes available again.
+    /// This is called by core/client.rs when the connection drops (e.g.,
+    /// "Broken pipe"). The outer reconnection loop will retry this until it
+    /// succeeds or the daemon becomes available again.
     pub fn reconnect(&mut self) -> Result<()> {
         log::info!("Attempting to reconnect to YouTube daemon at {}", self.socket_path.display());
 
@@ -329,8 +348,11 @@ impl YouTubeProxy {
     /// Add song with full metadata (preferred over add for preserving metadata)
     pub fn add_song(&mut self, song: &Song, position: Option<u32>) -> Result<()> {
         let song_data = SongData::from(song.clone());
-        log::debug!("YouTubeClient::add_song sending AddSong command: file={}, title={:?}", 
-            song_data.file, song_data.title);
+        log::debug!(
+            "YouTubeClient::add_song sending AddSong command: file={}, title={:?}",
+            song_data.file,
+            song_data.title
+        );
         let result = self.request_ok(ServerCommand::AddSong { song: song_data, position });
         log::debug!("YouTubeClient::add_song result: {:?}", result.as_ref().map(|_| "Ok"));
         result
@@ -441,7 +463,9 @@ impl MusicBackend for YouTubeProxy {
 
     fn playlist_info(&mut self) -> Result<Vec<Song>> {
         match self.request(ServerCommand::GetPlaylist)? {
-            ServerResponse::Playlist(songs) => Ok(songs.into_iter().map(|sd| sd.to_song()).collect()),
+            ServerResponse::Playlist(songs) => {
+                Ok(songs.into_iter().map(|sd| sd.to_song()).collect())
+            }
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
         }
@@ -509,22 +533,34 @@ impl MusicBackend for YouTubeProxy {
             ServerResponse::SearchResults(items) => {
                 // [DIAG-IMG] Log first item to verify thumbnails in received IPC data
                 if !items.is_empty() {
-                    log::info!("[DIAG-IMG] client.search: received {} MediaItem entries, first = {:?}", items.len(), &items[0]);
+                    log::info!(
+                        "[DIAG-IMG] client.search: received {} MediaItem entries, first = {:?}",
+                        items.len(),
+                        &items[0]
+                    );
                 }
                 // Convert MediaItem to Song for legacy UI compatibility (skip headers)
-                Ok(items.into_iter().filter_map(|item| {
-                    use crate::domain::MediaItem;
-                    match &item {
-                        MediaItem::Header { .. } => None, // Skip headers in legacy search
-                        _ => {
-                            let song = Song::from(item.clone());
-                            log::info!("[DIAG-IMG] client.search: converted '{}' thumbnail={:?}",
-                                song.metadata.get("title").and_then(|v| v.first()).unwrap_or(&"?".to_string()),
-                                song.metadata.get("thumbnail"));
-                            Some(song)
+                Ok(items
+                    .into_iter()
+                    .filter_map(|item| {
+                        use crate::domain::MediaItem;
+                        match &item {
+                            MediaItem::Header { .. } => None, // Skip headers in legacy search
+                            _ => {
+                                let song = Song::from(item.clone());
+                                log::info!(
+                                    "[DIAG-IMG] client.search: converted '{}' thumbnail={:?}",
+                                    song.metadata
+                                        .get("title")
+                                        .and_then(|v| v.first())
+                                        .unwrap_or(&"?".to_string()),
+                                    song.metadata.get("thumbnail")
+                                );
+                                Some(song)
+                            }
                         }
-                    }
-                }).collect())
+                    })
+                    .collect())
             }
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
@@ -542,19 +578,17 @@ impl MusicBackend for YouTubeProxy {
         }
 
         match self.request(ServerCommand::Browse { path: path.to_string() })? {
-            ServerResponse::BrowseResults(entries) => {
-                Ok(entries
-                    .into_iter()
-                    .map(|e| match e {
-                        BrowseEntry::Dir { name, path } => LsInfoEntry::Dir(Dir {
-                            name,
-                            full_path: path,
-                            last_modified: chrono::Utc::now(),
-                        }),
-                        BrowseEntry::File(sd) => LsInfoEntry::File(sd.to_song()),
-                    })
-                    .collect())
-            }
+            ServerResponse::BrowseResults(entries) => Ok(entries
+                .into_iter()
+                .map(|e| match e {
+                    BrowseEntry::Dir { name, path } => LsInfoEntry::Dir(Dir {
+                        name,
+                        full_path: path,
+                        last_modified: chrono::Utc::now(),
+                    }),
+                    BrowseEntry::File(sd) => LsInfoEntry::File(sd.to_song()),
+                })
+                .collect()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
         }
@@ -601,10 +635,7 @@ impl MusicBackend for YouTubeProxy {
 
     // list_all, list_tag, count use default implementations from trait
 
-    fn get_library(
-        &mut self,
-        _category: LibraryCategory,
-    ) -> Result<Vec<LsInfoEntry>> {
+    fn get_library(&mut self, _category: LibraryCategory) -> Result<Vec<LsInfoEntry>> {
         Ok(vec![])
     }
 
@@ -619,8 +650,8 @@ impl MusicBackend for YouTubeProxy {
         }
     }
 
-    // Playlist management, stickers, database management, outputs, decoders, partitions
-    // all use default implementations from trait
+    // Playlist management, stickers, database management, outputs, decoders,
+    // partitions all use default implementations from trait
 
     fn version(&self) -> Version {
         Version { major: 0, minor: 1, patch: 0 }
@@ -630,11 +661,18 @@ impl MusicBackend for YouTubeProxy {
 //=============================================================================
 // API TRAIT IMPLEMENTATION
 //=============================================================================
-//
 // These traits provide a clean, MPD-free interface for the TUI.
 // They wrap the existing MusicBackend methods with simpler types.
 
-use crate::backends::api::{self, SearchQuery, SearchResults, BrowseResult, Capability, InsertAt, AfterAdd};
+use crate::backends::api::{
+    self,
+    AfterAdd,
+    BrowseResult,
+    Capability,
+    InsertAt,
+    SearchQuery,
+    SearchResults,
+};
 
 impl api::Playback for YouTubeProxy {
     fn play(&mut self) -> Result<()> {
@@ -680,7 +718,7 @@ impl api::Playback for YouTubeProxy {
                         (false, _) => api::Repeat::Off,
                     },
                     shuffle: domain_status.random,
-                    crossfade: 0, // YouTube backend doesn't support crossfade
+                    crossfade: 0,   // YouTube backend doesn't support crossfade
                     gapless: false, // YouTube backend doesn't support gapless
                 })
             }
@@ -722,13 +760,16 @@ impl api::Queue for YouTubeProxy {
                 album: None,
                 duration_ms: item.duration.map(|d| d.as_millis() as u64),
                 thumbnail: item.thumbnail.clone(),
-                item_type: Some(match item.content_type {
-                    api::ContentType::Track => "song",
-                    api::ContentType::Album => "album",
-                    api::ContentType::Artist => "artist",
-                    api::ContentType::Playlist => "playlist",
-                    _ => "song",
-                }.to_string()),
+                item_type: Some(
+                    match item.content_type {
+                        api::ContentType::Track => "song",
+                        api::ContentType::Album => "album",
+                        api::ContentType::Artist => "artist",
+                        api::ContentType::Playlist => "playlist",
+                        _ => "song",
+                    }
+                    .to_string(),
+                ),
             };
             self.request_ok(ServerCommand::AddSong { song: song_data, position: pos })?;
         }
@@ -769,19 +810,18 @@ impl api::Queue for YouTubeProxy {
 
     fn list(&mut self) -> Result<Vec<Item>> {
         match self.request(ServerCommand::GetPlaylist)? {
-            ServerResponse::Playlist(songs) => {
-                Ok(songs.into_iter().map(|sd| {
-                    Item {
-                        id: sd.file.clone(),
-                        content_type: api::ContentType::Track,
-                        title: sd.title.unwrap_or_else(|| sd.file.clone()),
-                        subtitle: sd.artist,
-                        thumbnail: sd.thumbnail,
-                        duration: sd.duration_ms.map(std::time::Duration::from_millis),
-                        queue_id: sd.id,
-                    }
-                }).collect())
-            }
+            ServerResponse::Playlist(songs) => Ok(songs
+                .into_iter()
+                .map(|sd| Item {
+                    id: sd.file.clone(),
+                    content_type: api::ContentType::Track,
+                    title: sd.title.unwrap_or_else(|| sd.file.clone()),
+                    subtitle: sd.artist,
+                    thumbnail: sd.thumbnail,
+                    duration: sd.duration_ms.map(std::time::Duration::from_millis),
+                    queue_id: sd.id,
+                })
+                .collect()),
             ServerResponse::Error(e) => Err(anyhow!(e)),
             other => Err(anyhow!("Unexpected response: {:?}", other)),
         }
@@ -791,10 +831,7 @@ impl api::Queue for YouTubeProxy {
         // Move each item to the target position
         // Note: This is a simplification - proper bulk move would need daemon support
         for (i, id) in queue_ids.iter().enumerate() {
-            self.request_ok(ServerCommand::MoveId { 
-                from: *id, 
-                to: to_position + i as u32 
-            })?;
+            self.request_ok(ServerCommand::MoveId { from: *id, to: to_position + i as u32 })?;
         }
         Ok(())
     }
@@ -830,7 +867,8 @@ impl api::Discovery for YouTubeProxy {
         match self.request(ServerCommand::Search { query: query.text })? {
             ServerResponse::SearchResults(items) => {
                 // Parse flat MediaItem list (with Header markers) into structured sections
-                // This implements the Section-as-Container pattern from ADR-section-as-container.md
+                // This implements the Section-as-Container pattern from
+                // ADR-section-as-container.md
                 let sections = parse_media_items_to_sections(items);
                 let mut results = SearchResults::default();
                 for section in sections {
@@ -845,35 +883,34 @@ impl api::Discovery for YouTubeProxy {
 
     fn browse(&mut self, path: &str) -> Result<BrowseResult> {
         if path.is_empty() {
-            return Ok(BrowseResult {
-                path: path.to_string(),
-                items: vec![],
-                parent: None,
-            });
+            return Ok(BrowseResult { path: path.to_string(), items: vec![], parent: None });
         }
 
         match self.request(ServerCommand::Browse { path: path.to_string() })? {
             ServerResponse::BrowseResults(entries) => {
-                let items = entries.into_iter().map(|e| match e {
-                    BrowseEntry::Dir { name, path } => Item {
-                        id: path,
-                        content_type: api::ContentType::Directory,
-                        title: name,
-                        subtitle: None,
-                        thumbnail: None,
-                        duration: None,
-                        queue_id: None,
-                    },
-                    BrowseEntry::File(sd) => Item {
-                        id: sd.file.clone(),
-                        content_type: api::ContentType::Track,
-                        title: sd.title.unwrap_or_else(|| sd.file.clone()),
-                        subtitle: sd.artist,
-                        thumbnail: sd.thumbnail,
-                        duration: sd.duration_ms.map(std::time::Duration::from_millis),
-                        queue_id: sd.id,
-                    },
-                }).collect();
+                let items = entries
+                    .into_iter()
+                    .map(|e| match e {
+                        BrowseEntry::Dir { name, path } => Item {
+                            id: path,
+                            content_type: api::ContentType::Directory,
+                            title: name,
+                            subtitle: None,
+                            thumbnail: None,
+                            duration: None,
+                            queue_id: None,
+                        },
+                        BrowseEntry::File(sd) => Item {
+                            id: sd.file.clone(),
+                            content_type: api::ContentType::Track,
+                            title: sd.title.unwrap_or_else(|| sd.file.clone()),
+                            subtitle: sd.artist,
+                            thumbnail: sd.thumbnail,
+                            duration: sd.duration_ms.map(std::time::Duration::from_millis),
+                            queue_id: sd.id,
+                        },
+                    })
+                    .collect();
 
                 Ok(BrowseResult {
                     path: path.to_string(),
@@ -899,17 +936,23 @@ impl api::Discovery for YouTubeProxy {
 
     fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
         use crate::domain::content::{
-            ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
-            ContentRef, Extensions, Stat, Action,
+            Action,
+            AlbumContent,
+            ArtistContent,
+            ContentDetails,
+            ContentRef,
+            Extensions,
+            PlaylistContent,
+            Stat,
         };
-        
+
         match item.content_type {
             api::ContentType::Album => {
                 let yt_album = self.browse_album_details(&item.id)?;
-                
+
                 // Build extensions with stats and related content
                 let mut extensions = Extensions::builder();
-                
+
                 // Add stats
                 let mut stats = vec![];
                 if let Some(year) = &yt_album.year {
@@ -919,26 +962,28 @@ impl api::Discovery for YouTubeProxy {
                 }
                 stats.push(Stat::track_count(yt_album.tracks.len()));
                 extensions = extensions.stats(stats);
-                
+
                 // Add actions
                 extensions = extensions.actions(vec![
                     Action::play(),
                     Action::shuffle(),
                     Action::add_to_queue(),
                 ]);
-                
+
                 // Add "more by artist" section
                 if !yt_album.more_by_artist.is_empty() {
-                    let more_albums: Vec<ContentRef> = yt_album.more_by_artist.into_iter()
-                        .map(|a| ContentRef::album(a.id, a.title)
-                            .with_subtitle(a.year.unwrap_or_default()))
+                    let more_albums: Vec<ContentRef> = yt_album
+                        .more_by_artist
+                        .into_iter()
+                        .map(|a| {
+                            ContentRef::album(a.id, a.title)
+                                .with_subtitle(a.year.unwrap_or_default())
+                        })
                         .collect();
-                    extensions = extensions.more_by_artist(
-                        format!("More by {}", yt_album.artist.name),
-                        more_albums
-                    );
+                    extensions = extensions
+                        .more_by_artist(format!("More by {}", yt_album.artist.name), more_albums);
                 }
-                
+
                 Ok(ContentDetails::Album(AlbumContent {
                     id: yt_album.id,
                     title: yt_album.title,
@@ -954,50 +999,57 @@ impl api::Discovery for YouTubeProxy {
             }
             api::ContentType::Artist => {
                 let yt_artist = self.browse_artist_details(&item.id)?;
-                
+
                 // Build extensions
                 let mut extensions = Extensions::builder();
-                
+
                 // Add stats
                 let mut stats = vec![];
                 if let Some(subs) = &yt_artist.subscribers {
                     stats.push(Stat::subscribers(subs.clone()));
                 }
                 extensions = extensions.stats(stats);
-                
+
                 // Add actions
-                extensions = extensions.actions(vec![
-                    Action::play(),
-                    Action::shuffle(),
-                    Action::radio(),
-                ]);
-                
+                extensions =
+                    extensions.actions(vec![Action::play(), Action::shuffle(), Action::radio()]);
+
                 // Add albums section
                 if !yt_artist.albums.is_empty() {
-                    let albums: Vec<ContentRef> = yt_artist.albums.into_iter()
-                        .map(|a| ContentRef::album(a.id, a.title)
-                            .with_subtitle(a.year.unwrap_or_default()))
+                    let albums: Vec<ContentRef> = yt_artist
+                        .albums
+                        .into_iter()
+                        .map(|a| {
+                            ContentRef::album(a.id, a.title)
+                                .with_subtitle(a.year.unwrap_or_default())
+                        })
                         .collect();
                     extensions = extensions.albums("Albums", albums);
                 }
-                
+
                 // Add singles section
                 if !yt_artist.singles.is_empty() {
-                    let singles: Vec<ContentRef> = yt_artist.singles.into_iter()
-                        .map(|a| ContentRef::album(a.id, a.title)
-                            .with_subtitle(a.year.unwrap_or_default()))
+                    let singles: Vec<ContentRef> = yt_artist
+                        .singles
+                        .into_iter()
+                        .map(|a| {
+                            ContentRef::album(a.id, a.title)
+                                .with_subtitle(a.year.unwrap_or_default())
+                        })
                         .collect();
                     extensions = extensions.singles("Singles", singles);
                 }
-                
+
                 // Add related artists section
                 if !yt_artist.related_artists.is_empty() {
-                    let related: Vec<ContentRef> = yt_artist.related_artists.into_iter()
+                    let related: Vec<ContentRef> = yt_artist
+                        .related_artists
+                        .into_iter()
                         .map(|a| ContentRef::artist(a.id, a.name))
                         .collect();
                     extensions = extensions.related_artists("Fans also like", related);
                 }
-                
+
                 Ok(ContentDetails::Artist(ArtistContent {
                     id: yt_artist.id,
                     name: yt_artist.name,
@@ -1009,10 +1061,10 @@ impl api::Discovery for YouTubeProxy {
             }
             api::ContentType::Playlist => {
                 let yt_playlist = self.browse_playlist_details(&item.id)?;
-                
+
                 // Build extensions
                 let mut extensions = Extensions::builder();
-                
+
                 // Add stats
                 let mut stats = vec![];
                 stats.push(Stat::track_count(yt_playlist.track_count));
@@ -1020,35 +1072,41 @@ impl api::Discovery for YouTubeProxy {
                     stats.push(Stat::text(
                         crate::domain::content::StatKey::Duration,
                         "Duration",
-                        duration.clone()
+                        duration.clone(),
                     ));
                 }
                 extensions = extensions.stats(stats);
-                
+
                 // Add actions
                 extensions = extensions.actions(vec![
                     Action::play(),
                     Action::shuffle(),
                     Action::add_to_queue(),
                 ]);
-                
+
                 // Add featured artists section
                 if !yt_playlist.featured_artists.is_empty() {
-                    let artists: Vec<ContentRef> = yt_playlist.featured_artists.into_iter()
+                    let artists: Vec<ContentRef> = yt_playlist
+                        .featured_artists
+                        .into_iter()
                         .map(|a| ContentRef::artist(a.id, a.name))
                         .collect();
                     extensions = extensions.featured_artists("Featured artists", artists);
                 }
-                
+
                 // Add related playlists section
                 if !yt_playlist.related_playlists.is_empty() {
-                    let playlists: Vec<ContentRef> = yt_playlist.related_playlists.into_iter()
-                        .map(|p| ContentRef::playlist(p.id, p.title)
-                            .with_subtitle(p.subtitle.unwrap_or_default()))
+                    let playlists: Vec<ContentRef> = yt_playlist
+                        .related_playlists
+                        .into_iter()
+                        .map(|p| {
+                            ContentRef::playlist(p.id, p.title)
+                                .with_subtitle(p.subtitle.unwrap_or_default())
+                        })
                         .collect();
                     extensions = extensions.related_playlists("Similar playlists", playlists);
                 }
-                
+
                 Ok(ContentDetails::Playlist(PlaylistContent {
                     id: yt_playlist.id,
                     title: yt_playlist.title,
@@ -1088,11 +1146,7 @@ impl api::Backend for YouTubeProxy {
     }
 
     fn capabilities(&self) -> &'static [Capability] {
-        &[
-            Capability::RichMetadata,
-            Capability::SearchSuggestions,
-            Capability::Radio,
-        ]
+        &[Capability::RichMetadata, Capability::SearchSuggestions, Capability::Radio]
     }
 }
 
@@ -1125,8 +1179,10 @@ impl api::StatusQuery for YouTubeProxy {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::backends::youtube::protocol::{PlayableData, BrowsableData, SearchItemData};
-    use crate::domain::display::ListItemDisplay;
+    use crate::{
+        backends::youtube::protocol::{BrowsableData, PlayableData, SearchItemData},
+        domain::display::ListItemDisplay,
+    };
 
     // =========================================================================
     // Task-53: RED Tests for Thumbnail Preservation Bug
@@ -1219,8 +1275,10 @@ mod tests {
 
     #[test]
     fn media_item_to_song_preserves_thumbnail_for_tracks() {
-        use crate::domain::MediaItem;
-        use crate::domain::media_item::{Track, BackendExtension, YouTubeData};
+        use crate::domain::{
+            MediaItem,
+            media_item::{BackendExtension, Track, YouTubeData},
+        };
 
         // Arrange: Create MediaItem::Track with thumbnail
         let item = MediaItem::Track(Track {
@@ -1249,8 +1307,10 @@ mod tests {
 
     #[test]
     fn media_item_to_song_preserves_thumbnail_for_artists() {
-        use crate::domain::MediaItem;
-        use crate::domain::media_item::{Artist, BackendExtension};
+        use crate::domain::{
+            MediaItem,
+            media_item::{Artist, BackendExtension},
+        };
 
         // Arrange: Create MediaItem::Artist with thumbnail
         let item = MediaItem::Artist(Artist {
@@ -1274,8 +1334,10 @@ mod tests {
 
     #[test]
     fn media_item_to_song_preserves_thumbnail_for_albums() {
-        use crate::domain::MediaItem;
-        use crate::domain::media_item::{Album, BackendExtension};
+        use crate::domain::{
+            MediaItem,
+            media_item::{Album, BackendExtension},
+        };
 
         // Arrange: Create MediaItem::Album with thumbnail
         let item = MediaItem::Album(Album {
@@ -1308,9 +1370,13 @@ mod tests {
 
     #[test]
     fn media_item_survives_json_roundtrip_with_thumbnail() {
-        use crate::backends::youtube::protocol::ServerResponse;
-        use crate::domain::MediaItem;
-        use crate::domain::media_item::{Track, BackendExtension, YouTubeData};
+        use crate::{
+            backends::youtube::protocol::ServerResponse,
+            domain::{
+                MediaItem,
+                media_item::{BackendExtension, Track, YouTubeData},
+            },
+        };
 
         // Arrange: Create MediaItem with thumbnail
         let original = MediaItem::Track(Track {
@@ -1373,9 +1439,13 @@ mod tests {
 
     #[test]
     fn media_item_artist_survives_json_roundtrip_with_thumbnail() {
-        use crate::backends::youtube::protocol::ServerResponse;
-        use crate::domain::MediaItem;
-        use crate::domain::media_item::{Artist, BackendExtension};
+        use crate::{
+            backends::youtube::protocol::ServerResponse,
+            domain::{
+                MediaItem,
+                media_item::{Artist, BackendExtension},
+            },
+        };
 
         // Arrange: Create Artist with thumbnail
         let original = MediaItem::Artist(Artist {

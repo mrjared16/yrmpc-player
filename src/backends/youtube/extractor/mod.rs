@@ -21,18 +21,18 @@
 //! let results = extractor.extract_batch(&["id1", "id2", "id3"]);
 //! ```
 
-mod ytx;
-mod ytdlp;
 mod cached;
 mod fallback;
-
-pub use ytx::YtxExtractor;
-pub use ytdlp::YtDlpExtractor;
-pub use cached::{CachedExtractor, CacheConfig};
-pub use fallback::FallbackExtractor;
+mod ytdlp;
+mod ytx;
 
 use std::collections::HashMap;
+
 use anyhow::{Result, anyhow};
+pub use cached::{CacheConfig, CachedExtractor};
+pub use fallback::FallbackExtractor;
+pub use ytdlp::YtDlpExtractor;
+pub use ytx::YtxExtractor;
 
 /// Core extraction trait - all extractors implement this.
 ///
@@ -75,12 +75,7 @@ mod tests {
 
     impl MockExtractor {
         fn new(responses: Vec<(&str, Result<String>)>) -> Self {
-            Self {
-                responses: responses
-                    .into_iter()
-                    .map(|(k, v)| (k.to_string(), v))
-                    .collect(),
-            }
+            Self { responses: responses.into_iter().map(|(k, v)| (k.to_string(), v)).collect() }
         }
     }
 
@@ -103,9 +98,8 @@ mod tests {
 
     #[test]
     fn test_extract_one_delegates_to_batch() {
-        let extractor = MockExtractor::new(vec![
-            ("abc123", Ok("https://example.com/stream".to_string())),
-        ]);
+        let extractor =
+            MockExtractor::new(vec![("abc123", Ok("https://example.com/stream".to_string()))]);
 
         let url = extractor.extract_one("abc123").unwrap();
         assert_eq!(url, "https://example.com/stream");

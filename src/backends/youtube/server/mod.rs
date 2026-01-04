@@ -33,20 +33,20 @@ use std::{
     os::unix::net::{UnixListener, UnixStream},
     path::{Path, PathBuf},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     thread,
     time::Duration,
 };
 
-use crossbeam::channel::{self, Sender, Receiver};
 use anyhow::{Context, Result};
+use crossbeam::channel::{self, Receiver, Sender};
 
 use super::{
-    protocol::{ServerCommand, ServerResponse, framing},
-    services::{ApiService, PlaybackService, QueueService, PlaybackStateTracker},
     config::ExtractorType,
+    protocol::{ServerCommand, ServerResponse, framing},
+    services::{ApiService, PlaybackService, PlaybackStateTracker, QueueService},
 };
 
 /// YouTube server orchestrates services and handles IPC
@@ -64,7 +64,11 @@ pub struct YouTubeServer {
 
 impl YouTubeServer {
     /// Create new server with services
-    pub fn new(socket_path: &Path, cookie_file: Option<&str>, extractor_type: ExtractorType) -> Result<Self> {
+    pub fn new(
+        socket_path: &Path,
+        cookie_file: Option<&str>,
+        extractor_type: ExtractorType,
+    ) -> Result<Self> {
         let mpv_socket = socket_path.with_extension("mpv.sock");
 
         // Create API service
@@ -112,7 +116,8 @@ impl YouTubeServer {
         self.running.store(true, Ordering::SeqCst);
 
         // Start the MPV event loop for property observation
-        if let Err(e) = self.playback.start_event_loop(&self.mpv_socket_path, self.event_tx.clone()) {
+        if let Err(e) = self.playback.start_event_loop(&self.mpv_socket_path, self.event_tx.clone())
+        {
             log::error!("Failed to start MPV event loop: {}", e);
         }
 
@@ -160,7 +165,12 @@ impl YouTubeServer {
 
                         if event.starts_with("end-file:") {
                             let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                            orchestrator::handle_track_ended(&playback, &queue, &state_tracker, reason);
+                            orchestrator::handle_track_ended(
+                                &playback,
+                                &queue,
+                                &state_tracker,
+                                reason,
+                            );
                         }
                     }
                     Err(crossbeam::channel::RecvTimeoutError::Timeout) => {}
@@ -224,13 +234,23 @@ impl YouTubeServer {
             ServerCommand::Pause => handlers::handle_pause(&self.playback, &self.event_tx),
             ServerCommand::Stop => handlers::handle_stop(&self.playback, &self.event_tx),
             ServerCommand::SeekAbsolute(pos) => handlers::handle_seek_absolute(&self.playback, pos),
-            ServerCommand::SeekRelative(delta) => handlers::handle_seek_relative(&self.playback, delta),
+            ServerCommand::SeekRelative(delta) => {
+                handlers::handle_seek_relative(&self.playback, delta)
+            }
 
             // Navigation (uses orchestrator)
-            ServerCommand::Next => orchestrator::next_track(&self.playback, &self.queue, &self.state_tracker),
-            ServerCommand::Previous => orchestrator::previous_track(&self.playback, &self.queue, &self.state_tracker),
-            ServerCommand::PlayPos(pos) => orchestrator::play_position(&self.playback, &self.queue, pos, &self.state_tracker),
-            ServerCommand::PlayId(id) => orchestrator::play_id(&self.playback, &self.queue, id, &self.state_tracker),
+            ServerCommand::Next => {
+                orchestrator::next_track(&self.playback, &self.queue, &self.state_tracker)
+            }
+            ServerCommand::Previous => {
+                orchestrator::previous_track(&self.playback, &self.queue, &self.state_tracker)
+            }
+            ServerCommand::PlayPos(pos) => {
+                orchestrator::play_position(&self.playback, &self.queue, pos, &self.state_tracker)
+            }
+            ServerCommand::PlayId(id) => {
+                orchestrator::play_id(&self.playback, &self.queue, id, &self.state_tracker)
+            }
 
             // Queue handlers
             ServerCommand::Add { uri, position } => {
@@ -238,7 +258,13 @@ impl YouTubeServer {
             }
             ServerCommand::AddSong { song, position } => {
                 log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
-                let result = handlers::handle_add_song(&self.queue, &self.playback, &self.event_tx, song, position);
+                let result = handlers::handle_add_song(
+                    &self.queue,
+                    &self.playback,
+                    &self.event_tx,
+                    song,
+                    position,
+                );
                 log::info!("AddSong result: {:?}", result);
                 result
             }
@@ -255,7 +281,9 @@ impl YouTubeServer {
             // Volume/options handlers
             ServerCommand::GetVolume => handlers::handle_get_volume(&self.playback),
             ServerCommand::SetVolume(vol) => handlers::handle_set_volume(&self.playback, vol),
-            ServerCommand::AdjustVolume(delta) => handlers::handle_adjust_volume(&self.playback, delta),
+            ServerCommand::AdjustVolume(delta) => {
+                handlers::handle_adjust_volume(&self.playback, delta)
+            }
             ServerCommand::SetRepeat(mode) => {
                 handlers::handle_set_repeat(&self.queue, &self.event_tx, &mode)
             }
@@ -265,7 +293,9 @@ impl YouTubeServer {
 
             // Status handlers
             ServerCommand::GetStatus => handlers::handle_get_status(&self.playback, &self.queue),
-            ServerCommand::GetCurrentSong => handlers::handle_get_current_song(&self.playback, &self.queue),
+            ServerCommand::GetCurrentSong => {
+                handlers::handle_get_current_song(&self.playback, &self.queue)
+            }
             ServerCommand::GetPlaylist => handlers::handle_get_playlist(&self.queue),
 
             // Search handlers
@@ -300,7 +330,12 @@ impl YouTubeServer {
             Ok(event) => {
                 if event.starts_with("end-file:") {
                     let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                    orchestrator::handle_track_ended(&self.playback, &self.queue, &self.state_tracker, reason);
+                    orchestrator::handle_track_ended(
+                        &self.playback,
+                        &self.queue,
+                        &self.state_tracker,
+                        reason,
+                    );
                     return ServerResponse::IdleEvents(vec!["player".to_string()]);
                 }
 

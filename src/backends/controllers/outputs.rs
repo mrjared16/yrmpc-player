@@ -4,14 +4,14 @@
 
 use anyhow::Result;
 
-use crate::backends::mpd::specific::Outputs;
-use crate::mpd::commands::Output;
+use crate::{backends::mpd::specific::Outputs, mpd::commands::Output};
 
 /// Controls audio outputs (MPD only)
 ///
-/// This controller is only available when the backend supports `MpdOutputs` capability.
-/// Use `dispatcher.outputs_control()` to get an instance - it returns `None` for backends
-/// that don't support output control (like YouTube).
+/// This controller is only available when the backend supports `MpdOutputs`
+/// capability. Use `dispatcher.outputs_control()` to get an instance - it
+/// returns `None` for backends that don't support output control (like
+/// YouTube).
 ///
 /// # Example
 ///

@@ -4,10 +4,12 @@
 //! - MPD: Local `.m3u` files with full CRUD
 //! - YouTube: Remote playlists via API, 2-way sync with account
 //!
-//! The TUI doesn't need to know the difference - same interface, different implementations.
+//! The TUI doesn't need to know the difference - same interface, different
+//! implementations.
 
 use anyhow::Result;
-use crate::domain::content::{PlaylistContent, ContentRef};
+
+use crate::domain::content::{ContentRef, PlaylistContent};
 
 /// User library playlists.
 ///

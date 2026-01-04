@@ -40,10 +40,7 @@ impl<P: Extractor, F: Extractor> FallbackExtractor<P, F> {
 
 impl<P: Extractor + Clone, F: Extractor + Clone> Clone for FallbackExtractor<P, F> {
     fn clone(&self) -> Self {
-        Self {
-            primary: self.primary.clone(),
-            fallback: self.fallback.clone(),
-        }
+        Self { primary: self.primary.clone(), fallback: self.fallback.clone() }
     }
 }
 
@@ -55,13 +52,7 @@ impl<P: Extractor, F: Extractor> Extractor for FallbackExtractor<P, F> {
         // 2. Collect failed IDs
         let failed_ids: Vec<String> = results
             .iter()
-            .filter_map(|(id, result)| {
-                if result.is_err() {
-                    Some(id.clone())
-                } else {
-                    None
-                }
-            })
+            .filter_map(|(id, result)| if result.is_err() { Some(id.clone()) } else { None })
             .collect();
 
         // 3. Retry failed IDs with fallback
@@ -126,8 +117,9 @@ unsafe impl<P: Extractor, F: Extractor> Sync for FallbackExtractor<P, F> {}
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use anyhow::anyhow;
+
+    use super::*;
 
     struct SuccessExtractor;
     struct FailingExtractor;
@@ -135,11 +127,9 @@ mod tests {
 
     impl Extractor for SuccessExtractor {
         fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
-            video_ids
-                .iter()
-                .map(|id| (id.clone(), Ok(format!("success_url_{}", id))))
-                .collect()
+            video_ids.iter().map(|id| (id.clone(), Ok(format!("success_url_{}", id)))).collect()
         }
+
         fn name(&self) -> &'static str {
             "success"
         }
@@ -147,11 +137,9 @@ mod tests {
 
     impl Extractor for FailingExtractor {
         fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
-            video_ids
-                .iter()
-                .map(|id| (id.clone(), Err(anyhow!("always fails"))))
-                .collect()
+            video_ids.iter().map(|id| (id.clone(), Err(anyhow!("always fails")))).collect()
         }
+
         fn name(&self) -> &'static str {
             "failing"
         }
@@ -170,6 +158,7 @@ mod tests {
                 })
                 .collect()
         }
+
         fn name(&self) -> &'static str {
             "partial"
         }
@@ -201,21 +190,12 @@ mod tests {
     fn test_batch_partial_fallback() {
         let extractor = FallbackExtractor::new(PartialExtractor, SuccessExtractor);
 
-        let results = extractor.extract_batch(&[
-            "good".to_string(),
-            "fail_bad".to_string(),
-        ]);
+        let results = extractor.extract_batch(&["good".to_string(), "fail_bad".to_string()]);
 
         // "good" should come from primary
-        assert_eq!(
-            results.get("good").unwrap().as_ref().unwrap(),
-            "partial_url_good"
-        );
+        assert_eq!(results.get("good").unwrap().as_ref().unwrap(), "partial_url_good");
 
         // "fail_bad" should come from fallback
-        assert_eq!(
-            results.get("fail_bad").unwrap().as_ref().unwrap(),
-            "success_url_fail_bad"
-        );
+        assert_eq!(results.get("fail_bad").unwrap().as_ref().unwrap(), "success_url_fail_bad");
     }
 }

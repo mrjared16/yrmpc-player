@@ -2,7 +2,6 @@ use std::collections::HashMap;
 
 use anyhow::Result;
 
-use crate::backends::traits::{MusicBackend, QueueOperations};
 use super::protocol::{
     client::Client as MpdClient,
     commands::{
@@ -22,6 +21,7 @@ use super::protocol::{
     },
     mpd_client::{Filter, MpdClient as MpdClientTrait, SingleOrRange},
 };
+use crate::backends::traits::{MusicBackend, QueueOperations};
 
 /// MPD backend implementation
 ///
@@ -59,15 +59,21 @@ impl<'name> MpdBackend<'name> {
 // MPD extracts song.uri and uses its own metadata database
 
 impl<'name> QueueOperations for MpdBackend<'name> {
-    fn enqueue(&mut self, song: &crate::domain::Song, position: Option<crate::domain::QueuePosition>) -> Result<()> {
+    fn enqueue(
+        &mut self,
+        song: &crate::domain::Song,
+        position: Option<crate::domain::QueuePosition>,
+    ) -> Result<()> {
         // MPD only needs the file path, it has its own metadata database
         let mpd_pos = position.map(|p| match p {
             crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
-            crate::domain::QueuePosition::Relative(i) => if i >= 0 {
-                crate::mpd::QueuePosition::RelativeAdd(i as usize)
-            } else {
-                crate::mpd::QueuePosition::RelativeSub((-i) as usize)
-            },
+            crate::domain::QueuePosition::Relative(i) => {
+                if i >= 0 {
+                    crate::mpd::QueuePosition::RelativeAdd(i as usize)
+                } else {
+                    crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+                }
+            }
             crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX),
             crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1),
         });
@@ -166,15 +172,16 @@ impl<'name> MusicBackend for MpdBackend<'name> {
             crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX), // MPD handles out of bounds as end usually, or we need logic
             crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1), // Rough approximation, MPD doesn't have "Next" directly in add without calc
         });
-        // For now, let's assume simple mapping. MPD's add command usually takes optional position.
-        // The client.add takes Option<QueuePosition>.
+        // For now, let's assume simple mapping. MPD's add command usually takes
+        // optional position. The client.add takes Option<QueuePosition>.
         // Wait, crate::mpd::QueuePosition definition:
-        // pub enum QueuePosition { Absolute(usize), RelativeAdd(usize), RelativeSub(usize) }
-        
+        // pub enum QueuePosition { Absolute(usize), RelativeAdd(usize),
+        // RelativeSub(usize) }
+
         // Re-checking logic:
-        // domain::QueuePosition::Next -> logic needed? 
+        // domain::QueuePosition::Next -> logic needed?
         // For now I will implement a basic conversion.
-        
+
         self.client.add(uri, mpd_pos).map_err(Into::into)
     }
 
@@ -248,7 +255,10 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(vec![])
     }
 
-    fn get_library(&mut self, _category: crate::backends::LibraryCategory) -> Result<Vec<LsInfoEntry>> {
+    fn get_library(
+        &mut self,
+        _category: crate::backends::LibraryCategory,
+    ) -> Result<Vec<LsInfoEntry>> {
         // MPD backend doesn't support YouTube Music library categories
         // Return empty vec to indicate no library support
         Ok(vec![])
@@ -295,7 +305,11 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(self.client.search(filter, false)?.into_iter().map(Into::into).collect())
     }
 
-    fn find(&mut self, filter: &[Filter], _window: Option<(u32, u32)>) -> Result<Vec<crate::domain::Song>> {
+    fn find(
+        &mut self,
+        filter: &[Filter],
+        _window: Option<(u32, u32)>,
+    ) -> Result<Vec<crate::domain::Song>> {
         // MPD client find() doesn't support window directly in this version wrapper
         // TODO: Implement window support if critical
         Ok(self.client.find(filter)?.into_iter().map(Into::into).collect())
@@ -324,14 +338,20 @@ impl<'name> MusicBackend for MpdBackend<'name> {
         Ok(self.client.list_playlist_info(name, None)?.into_iter().map(Into::into).collect())
     }
 
-    fn load_playlist(&mut self, name: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
+    fn load_playlist(
+        &mut self,
+        name: &str,
+        position: Option<crate::domain::QueuePosition>,
+    ) -> Result<()> {
         let mpd_pos = position.map(|p| match p {
             crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
-            crate::domain::QueuePosition::Relative(i) => if i >= 0 {
-                crate::mpd::QueuePosition::RelativeAdd(i as usize)
-            } else {
-                crate::mpd::QueuePosition::RelativeSub((-i) as usize)
-            },
+            crate::domain::QueuePosition::Relative(i) => {
+                if i >= 0 {
+                    crate::mpd::QueuePosition::RelativeAdd(i as usize)
+                } else {
+                    crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+                }
+            }
             crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX),
             crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1),
         });
@@ -361,9 +381,7 @@ impl<'name> MusicBackend for MpdBackend<'name> {
     }
 
     fn move_in_playlist(&mut self, playlist: &str, from: SingleOrRange, to: u32) -> Result<()> {
-        self.client
-            .move_in_playlist(playlist, &from, to as usize)
-            .map_err(Into::into)
+        self.client.move_in_playlist(playlist, &from, to as usize).map_err(Into::into)
     }
 
     // ===== Sticker Support =====
@@ -456,7 +474,15 @@ impl<'name> MusicBackend for MpdBackend<'name> {
 
     fn capabilities(&self) -> &'static [crate::backends::api::Capability] {
         use crate::backends::api::Capability::*;
-        &[Playlists, PlaylistCreate, PlaylistEdit, MpdDatabase, MpdStickers, MpdOutputs, MpdPartitions]
+        &[
+            Playlists,
+            PlaylistCreate,
+            PlaylistEdit,
+            MpdDatabase,
+            MpdStickers,
+            MpdOutputs,
+            MpdPartitions,
+        ]
     }
 
     // supports() uses default implementation from trait

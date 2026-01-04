@@ -3,7 +3,8 @@
 //! Search for music, browse directories, and explore the library.
 
 use anyhow::Result;
-use super::content::{Item, ContentType};
+
+use super::content::{ContentType, Item};
 use crate::domain::content::ContentDetails;
 
 /// Search query
@@ -55,11 +56,7 @@ pub struct SearchSection {
 
 impl SearchSection {
     pub fn new(key: impl Into<String>, title: impl Into<String>, items: Vec<Item>) -> Self {
-        Self {
-            key: key.into(),
-            title: title.into(),
-            items,
-        }
+        Self { key: key.into(), title: title.into(), items }
     }
 }
 
@@ -77,7 +74,8 @@ impl SearchResults {
         self.sections.iter().map(|s| s.items.len()).sum()
     }
 
-    /// Flatten all sections into a single list of items (loses section structure)
+    /// Flatten all sections into a single list of items (loses section
+    /// structure)
     #[deprecated(note = "Use sections directly to preserve structure")]
     pub fn items(&self) -> Vec<Item> {
         self.sections.iter().flat_map(|s| s.items.clone()).collect()
@@ -113,14 +111,11 @@ pub trait Discovery: Send + Sync {
     /// - Playlist → returns playlist tracks
     /// - Artist → returns top/all tracks
     ///
-    /// This allows TUI to work uniformly: select anything, resolve, add to queue.
+    /// This allows TUI to work uniformly: select anything, resolve, add to
+    /// queue.
     fn resolve(&mut self, item: &Item) -> Result<Vec<Item>> {
         // Default: track returns itself, others return empty
-        if item.is_playable() {
-            Ok(vec![item.clone()])
-        } else {
-            Ok(vec![])
-        }
+        if item.is_playable() { Ok(vec![item.clone()]) } else { Ok(vec![]) }
     }
 
     /// Get detailed view of an item (album, artist, or playlist).
@@ -131,7 +126,8 @@ pub trait Discovery: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `item` - The item to get details for. Must be Album, Artist, or Playlist.
+    /// * `item` - The item to get details for. Must be Album, Artist, or
+    ///   Playlist.
     ///
     /// # Errors
     ///

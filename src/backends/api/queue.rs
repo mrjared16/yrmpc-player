@@ -4,6 +4,7 @@
 //! Also handles playback behavior modes (single, consume, repeat, shuffle).
 
 use anyhow::Result;
+
 use super::content::Item;
 
 /// Where to insert items in queue
@@ -60,7 +61,8 @@ pub trait Queue: Send + Sync {
     /// Add items to queue
     ///
     /// # Arguments
-    /// - `items` - Items to add (tracks, or resolved tracks from albums/playlists)
+    /// - `items` - Items to add (tracks, or resolved tracks from
+    ///   albums/playlists)
     /// - `at` - Where to insert
     /// - `after` - What to do after adding (autoplay)
     ///
@@ -95,11 +97,11 @@ pub trait Queue: Send + Sync {
 
     /// Set shuffle on/off
     fn set_shuffle(&mut self, enabled: bool) -> Result<()>;
-    
+
     // =========================================================================
     // Queue Behavior Modes (optional - default no-op)
     // =========================================================================
-    
+
     /// Set single mode (stop after current track finishes).
     ///
     /// When enabled, playback stops after the current track completes.
@@ -109,7 +111,7 @@ pub trait Queue: Send + Sync {
         let _ = mode;
         Ok(())
     }
-    
+
     /// Set consume mode (remove tracks from queue after playing).
     ///
     /// When enabled, tracks are removed from the queue after playing.

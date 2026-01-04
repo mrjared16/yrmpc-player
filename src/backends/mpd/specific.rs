@@ -29,9 +29,11 @@
 //!
 //! The following have been moved to universal traits:
 //! - `SavedPlaylists` → [`crate::backends::api::optional::Playlists`]
-//! - `Modes` (single/consume/crossfade) → [`crate::backends::api::Queue`] and [`crate::backends::api::Playback`]
+//! - `Modes` (single/consume/crossfade) → [`crate::backends::api::Queue`] and
+//!   [`crate::backends::api::Playback`]
 
 use std::collections::HashMap;
+
 use anyhow::Result;
 
 use crate::mpd::commands::Output;

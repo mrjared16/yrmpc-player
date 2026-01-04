@@ -1,12 +1,10 @@
 //! Playback control handlers.
 
 use std::sync::Arc;
+
 use crossbeam::channel::Sender;
 
-use crate::backends::youtube::{
-    protocol::ServerResponse,
-    services::PlaybackService,
-};
+use crate::backends::youtube::{protocol::ServerResponse, services::PlaybackService};
 
 /// Handle Play command
 pub fn handle_play(playback: &Arc<PlaybackService>, event_tx: &Sender<String>) -> ServerResponse {

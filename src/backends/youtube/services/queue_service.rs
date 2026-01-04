@@ -6,9 +6,11 @@
 //!
 //! The queue_id is stable (survives reorders), while MPV index is ephemeral.
 
+use std::collections::VecDeque;
+
 use anyhow::Result;
 use parking_lot::Mutex;
-use std::collections::VecDeque;
+
 use crate::domain::Song;
 
 /// Repeat mode for the queue
@@ -44,8 +46,8 @@ pub struct QueueService {
     shuffle_order: Mutex<Option<Vec<usize>>>,
     /// Playback base index - the queue index corresponding to MPV's playlist[0]
     ///
-    /// When we call play_position(pos), we load pos and the next 2 tracks into MPV.
-    /// MPV's playlist-pos is relative to this base, so:
+    /// When we call play_position(pos), we load pos and the next 2 tracks into
+    /// MPV. MPV's playlist-pos is relative to this base, so:
     ///   actual_queue_position = playback_base_index + mpv_playlist_pos
     ///
     /// This is DIFFERENT from current_idx because:
@@ -57,10 +59,12 @@ pub struct QueueService {
     playback_base_index: Mutex<usize>,
     /// Queue indices currently loaded in MPV's prefetch window.
     ///
-    /// When play_position(5) is called with shuffle enabled, this might contain:
-    /// [5, 2, 8] - meaning MPV playlist[0]=queue[5], playlist[1]=queue[2], etc.
+    /// When play_position(5) is called with shuffle enabled, this might
+    /// contain: [5, 2, 8] - meaning MPV playlist[0]=queue[5],
+    /// playlist[1]=queue[2], etc.
     ///
-    /// This allows handle_within_window_advance to correctly map mpv_pos to queue_idx.
+    /// This allows handle_within_window_advance to correctly map mpv_pos to
+    /// queue_idx.
     prefetch_indices: Mutex<Vec<usize>>,
 }
 
@@ -109,10 +113,11 @@ impl QueueService {
     /// Remove song by ID, returns the removed item and its index (for MPV sync)
     pub fn remove(&self, id: u32) -> Result<(QueueItem, usize)> {
         let mut queue = self.queue.lock();
-        let pos = queue.iter().position(|item| item.id == id)
+        let pos = queue
+            .iter()
+            .position(|item| item.id == id)
             .ok_or_else(|| anyhow::anyhow!("Song not found"))?;
-        let item = queue.remove(pos)
-            .ok_or_else(|| anyhow::anyhow!("Failed to remove song"))?;
+        let item = queue.remove(pos).ok_or_else(|| anyhow::anyhow!("Failed to remove song"))?;
 
         // Update current_idx if needed
         let mut current_idx = self.current_idx.lock();
@@ -152,7 +157,8 @@ impl QueueService {
     /// Get song by ID
     pub fn get_by_id(&self, id: u32) -> Result<Song> {
         let queue = self.queue.lock();
-        queue.iter()
+        queue
+            .iter()
             .find(|item| item.id == id)
             .map(|item| item.song.clone())
             .ok_or_else(|| anyhow::anyhow!("Song not found"))
@@ -161,7 +167,8 @@ impl QueueService {
     /// Get song by index
     pub fn get_by_index(&self, idx: usize) -> Result<Song> {
         let queue = self.queue.lock();
-        queue.get(idx)
+        queue
+            .get(idx)
             .map(|item| item.song.clone())
             .ok_or_else(|| anyhow::anyhow!("Position out of bounds"))
     }
@@ -173,10 +180,7 @@ impl QueueService {
 
     /// Get all songs in queue
     pub fn get_all(&self) -> Vec<Song> {
-        self.queue.lock()
-            .iter()
-            .map(|item| item.song.clone())
-            .collect()
+        self.queue.lock().iter().map(|item| item.song.clone()).collect()
     }
 
     /// Get current playing index
@@ -188,7 +192,7 @@ impl QueueService {
     /// In shuffle mode, also updates the shuffle history
     pub fn set_current(&self, idx: Option<usize>) {
         *self.current_idx.lock() = idx;
-        
+
         // Update shuffle history if enabled and we have a valid index
         if let Some(new_idx) = idx {
             if *self.shuffle_enabled.lock() {
@@ -210,7 +214,8 @@ impl QueueService {
     /// Get playback base index
     ///
     /// This is the queue index that corresponds to MPV's playlist[0].
-    /// Use this (not current_index) when calculating positions from mpv_playlist_pos.
+    /// Use this (not current_index) when calculating positions from
+    /// mpv_playlist_pos.
     pub fn playback_base_index(&self) -> usize {
         *self.playback_base_index.lock()
     }
@@ -218,17 +223,19 @@ impl QueueService {
     /// Set playback base index
     ///
     /// Call this when rebuilding MPV's playlist (e.g., in play_position).
-    /// The position should be the queue index of the first track loaded into MPV.
+    /// The position should be the queue index of the first track loaded into
+    /// MPV.
     pub fn set_playback_base_index(&self, pos: usize) {
         *self.playback_base_index.lock() = pos;
     }
 
     /// Get next song index (if exists)
-    /// In shuffle mode, returns a random unplayed or least-recently-played track
+    /// In shuffle mode, returns a random unplayed or least-recently-played
+    /// track
     pub fn next_index(&self) -> Option<usize> {
         let current = *self.current_idx.lock();
         let len = self.queue.lock().len();
-        
+
         if len == 0 {
             return None;
         }
@@ -238,13 +245,7 @@ impl QueueService {
             self.pick_shuffle_next(current, len)
         } else {
             // Sequential mode
-            current.and_then(|idx| {
-                if idx + 1 < len {
-                    Some(idx + 1)
-                } else {
-                    None
-                }
-            })
+            current.and_then(|idx| if idx + 1 < len { Some(idx + 1) } else { None })
         }
     }
 
@@ -252,23 +253,19 @@ impl QueueService {
     /// Avoids recently played tracks and picks randomly from remaining
     fn pick_shuffle_next(&self, current: Option<usize>, len: usize) -> Option<usize> {
         use rand::Rng;
-        
+
         if len <= 1 {
             return if len == 1 { Some(0) } else { None };
         }
 
         let history = self.shuffle_history.lock();
-        
+
         // Build list of candidates: all tracks not in recent history
         // Recent = last min(len/2, history.len()) tracks
         let history_window = (len / 2).min(history.len()).max(1);
-        let recent: std::collections::HashSet<usize> = history
-            .iter()
-            .rev()
-            .take(history_window)
-            .copied()
-            .collect();
-        
+        let recent: std::collections::HashSet<usize> =
+            history.iter().rev().take(history_window).copied().collect();
+
         // Add current to recent if playing
         let mut avoid = recent;
         if let Some(curr) = current {
@@ -276,15 +273,11 @@ impl QueueService {
         }
 
         // Candidates are all indices not in avoid set
-        let candidates: Vec<usize> = (0..len)
-            .filter(|i| !avoid.contains(i))
-            .collect();
+        let candidates: Vec<usize> = (0..len).filter(|i| !avoid.contains(i)).collect();
 
         if candidates.is_empty() {
             // All tracks played recently, pick any except current
-            let fallback: Vec<usize> = (0..len)
-                .filter(|i| Some(*i) != current)
-                .collect();
+            let fallback: Vec<usize> = (0..len).filter(|i| Some(*i) != current).collect();
             if fallback.is_empty() {
                 Some(0) // Only one track
             } else {
@@ -311,13 +304,7 @@ impl QueueService {
             }
         } else {
             // Sequential mode
-            self.current_idx.lock().and_then(|idx| {
-                if idx > 0 {
-                    Some(idx - 1)
-                } else {
-                    None
-                }
-            })
+            self.current_idx.lock().and_then(|idx| if idx > 0 { Some(idx - 1) } else { None })
         }
     }
 
@@ -362,7 +349,7 @@ impl QueueService {
     /// When enabling, adds current track to history
     pub fn set_shuffle_enabled(&self, enabled: bool) {
         *self.shuffle_enabled.lock() = enabled;
-        
+
         if enabled {
             // Start fresh history with current track if playing
             let current = *self.current_idx.lock();
@@ -384,11 +371,15 @@ impl QueueService {
         *enabled
     }
 
-    /// Move song from one ID to another position, returns (from_idx, to_idx) for MPV sync
+    /// Move song from one ID to another position, returns (from_idx, to_idx)
+    /// for MPV sync
     ///
-    /// Semantics: "Put the FROM song at the position currently occupied by TO song"
-    /// - If FROM is before TO: TO and everything between shift up, FROM takes TO's old spot
-    /// - If FROM is after TO: TO and everything between shift down, FROM takes TO's old spot
+    /// Semantics: "Put the FROM song at the position currently occupied by TO
+    /// song"
+    /// - If FROM is before TO: TO and everything between shift up, FROM takes
+    ///   TO's old spot
+    /// - If FROM is after TO: TO and everything between shift down, FROM takes
+    ///   TO's old spot
     pub fn move_song(&self, from_id: u32, to_id: u32) -> Result<(usize, usize)> {
         let mut queue = self.queue.lock();
         let from_pos = queue.iter().position(|item| item.id == from_id);
@@ -409,11 +400,8 @@ impl QueueService {
                     // After removal, positions shift:
                     // - If from < to: target position shifts down by 1
                     // - If from > to: target position unchanged
-                    let insert_pos = if from < to {
-                        (to - 1).min(queue.len())
-                    } else {
-                        to.min(queue.len())
-                    };
+                    let insert_pos =
+                        if from < to { (to - 1).min(queue.len()) } else { to.min(queue.len()) };
                     queue.insert(insert_pos, item);
 
                     // Update current_idx if the currently playing track moved
@@ -519,7 +507,8 @@ impl QueueService {
         let start_idx = *indices.first()?;
 
         // Get next index based on where we are in playback order
-        if let Some(next_idx) = self.get_next_in_playback_order(start_idx, window_len, repeat_mode) {
+        if let Some(next_idx) = self.get_next_in_playback_order(start_idx, window_len, repeat_mode)
+        {
             indices.push(next_idx);
             Some(next_idx)
         } else {
@@ -530,7 +519,8 @@ impl QueueService {
     /// Get the next queue index in playback order at a given offset.
     ///
     /// - In sequential mode: returns start_idx + offset (with optional wrap)
-    /// - In shuffle mode: finds start_idx in shuffle_order, returns shuffle_order[pos + offset]
+    /// - In shuffle mode: finds start_idx in shuffle_order, returns
+    ///   shuffle_order[pos + offset]
     fn get_next_in_playback_order(
         &self,
         start_idx: usize,
@@ -804,7 +794,7 @@ mod tests {
 
         let (from_idx, to_idx) = result.unwrap();
         assert_eq!(from_idx, 2); // Was at index 2
-        assert_eq!(to_idx, 0);   // Now at index 0 (no adjustment needed when from > to)
+        assert_eq!(to_idx, 0); // Now at index 0 (no adjustment needed when from > to)
 
         // Verify queue order: [C, A, B]
         let all = queue.get_all();

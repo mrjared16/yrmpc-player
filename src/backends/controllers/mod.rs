@@ -1,8 +1,8 @@
 //! Backend Controllers
 //!
-//! This module provides a clean, organized API for interacting with music backends.
-//! Instead of 100+ flat methods on `BackendDispatcher`, functionality is grouped
-//! into logical controllers.
+//! This module provides a clean, organized API for interacting with music
+//! backends. Instead of 100+ flat methods on `BackendDispatcher`, functionality
+//! is grouped into logical controllers.
 //!
 //! ## Core Controllers (always available)
 //!
@@ -35,22 +35,22 @@
 //! }
 //! ```
 
+mod database;
+mod library;
+mod outputs;
 mod playback;
 mod queue;
-mod status;
-mod volume;
-mod library;
 mod saved_playlists;
+mod status;
 mod stickers;
-mod outputs;
-mod database;
+mod volume;
 
+pub use database::DatabaseController;
+pub use library::LibraryBrowser;
+pub use outputs::OutputController;
 pub use playback::PlaybackController;
 pub use queue::QueueController;
-pub use status::StatusProvider;
-pub use volume::VolumeController;
-pub use library::LibraryBrowser;
 pub use saved_playlists::SavedPlaylistController;
+pub use status::StatusProvider;
 pub use stickers::StickerController;
-pub use outputs::OutputController;
-pub use database::DatabaseController;
+pub use volume::VolumeController;

@@ -2,8 +2,7 @@
 //!
 //! Uses sequential extraction to avoid rate limiting.
 
-use std::collections::HashMap;
-use std::process::Command;
+use std::{collections::HashMap, process::Command};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -56,7 +55,12 @@ impl Extractor for YtDlpExtractor {
         // yt-dlp doesn't have native bulk mode, and parallel spawning
         // risks getting banned by YouTube
         for video_id in video_ids {
-            log::debug!("yt-dlp extracting {} ({}/{})", video_id, results.len() + 1, video_ids.len());
+            log::debug!(
+                "yt-dlp extracting {} ({}/{})",
+                video_id,
+                results.len() + 1,
+                video_ids.len()
+            );
             let result = Self::extract_single(video_id);
             results.insert(video_id.clone(), result);
         }

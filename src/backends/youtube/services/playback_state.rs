@@ -23,9 +23,7 @@ impl Default for PlaybackStateTracker {
 
 impl PlaybackStateTracker {
     pub fn new() -> Self {
-        Self {
-            state: Arc::new(Mutex::new(PlaybackState::Idle)),
-        }
+        Self { state: Arc::new(Mutex::new(PlaybackState::Idle)) }
     }
 
     pub fn get(&self) -> PlaybackState {

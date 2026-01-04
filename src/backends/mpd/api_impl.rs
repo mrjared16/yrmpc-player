@@ -4,16 +4,28 @@
 //! translating between API types and MPD protocol types.
 
 use std::time::Duration;
+
 use anyhow::Result;
 
-use super::backend::MpdBackend;
-use super::protocol::mpd_client::MpdClient as MpdClientTrait;
-use crate::backends::api::{
-    self, Item, SearchQuery, SearchResults, SearchSection, BrowseResult, Capability,
-    InsertAt, AfterAdd, ContentType,
+use super::{backend::MpdBackend, protocol::mpd_client::MpdClient as MpdClientTrait};
+use crate::{
+    backends::api::{
+        self,
+        AfterAdd,
+        BrowseResult,
+        Capability,
+        ContentType,
+        InsertAt,
+        Item,
+        SearchQuery,
+        SearchResults,
+        SearchSection,
+    },
+    mpd::{
+        commands::{LsInfoEntry, ValueChange},
+        mpd_client::{Filter, FilterKind, Tag},
+    },
 };
-use crate::mpd::commands::{LsInfoEntry, ValueChange};
-use crate::mpd::mpd_client::{Filter, FilterKind, Tag};
 
 impl api::Playback for MpdBackend<'_> {
     fn play(&mut self) -> Result<()> {
@@ -37,9 +49,7 @@ impl api::Playback for MpdBackend<'_> {
     }
 
     fn seek(&mut self, position: Duration) -> Result<()> {
-        self.client
-            .seek_current(ValueChange::Set(position.as_secs() as u32))
-            .map_err(Into::into)
+        self.client.seek_current(ValueChange::Set(position.as_secs() as u32)).map_err(Into::into)
     }
 
     fn seek_relative(&mut self, delta_secs: i64) -> Result<()> {
@@ -48,38 +58,40 @@ impl api::Playback for MpdBackend<'_> {
         } else {
             ValueChange::Decrease((-delta_secs) as u32)
         };
-        
+
         self.client.seek_current(value_change).map_err(Into::into)
     }
 
     fn status(&mut self) -> Result<api::Status> {
         let mpd_status = self.client.get_status()?;
-        
+
         let state = match mpd_status.state {
             crate::mpd::commands::status::State::Play => api::State::Playing,
             crate::mpd::commands::status::State::Pause => api::State::Paused,
             crate::mpd::commands::status::State::Stop => api::State::Stopped,
         };
-        
+
         let repeat = match (mpd_status.repeat, mpd_status.single) {
             (true, crate::mpd::commands::OnOffOneshot::On) => api::Repeat::One,
             (true, _) => api::Repeat::All,
             (false, _) => api::Repeat::Off,
         };
-        
+
         // MPD status has non-optional elapsed/duration fields
-        let position = if mpd_status.elapsed.as_secs() > 0 || mpd_status.elapsed.subsec_nanos() > 0 {
+        let position = if mpd_status.elapsed.as_secs() > 0 || mpd_status.elapsed.subsec_nanos() > 0
+        {
             Some(mpd_status.elapsed)
         } else {
             None
         };
-        
-        let duration = if mpd_status.duration.as_secs() > 0 || mpd_status.duration.subsec_nanos() > 0 {
-            Some(mpd_status.duration)
-        } else {
-            None
-        };
-        
+
+        let duration =
+            if mpd_status.duration.as_secs() > 0 || mpd_status.duration.subsec_nanos() > 0 {
+                Some(mpd_status.duration)
+            } else {
+                None
+            };
+
         Ok(api::Status {
             state,
             position,
@@ -91,11 +103,11 @@ impl api::Playback for MpdBackend<'_> {
             gapless: false, // MPD doesn't expose gapless state in status
         })
     }
-    
+
     fn set_crossfade(&mut self, seconds: u32) -> Result<()> {
         self.client.crossfade(seconds).map_err(Into::into)
     }
-    
+
     // Note: MPD doesn't have a simple gapless toggle command.
     // Gapless is typically handled via replay gain settings.
     // We keep the default no-op implementation.
@@ -104,34 +116,30 @@ impl api::Playback for MpdBackend<'_> {
 impl api::Queue for MpdBackend<'_> {
     fn add(&mut self, items: &[Item], at: InsertAt, after: AfterAdd) -> Result<()> {
         use crate::mpd::commands::QueuePosition;
-        
+
         // Handle Replace mode - clear first
         if at == InsertAt::Replace {
             self.client.clear()?;
         }
-        
+
         // Get current position for InsertAt::Next
-        let current_pos = if at == InsertAt::Next {
-            self.client.get_status()?.song
-        } else {
-            None
-        };
-        
+        let current_pos = if at == InsertAt::Next { self.client.get_status()?.song } else { None };
+
         // Calculate starting position
         let start_pos: Option<usize> = match at {
             InsertAt::End | InsertAt::Replace => None,
             InsertAt::Next => current_pos.map(|p| p as usize + 1),
             InsertAt::Position(p) => Some(p as usize),
         };
-        
+
         // Add each item
         for (i, item) in items.iter().enumerate() {
             let pos = start_pos.map(|p| QueuePosition::Absolute(p + i));
-            
+
             // MPD uses file paths (URIs), item.id should contain the path
             self.client.add(&item.id, pos)?;
         }
-        
+
         // Handle autoplay
         match after {
             AfterAdd::Nothing => {}
@@ -151,7 +159,7 @@ impl api::Queue for MpdBackend<'_> {
                 }
             }
         }
-        
+
         Ok(())
     }
 
@@ -164,15 +172,18 @@ impl api::Queue for MpdBackend<'_> {
 
     fn list(&mut self) -> Result<Vec<Item>> {
         let songs = self.client.playlist_info()?.unwrap_or_default();
-        Ok(songs.into_iter().map(|s| {
-            let domain_song: crate::domain::Song = s.into();
-            Item::from(&domain_song)
-        }).collect())
+        Ok(songs
+            .into_iter()
+            .map(|s| {
+                let domain_song: crate::domain::Song = s.into();
+                Item::from(&domain_song)
+            })
+            .collect())
     }
 
     fn move_items(&mut self, queue_ids: &[u32], to_position: u32) -> Result<()> {
         use crate::mpd::commands::QueuePosition;
-        
+
         for (i, id) in queue_ids.iter().enumerate() {
             self.client.move_id(*id, QueuePosition::Absolute(to_position as usize + i))?;
         }
@@ -208,7 +219,7 @@ impl api::Queue for MpdBackend<'_> {
     fn set_shuffle(&mut self, enabled: bool) -> Result<()> {
         self.client.random(enabled).map_err(Into::into)
     }
-    
+
     fn set_single(&mut self, mode: api::ToggleMode) -> Result<()> {
         let mpd_mode = match mode {
             api::ToggleMode::Off => crate::mpd::commands::OnOffOneshot::Off,
@@ -217,7 +228,7 @@ impl api::Queue for MpdBackend<'_> {
         };
         self.client.single(mpd_mode).map_err(Into::into)
     }
-    
+
     fn set_consume(&mut self, mode: api::ToggleMode) -> Result<()> {
         let mpd_mode = match mode {
             api::ToggleMode::Off => crate::mpd::commands::OnOffOneshot::Off,
@@ -233,19 +244,18 @@ impl api::Discovery for MpdBackend<'_> {
         if query.text.is_empty() {
             return Ok(SearchResults::default());
         }
-        
+
         // Build MPD filter - search in any field
-        let filter = vec![Filter::new_with_kind(
-            Tag::Any,
-            query.text,
-            FilterKind::Contains,
-        )];
-        
+        let filter = vec![Filter::new_with_kind(Tag::Any, query.text, FilterKind::Contains)];
+
         let songs = self.client.search(&filter, false)?;
-        let items = songs.into_iter().map(|s| {
-            let domain_song: crate::domain::Song = s.into();
-            Item::from(&domain_song)
-        }).collect();
+        let items = songs
+            .into_iter()
+            .map(|s| {
+                let domain_song: crate::domain::Song = s.into();
+                Item::from(&domain_song)
+            })
+            .collect();
 
         // MPD returns flat results - group all into a single "songs" section
         let mut results = SearchResults::default();
@@ -255,43 +265,43 @@ impl api::Discovery for MpdBackend<'_> {
 
     fn browse(&mut self, path: &str) -> Result<BrowseResult> {
         let entries = self.client.lsinfo(if path.is_empty() { None } else { Some(path) })?;
-        
-        let items = entries.0.into_iter().map(|e| match e {
-            LsInfoEntry::Dir(d) => Item {
-                id: d.full_path.clone(),
-                content_type: ContentType::Directory,
-                title: d.name,
-                subtitle: None,
-                thumbnail: None,
-                duration: None,
-                queue_id: None,
-            },
-            LsInfoEntry::File(s) => {
-                let domain_song: crate::domain::Song = s.into();
-                Item::from(&domain_song)
-            }
-            LsInfoEntry::Playlist(p) => Item {
-                id: p.full_path.clone(),
-                content_type: ContentType::Playlist,
-                title: p.name,
-                subtitle: None,
-                thumbnail: None,
-                duration: None,
-                queue_id: None,
-            },
-        }).collect();
-        
+
+        let items = entries
+            .0
+            .into_iter()
+            .map(|e| match e {
+                LsInfoEntry::Dir(d) => Item {
+                    id: d.full_path.clone(),
+                    content_type: ContentType::Directory,
+                    title: d.name,
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                },
+                LsInfoEntry::File(s) => {
+                    let domain_song: crate::domain::Song = s.into();
+                    Item::from(&domain_song)
+                }
+                LsInfoEntry::Playlist(p) => Item {
+                    id: p.full_path.clone(),
+                    content_type: ContentType::Playlist,
+                    title: p.name,
+                    subtitle: None,
+                    thumbnail: None,
+                    duration: None,
+                    queue_id: None,
+                },
+            })
+            .collect();
+
         let parent = if path.is_empty() {
             None
         } else {
             path.rsplit_once('/').map(|(p, _)| p.to_string()).or(Some(String::new()))
         };
-        
-        Ok(BrowseResult {
-            path: path.to_string(),
-            items,
-            parent,
-        })
+
+        Ok(BrowseResult { path: path.to_string(), items, parent })
     }
 
     fn suggestions(&mut self, _partial: &str) -> Result<Vec<String>> {
@@ -301,28 +311,36 @@ impl api::Discovery for MpdBackend<'_> {
 
     fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
         use crate::domain::content::{
-            ContentDetails, AlbumContent, ArtistContent, PlaylistContent,
-            ContentRef, Extensions, Stat, Action,
+            Action,
+            AlbumContent,
+            ArtistContent,
+            ContentDetails,
+            ContentRef,
+            Extensions,
+            PlaylistContent,
+            Stat,
         };
-        
+
         match item.content_type {
             ContentType::Album => {
                 // MPD: Album is typically a directory path
                 // We can list its contents to get tracks
                 let entries = self.client.lsinfo(Some(&item.id))?;
-                let tracks: Vec<crate::domain::Song> = entries.0.into_iter()
+                let tracks: Vec<crate::domain::Song> = entries
+                    .0
+                    .into_iter()
                     .filter_map(|e| match e {
                         crate::mpd::commands::LsInfoEntry::File(s) => Some(s.into()),
                         _ => None,
                     })
                     .collect();
-                
+
                 // Build minimal extensions - just actions
                 let extensions = Extensions::builder()
                     .stats(vec![Stat::track_count(tracks.len())])
                     .actions(vec![Action::play(), Action::add_to_queue()])
                     .build();
-                
+
                 Ok(ContentDetails::Album(AlbumContent {
                     id: item.id.clone(),
                     title: item.title.clone(),
@@ -341,7 +359,7 @@ impl api::Discovery for MpdBackend<'_> {
                 let extensions = Extensions::builder()
                     .actions(vec![Action::play(), Action::add_to_queue()])
                     .build();
-                
+
                 Ok(ContentDetails::Artist(ArtistContent {
                     id: item.id.clone(),
                     name: item.title.clone(),
@@ -354,16 +372,14 @@ impl api::Discovery for MpdBackend<'_> {
             ContentType::Playlist => {
                 // MPD playlists - list songs in the playlist
                 let songs = self.client.list_playlist_info(&item.id, None)?;
-                let tracks: Vec<crate::domain::Song> = songs.into_iter()
-                    .map(Into::into)
-                    .collect();
-                
+                let tracks: Vec<crate::domain::Song> = songs.into_iter().map(Into::into).collect();
+
                 // Build minimal extensions
                 let extensions = Extensions::builder()
                     .stats(vec![Stat::track_count(tracks.len())])
                     .actions(vec![Action::play(), Action::shuffle(), Action::add_to_queue()])
                     .build();
-                
+
                 Ok(ContentDetails::Playlist(PlaylistContent {
                     id: item.id.clone(),
                     title: item.title.clone(),
@@ -401,11 +417,7 @@ impl api::Backend for MpdBackend<'_> {
     }
 
     fn capabilities(&self) -> &'static [Capability] {
-        &[
-            Capability::SavedPlaylists,
-            Capability::Stickers,
-            Capability::Outputs,
-        ]
+        &[Capability::SavedPlaylists, Capability::Stickers, Capability::Outputs]
     }
 }
 
@@ -433,15 +445,16 @@ impl api::StatusQuery for MpdBackend<'_> {
 impl api::optional::Playlists for MpdBackend<'_> {
     fn list(&mut self) -> Result<Vec<crate::domain::content::ContentRef>> {
         let playlists = self.client.list_playlists()?;
-        Ok(playlists.into_iter().map(|p| {
-            crate::domain::content::ContentRef::playlist(&p.name, &p.name)
-        }).collect())
+        Ok(playlists
+            .into_iter()
+            .map(|p| crate::domain::content::ContentRef::playlist(&p.name, &p.name))
+            .collect())
     }
 
     fn get(&mut self, id: &str) -> Result<crate::domain::content::PlaylistContent> {
         let songs = self.client.list_playlist_info(id, None)?;
         let tracks: Vec<crate::domain::Song> = songs.into_iter().map(|s| s.into()).collect();
-        
+
         Ok(crate::domain::content::PlaylistContent {
             id: id.to_string(),
             title: id.to_string(),
@@ -477,21 +490,23 @@ impl api::optional::Playlists for MpdBackend<'_> {
         // Remove in reverse order to maintain correct positions
         let mut positions: Vec<u32> = positions.to_vec();
         positions.sort_by(|a, b| b.cmp(a));
-        
+
         for pos in positions {
             self.client.delete_from_playlist(
-                playlist_id, 
-                &crate::mpd::SingleOrRange::single(pos as usize)
+                playlist_id,
+                &crate::mpd::SingleOrRange::single(pos as usize),
             )?;
         }
         Ok(())
     }
 
     fn reorder(&mut self, playlist_id: &str, from: u32, to: u32) -> Result<()> {
-        self.client.move_in_playlist(
-            playlist_id,
-            &crate::mpd::SingleOrRange::single(from as usize),
-            to as usize
-        ).map_err(Into::into)
+        self.client
+            .move_in_playlist(
+                playlist_id,
+                &crate::mpd::SingleOrRange::single(from as usize),
+                to as usize,
+            )
+            .map_err(Into::into)
     }
 }

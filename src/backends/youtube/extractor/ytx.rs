@@ -2,9 +2,11 @@
 //!
 //! Uses `ytx music --bulk` for efficient batch extraction.
 
-use std::collections::HashMap;
-use std::io::{BufRead, BufReader};
-use std::process::{Command, Stdio};
+use std::{
+    collections::HashMap,
+    io::{BufRead, BufReader},
+    process::{Command, Stdio},
+};
 
 use anyhow::{Context, Result, anyhow};
 
@@ -30,9 +32,7 @@ impl YtxExtractor {
 
     /// Create a new YTX extractor with custom cookies path.
     pub fn with_cookies(cookies_path: String) -> Self {
-        Self {
-            cookies_path: Some(cookies_path),
-        }
+        Self { cookies_path: Some(cookies_path) }
     }
 
     /// Parse a single NDJSON line from ytx output.
@@ -41,11 +41,8 @@ impl YtxExtractor {
 
         // Check for error response
         if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
-            let video_id = json
-                .get("video_id")
-                .and_then(|v| v.as_str())
-                .unwrap_or("unknown")
-                .to_string();
+            let video_id =
+                json.get("video_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
             return Some((video_id, Err(anyhow!("ytx error: {}", error))));
         }
 
@@ -156,8 +153,8 @@ impl Extractor for YtxExtractor {
             return Err(anyhow!("ytx failed: {}", stderr.trim()));
         }
 
-        let result: serde_json::Value = serde_json::from_slice(&output.stdout)
-            .context("Failed to parse ytx output as JSON")?;
+        let result: serde_json::Value =
+            serde_json::from_slice(&output.stdout).context("Failed to parse ytx output as JSON")?;
 
         let url = result
             .get("url")

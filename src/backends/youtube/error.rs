@@ -34,7 +34,7 @@ pub enum YouTubeError {
 
     #[error("Serialization error: {0}")]
     Serde(#[from] serde_json::Error),
-    
+
     #[error("Other error: {0}")]
     Other(#[from] anyhow::Error),
 }
