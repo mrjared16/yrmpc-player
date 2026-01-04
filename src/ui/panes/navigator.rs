@@ -9,9 +9,12 @@
 //! ## Navigation Flow
 //!
 //! 1. User presses Enter on an artist in search results
-//! 2. SearchPaneV2::handle_key returns PaneAction::NavigateTo(EntityRef { Artist, id, name })
-//! 3. Navigator receives the action, fetches artist content, pushes to ArtistDetailPane
-//! 4. Navigator switches active pane to ArtistDetailPane, adds SearchPane to history
+//! 2. SearchPaneV2::handle_key returns PaneAction::NavigateTo(EntityRef {
+//!    Artist, id, name })
+//! 3. Navigator receives the action, fetches artist content, pushes to
+//!    ArtistDetailPane
+//! 4. Navigator switches active pane to ArtistDetailPane, adds SearchPane to
+//!    history
 //! 5. User presses Esc → Navigator pops history, returns to SearchPane
 //!
 //! ## Coexistence with Legacy
@@ -25,25 +28,35 @@ use std::collections::HashMap;
 use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
+use super::{
+    UiEvent,
+    action_executor::PaneActionExecutor,
+    album_detail::AlbumDetailPane,
+    artist_detail::ArtistDetailPane,
+    library_tab::LibraryTabPane,
+    navigator_types::{
+        DetailId,
+        DetailPane,
+        EntityContent,
+        EntityRef,
+        InputMode,
+        MoveDirection,
+        NavigatorPane,
+        PaneAction,
+        PaneId,
+        TabId,
+        TabPane,
+    },
+    playlist_detail::PlaylistDetailPane,
+    queue_pane_v2::QueuePaneV2,
+    search_pane_v2::SearchPaneV2,
+};
 use crate::{
     actions::{Intent, Selection},
     ctx::Ctx,
     domain::DetailItem,
     shared::key_event::KeyEvent,
 };
-
-use super::UiEvent;
-
-use super::navigator_types::{
-    DetailId, DetailPane, EntityContent, EntityRef, InputMode,
-    MoveDirection, NavigatorPane, PaneAction, PaneId, TabId, TabPane,
-};
-use super::artist_detail::ArtistDetailPane;
-use super::album_detail::AlbumDetailPane;
-use super::playlist_detail::PlaylistDetailPane;
-use super::library_tab::LibraryTabPane;
-use super::queue_pane_v2::QueuePaneV2;
-use super::search_pane_v2::SearchPaneV2;
 
 // =============================================================================
 // NAVIGATOR
@@ -105,11 +118,14 @@ impl Navigator {
     fn create_action_dispatcher() -> crate::actions::ActionDispatcher {
         use crate::actions::{
             ActionDispatcher,
-            PlayHandler, QueueHandler, SaveHandler, TogglePlaybackHandler,
+            PlayHandler,
+            QueueHandler,
+            SaveHandler,
+            TogglePlaybackHandler,
         };
 
         ActionDispatcher::new()
-            .with_handler(Box::new(TogglePlaybackHandler::new()))  // Higher priority
+            .with_handler(Box::new(TogglePlaybackHandler::new())) // Higher priority
             .with_handler(Box::new(PlayHandler::new()))
             .with_handler(Box::new(QueueHandler::new()))
             .with_handler(Box::new(SaveHandler::new()))
@@ -212,16 +228,17 @@ impl Navigator {
     ///
     /// This is called when a pane returns `PaneAction::NavigateTo`.
     /// The content should be fetched by the source pane before calling this.
-    /// 
+    ///
     /// # Navigation Flow
-    /// 1. Source pane (e.g., SearchPaneV2) fetches entity content asynchronously
+    /// 1. Source pane (e.g., SearchPaneV2) fetches entity content
+    ///    asynchronously
     /// 2. Source pane receives content via on_query_finished
     /// 3. Source pane calls Navigator::push_content() with the fetched content
     /// 4. Source pane returns PaneAction::NavigateTo
     /// 5. Navigator switches to the detail pane (content already pushed)
     ///
-    /// This approach keeps async handling in panes that implement on_query_finished,
-    /// while Navigator remains a synchronous controller.
+    /// This approach keeps async handling in panes that implement
+    /// on_query_finished, while Navigator remains a synchronous controller.
     pub fn navigate_to(&mut self, entity: EntityRef, _ctx: &Ctx) {
         log::info!(
             "Navigator::navigate_to: {:?} id={} name={}",
@@ -232,7 +249,7 @@ impl Navigator {
 
         // Switch to the detail pane
         let target = PaneId::Detail(entity.entity_type);
-        
+
         // Add current to history before switching
         if self.active != target {
             self.history.push(self.active);
@@ -250,7 +267,7 @@ impl Navigator {
             DetailId::Album => self.album_pane.has_content(),
             DetailId::Playlist => self.playlist_pane.has_content(),
         };
-        
+
         if !has_content {
             log::warn!(
                 "Navigator::navigate_to: {:?} pane has no content. \
@@ -280,40 +297,6 @@ impl Navigator {
 
     /// Handle a key event, routing to active pane and processing actions.
     pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
-        use crossterm::event::KeyCode;
-
-        // Get current mode - if in Edit or Find mode, block global hotkeys
-        let current_mode = self.mode();
-        let block_hotkeys = matches!(current_mode, InputMode::Edit | InputMode::Find);
-
-        // Handle global hotkeys (1/2/3 for tabs) - ONLY in Normal mode
-        if !block_hotkeys {
-            match key.code() {
-                KeyCode::Char('1') => {
-                    self.switch_to_tab(TabId::Search);
-                    ctx.active_tab = TabId::Search.label().into();
-                    key.stop_propagation();
-                    ctx.render()?;
-                    return Ok(());
-                }
-                KeyCode::Char('2') => {
-                    self.switch_to_tab(TabId::Queue);
-                    ctx.active_tab = TabId::Queue.label().into();
-                    key.stop_propagation();
-                    ctx.render()?;
-                    return Ok(());
-                }
-                KeyCode::Char('3') => {
-                    self.switch_to_tab(TabId::Library);
-                    ctx.active_tab = TabId::Library.label().into();
-                    key.stop_propagation();
-                    ctx.render()?;
-                    return Ok(());
-                }
-                _ => {}
-            }
-        }
-
         // Route to active pane
         let action = self.active_pane_mut().handle_key(key, ctx)?;
 
@@ -332,39 +315,41 @@ impl Navigator {
                 ctx.render()?;
             }
             PaneAction::Play(song) => {
-                // Convert to Intent and route through dispatcher
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
                 let items = vec![DetailItem::Song(song)];
-                let intent = Intent::play(items);
-                self.execute_intent(ctx, intent)?;
+                executor.execute_intent(ctx, Intent::play(items))?;
             }
             PaneAction::PlayAll { songs, start_index: _ } => {
-                // Convert songs to DetailItems and route through Intent
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
                 let items: Vec<DetailItem> = songs.into_iter().map(DetailItem::Song).collect();
-                let intent = Intent::play(items);
-                self.execute_intent(ctx, intent)?;
+                executor.execute_intent(ctx, Intent::play(items))?;
             }
             PaneAction::Enqueue(songs) => {
-                // Convert to Intent and route through dispatcher
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
                 let items: Vec<DetailItem> = songs.into_iter().map(DetailItem::Song).collect();
-                let intent = Intent::add_to_queue(items);
-                self.execute_intent(ctx, intent)?;
+                executor.execute_intent(ctx, Intent::add_to_queue(items))?;
             }
             PaneAction::QueueDelete(ids) => {
-                self.execute_queue_delete(ctx, ids)?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_queue_delete(ctx, ids)?;
             }
             #[allow(deprecated)]
             PaneAction::QueueMoveUp(ids) => {
-                self.execute_queue_move(ctx, ids, MoveDirection::Up)?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_queue_move(ctx, ids, MoveDirection::Up)?;
             }
             #[allow(deprecated)]
             PaneAction::QueueMoveDown(ids) => {
-                self.execute_queue_move(ctx, ids, MoveDirection::Down)?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_queue_move(ctx, ids, MoveDirection::Down)?;
             }
             PaneAction::QueueMove { ids, direction } => {
-                self.execute_queue_move(ctx, ids, direction)?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_queue_move(ctx, ids, direction)?;
             }
             PaneAction::TogglePause => {
-                self.execute_intent(ctx, Intent::toggle_playback())?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_intent(ctx, Intent::toggle_playback())?;
             }
             PaneAction::ShowModal(_kind) => {
                 // TODO: Implement modal display
@@ -375,135 +360,24 @@ impl Navigator {
                 log::info!("Navigator: Search requested: {}", query);
             }
             PaneAction::Execute(intent) => {
-                self.execute_intent(ctx, intent)?;
+                let executor = PaneActionExecutor::new(&self.action_dispatcher);
+                executor.execute_intent(ctx, intent)?;
             }
         }
 
         Ok(())
     }
 
-    /// Execute queue delete action.
     fn execute_queue_delete(&mut self, ctx: &mut Ctx, ids: Vec<u32>) -> Result<()> {
-        log::info!("Navigator: Deleting {} queue items", ids.len());
-        
-        ctx.command(move |client| {
-            for id in &ids {
-                #[allow(deprecated)]
-                client.delete_id(*id)?;
-            }
-            Ok(())
-        });
-        
+        ctx.queue_store().remove_ids(&ids);
         ctx.render()?;
         Ok(())
     }
 
     /// Execute queue move action with unified direction.
     ///
-    /// Optimized for the common case where selected items are neighbors (contiguous block).
-    /// Instead of moving each item individually, we move the block as a unit by:
-    /// - Moving up: move the item above block to after block
-    /// - Moving down: move the item below block to before block
-    fn execute_queue_move(&mut self, ctx: &mut Ctx, ids: Vec<u32>, direction: MoveDirection) -> Result<()> {
-        if ids.is_empty() {
-            return Ok(());
-        }
-
-        log::info!("Navigator: Moving {} queue items {:?}", ids.len(), direction);
-
-        let queue = &ctx.queue;
-        let queue_len = queue.len();
-
-        // Find positions of all selected items
-        let mut positions: Vec<usize> = ids
-            .iter()
-            .filter_map(|&id| {
-                queue.iter()
-                    .position(|song| song.id == Some(id))
-            })
-            .collect();
-
-        if positions.is_empty() {
-            log::warn!("Navigator: No valid positions found for move");
-            return Ok(());
-        }
-
-        // Sort to find the block boundaries
-        positions.sort();
-
-        let first_pos = positions[0];
-        let last_pos = positions[positions.len() - 1];
-
-        // Check if at boundary
-        if direction == MoveDirection::Up && first_pos == 0 {
-            log::debug!("Navigator: Already at top, cannot move up");
-            return Ok(());
-        }
-        if direction == MoveDirection::Down && last_pos >= queue_len.saturating_sub(1) {
-            log::debug!("Navigator: Already at bottom, cannot move down");
-            return Ok(());
-        }
-
-        // Get the ID and target position for the single move command
-        // For neighbors, moving the block requires just one operation:
-        // - Move up: move item above the block to after the block
-        // - Move down: move item below the block to before the block
-        let (move_id, target_pos) = if direction == MoveDirection::Up {
-            // Moving up: take the item ABOVE the block and move it BELOW the block
-            let above_pos = first_pos - 1;
-            let above_id = queue.get(above_pos).and_then(|s| s.id);
-            if let Some(id) = above_id {
-                (id, last_pos as u32)  // Move to last position of block
-            } else {
-                return Ok(());
-            }
-        } else {
-            // Moving down: take the item BELOW the block and move it ABOVE the block
-            let below_pos = last_pos + 1;
-            let below_id = queue.get(below_pos).and_then(|s| s.id);
-            if let Some(id) = below_id {
-                (id, first_pos as u32)  // Move to first position of block
-            } else {
-                return Ok(());
-            }
-        };
-
-        log::debug!("Navigator: Block move - moving id {} to position {}", move_id, target_pos);
-
-        // Single command for the entire block move
-        ctx.command(move |client| {
-            #[allow(deprecated)]
-            client.move_id(move_id, target_pos)?;
-            Ok(())
-        });
-
-        ctx.render()?;
-        Ok(())
-    }
-
-    /// Execute an intent through the action system.
-    fn execute_intent(&mut self, ctx: &mut Ctx, intent: crate::actions::intent::Intent) -> Result<()> {
-        use crate::actions::HandleResult;
-
-        log::info!("Navigator: Executing intent {:?}", intent.action);
-
-        // Dispatch to stored dispatcher (reused, not recreated)
-        match self.action_dispatcher.dispatch(&intent, ctx)? {
-            HandleResult::Done => {
-                log::debug!("Navigator: Intent executed successfully");
-            }
-            HandleResult::NotApplicable(reason) => {
-                log::warn!("Navigator: Intent not applicable: {}", reason);
-            }
-            HandleResult::Skip => {
-                log::debug!("Navigator: No strategy handled the intent");
-            }
-        }
-
-        ctx.render()?;
-        Ok(())
-    }
-
+    /// Optimized for the common case where selected items are neighbors
+    /// (contiguous block). Instead of moving each item individually, we
     // =========================================================================
     // RENDERING
     // =========================================================================
@@ -560,21 +434,18 @@ impl Navigator {
     /// Handle UI events (queue changes, playback state, etc.).
     /// Routes events to all panes that might care.
     pub(crate) fn on_event(&mut self, event: &mut UiEvent, ctx: &Ctx) -> Result<()> {
-        // Handle TabChanged to sync Navigator's active pane with ctx.active_tab
         if let UiEvent::TabChanged(tab_name) = event {
-            // Map TabName to TabId for Navigator's internal state
-            let new_tab_id = match tab_name.as_str() {
+            let tab_id = match tab_name.as_str() {
                 "Search" => Some(TabId::Search),
                 "Queue" => Some(TabId::Queue),
                 "Library" => Some(TabId::Library),
-                _ => None, // Unknown tab name - ignore
+                _ => None,
             };
-            if let Some(tab_id) = new_tab_id {
-                self.switch_to_tab(tab_id);
+            if let Some(id) = tab_id {
+                self.switch_to_tab(id);
             }
         }
 
-        // Route to all panes - they have default implementations that ignore irrelevant events
         self.search_pane.on_event(event, ctx)?;
         self.queue_pane.on_event(event, ctx)?;
         self.library_pane.on_event(event, ctx)?;
@@ -584,16 +455,21 @@ impl Navigator {
         Ok(())
     }
 
-    /// Handle async query results.
-    /// Routes to the active pane.
+    /// Handle async query results. Routes to TARGET pane, not active pane.
     pub(crate) fn on_query_finished(
-        &mut self, 
-        id: &'static str, 
-        data: crate::QueryResult, 
+        &mut self,
+        id: &'static str,
+        data: crate::QueryResult,
+        target: crate::config::tabs::PaneType,
         ctx: &Ctx,
     ) -> Result<()> {
-        // Route to the active pane
-        self.active_pane_mut().on_query_finished(id, data, ctx)
+        use crate::config::tabs::PaneType;
+
+        match target {
+            PaneType::Search => self.search_pane.on_query_finished(id, data, ctx),
+            PaneType::Queue => self.queue_pane.on_query_finished(id, data, ctx),
+            _ => Ok(()),
+        }
     }
 }
 
@@ -642,17 +518,22 @@ mod tests {
     // updates self.active but never touches ctx.active_tab. The tab bar
     // reads ctx.active_tab for highlighting, so they get out of sync.
 
-    use crate::config::Config;
-    use crate::ctx::Ctx;
-    use crate::domain::Status;
-    use crate::mpd::version::Version;
-    use crate::shared::image_cache::ImageCache;
-    use crate::shared::ring_vec::RingVec;
+    use std::{
+        cell::{Cell, RefCell},
+        collections::{HashMap, HashSet},
+        sync::{Arc, RwLock},
+    };
+
     use crossbeam::channel::unbounded;
-    use crossterm::event::{KeyCode, KeyModifiers, KeyEvent as CKeyEvent};
-    use std::cell::{Cell, RefCell};
-    use std::collections::{HashMap, HashSet};
-    use std::sync::{Arc, RwLock};
+    use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+    use crate::{
+        config::Config,
+        ctx::Ctx,
+        domain::Status,
+        mpd::version::Version,
+        shared::{image_cache::ImageCache, ring_vec::RingVec},
+    };
 
     fn create_test_ctx() -> Ctx {
         let (tx, _rx) = unbounded();
@@ -662,18 +543,19 @@ mod tests {
         let key_config_file = crate::config::keys::KeyConfigFile::default();
         let key_config: crate::config::keys::KeyConfig = key_config_file.try_into().unwrap();
         let config = Config::default();
-        let config_with_keybinds = Config {
-            keybinds: key_config,
-            ..config
-        };
+        let config_with_keybinds = Config { keybinds: key_config, ..config };
 
         Ctx {
             backend_version: Version::new(0, 0, 0),
             config: Arc::new(config_with_keybinds),
             status: Status::default(),
-            queue: Vec::new(),
             image_cache: ImageCache::new(tx.clone()),
             app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
+            controllers: crate::core::controllers::Controllers::new(
+                vec![],
+                tx.clone(),
+                client_tx.clone(),
+            ),
             stickers: HashMap::new(),
             // Start with Search tab active
             active_tab: crate::config::tabs::TabName::from("Search"),
@@ -698,50 +580,32 @@ mod tests {
         }
     }
 
-    /// RED TEST: This test MUST FAIL with current implementation.
+    /// Test: Navigator syncs with ctx.active_tab via UiEvent::TabChanged
     ///
-    /// The bug: Pressing '2' key in Navigator switches internal pane to Queue,
-    /// but ctx.active_tab stays as "Search". The tab bar reads ctx.active_tab
-    /// for highlighting, so they get out of sync.
-    ///
-    /// PROOF:
-    /// - Navigator::handle_key() line 299: calls self.switch_to_tab(TabId::Queue)
-    /// - Navigator::switch_to_tab() line 187: only calls self.switch_to(PaneId::Tab(tab))
-    /// - ctx.active_tab is NEVER updated by Navigator
-    ///
-    /// FIX REQUIRED: switch_to_tab() or handle_key() must also set ctx.active_tab
+    /// Flow: Ui::change_tab() sets ctx.active_tab then fires
+    /// UiEvent::TabChanged. Navigator's on_event() receives the event and
+    /// syncs self.active.
     #[test]
-    fn pressing_number_key_should_update_ctx_active_tab() {
+    fn navigator_syncs_via_tab_changed_event() {
         let mut ctx = create_test_ctx();
 
-        // Initial state: active_tab is "Search"
         assert_eq!(ctx.active_tab.as_str(), "Search", "Initial state should be Search tab");
 
-        // Create Navigator (starts with Search pane active)
         let mut navigator = Navigator::new(&ctx);
-        assert_eq!(navigator.active, PaneId::Tab(TabId::Search), "Navigator should start on Search");
+        assert_eq!(
+            navigator.active,
+            PaneId::Tab(TabId::Search),
+            "Navigator should start on Search"
+        );
 
-        // Simulate pressing '2' key to switch to Queue tab
-        let crossterm_key = CKeyEvent::new(KeyCode::Char('2'), KeyModifiers::NONE);
-        let mut key = crate::shared::key_event::KeyEvent::from(crossterm_key);
-        let _ = navigator.handle_key(&mut key, &mut ctx);
+        ctx.active_tab = crate::config::tabs::TabName::from("Queue");
+        let mut event = UiEvent::TabChanged(crate::config::tabs::TabName::from("Queue"));
+        let _ = navigator.on_event(&mut event, &ctx);
 
-        // Navigator's internal state DOES change (this works)
         assert_eq!(
             navigator.active,
             PaneId::Tab(TabId::Queue),
-            "Navigator internal state should switch to Queue"
-        );
-
-        // BUG: ctx.active_tab should ALSO change to "Queue" but it doesn't!
-        // This causes the tab bar highlight to stay on "Search" while
-        // Navigator shows the Queue pane content.
-        assert_eq!(
-            ctx.active_tab.as_str(),
-            "Queue",
-            "BUG: ctx.active_tab should be 'Queue' after pressing '2', \
-             but Navigator::handle_key() never updates ctx.active_tab. \
-             The tab bar reads ctx.active_tab for highlighting, so they get out of sync."
+            "Navigator should sync to Queue via TabChanged event"
         );
     }
 }
