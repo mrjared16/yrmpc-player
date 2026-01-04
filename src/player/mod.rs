@@ -8,5 +8,6 @@ pub use crate::backends::{
     BackendDispatcher,
     LibraryCategory,
     MpdBackend,
-    MpvIpc, MpvEvent,  // MPV is now internal to YouTube backend
+    MpvEvent, // MPV is now internal to YouTube backend
+    MpvIpc,
 };
