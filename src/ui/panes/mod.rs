@@ -76,7 +76,6 @@ pub(crate) enum Panes<'pane_ref, 'pane> {
     AlbumArtists(&'pane_ref mut TagBrowserPane),
     Albums(&'pane_ref mut AlbumsPane),
     Playlists(&'pane_ref mut PlaylistPane),
-    PlaylistsLegacy(&'pane_ref mut PlaylistsPane),
     Library(&'pane_ref mut LibraryPane),
     Search(&'pane_ref mut SearchPane),
     SearchV2(&'pane_ref mut SearchPaneV2),
@@ -263,7 +262,6 @@ macro_rules! pane_call {
             Panes::Property(s) => s.$fn($($param),+),
             Panes::Others(s) => s.$fn($($param),+),
             Panes::Cava(s) => s.$fn($($param),+),
-            Panes::PlaylistsLegacy(s) => s.$fn($($param),+),
             Panes::Library(s) => s.$fn($($param),+),
         }
     }
