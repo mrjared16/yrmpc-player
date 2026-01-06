@@ -14,6 +14,10 @@ pub struct SongItem {
     pub duration: Option<Duration>,
     pub thumbnail: Option<String>,
     pub explicit: bool,
+    /// Radio playlist ID - when present, this song is from a radio/station
+    /// search and can be used to auto-populate the queue with related
+    /// tracks
+    pub radio_playlist_id: Option<String>,
 }
 
 /// A video from search results
@@ -120,6 +124,7 @@ impl Default for SongItem {
             duration: None,
             thumbnail: None,
             explicit: false,
+            radio_playlist_id: None,
         }
     }
 }

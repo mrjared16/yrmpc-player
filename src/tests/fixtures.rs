@@ -160,6 +160,11 @@ pub mod mpd_client {
 }
 
 #[fixture]
+pub fn mock_backend() -> crate::backends::mock::MockBackend {
+    crate::backends::mock::MockBackend::new()
+}
+
+#[fixture]
 pub fn terminal() -> ratatui::Terminal<ratatui::backend::TestBackend> {
     ratatui::Terminal::new(ratatui::backend::TestBackend::new(10, 10)).unwrap()
 }

@@ -96,10 +96,9 @@ impl YouTubeApi {
 
     /// Search for music - returns structured SearchResults with sections
     ///
-    /// This is the new recommended search method that uses the domain::search
-    /// types for exhaustive type matching and proper separation of playable
-    /// vs browsable items.
+    /// Uses adapter layer for ytmapi-rs conversions, keeping domain types clean.
     pub fn search_items(&self, query: &str) -> Result<crate::domain::search::SearchResults> {
+        use super::adapter::convert_search_results;
         use crate::domain::search::{SearchItem, SearchResults, SearchSection};
 
         let raw_query = query;
@@ -126,78 +125,14 @@ impl YouTubeApi {
                 e
             })?;
 
+        // Convert ytmapi results to api::SearchResults via adapter
+        let api_results = convert_search_results(results);
+
+        // Convert api::SearchResults to domain::SearchResults
         let mut search_results = SearchResults::new();
-
-        // Top results
-        if !results.top_results.is_empty() {
-            log::info!(
-                "search_items: {} top_results found for '{}'",
-                results.top_results.len(),
-                query_for_log
-            );
-            let mut items = Vec::new();
-            for (idx, r) in results.top_results.into_iter().enumerate() {
-                log::debug!(
-                    "  TopResult[{}]: name='{}', type={:?}, video_id={:?}, browse_id={:?}, byline={:?}, artist={:?}",
-                    idx,
-                    r.result_name,
-                    r.result_type,
-                    r.video_id,
-                    r.browse_id,
-                    r.byline,
-                    r.artist
-                );
-                match SearchItem::try_from(r) {
-                    Ok(item) => items.push(item),
-                    Err(e) => log::warn!("  TopResult[{}] conversion failed: {}", idx, e),
-                }
-            }
-            search_results.add_section(SearchSection::new("top_results", "Top Result", items));
-        } else {
-            log::warn!("search_items: No top_results from API for '{}'", query_for_log);
-        }
-
-        // Artists
-        if !results.artists.is_empty() {
-            let items: Vec<_> = results.artists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("artists", "Artists", items));
-        }
-
-        // Albums
-        if !results.albums.is_empty() {
-            let items: Vec<_> = results.albums.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("albums", "Albums", items));
-        }
-
-        // Songs
-        if !results.songs.is_empty() {
-            let items: Vec<_> = results.songs.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("songs", "Songs", items));
-        }
-
-        // Videos
-        if !results.videos.is_empty() {
-            let items: Vec<_> =
-                results.videos.into_iter().filter_map(|v| SearchItem::try_from(v).ok()).collect();
-            search_results.add_section(SearchSection::new("videos", "Videos", items));
-        }
-
-        // Featured playlists (curated by YouTube Music)
-        if !results.featured_playlists.is_empty() {
-            let items: Vec<_> =
-                results.featured_playlists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new(
-                "featured_playlists",
-                "Featured Playlists",
-                items,
-            ));
-        }
-
-        // Community playlists (user-created)
-        if !results.community_playlists.is_empty() {
-            let items: Vec<_> =
-                results.community_playlists.into_iter().map(SearchItem::from).collect();
-            search_results.add_section(SearchSection::new("playlists", "Playlists", items));
+        for section in api_results.sections {
+            let items: Vec<SearchItem> = section.items.into_iter().map(SearchItem::from).collect();
+            search_results.add_section(SearchSection::new(&section.key, &section.title, items));
         }
 
         log::info!(

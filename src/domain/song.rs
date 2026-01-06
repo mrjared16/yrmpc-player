@@ -113,6 +113,12 @@ impl Song {
     pub fn browse_id(&self) -> Option<&str> {
         self.metadata.get("browse_id").and_then(|v| v.first()).map(|s| s.as_str())
     }
+
+    /// Get the radio playlist ID for auto-population (if available).
+    /// This ID is used to fetch similar tracks when the queue is running low.
+    pub fn radio_playlist_id(&self) -> Option<&str> {
+        self.metadata.get("radio_playlist_id").and_then(|v| v.first()).map(|s| s.as_str())
+    }
 }
 
 impl ListItemDisplay for Song {

@@ -53,10 +53,12 @@
 //! rmpc
 //! ```
 
+pub mod adapter;
 pub mod api;
 pub mod audio_cache;
 pub mod client;
 pub mod config;
+pub mod extract;
 pub mod details;
 pub mod error;
 pub mod extractor;

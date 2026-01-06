@@ -87,6 +87,7 @@ mod tests {
             duration: Some(std::time::Duration::from_secs(180)),
             thumbnail: None,
             explicit: false,
+            radio_playlist_id: None,
         };
 
         let entry = QueueEntry::new(PlayableItem::Song(song));

@@ -77,6 +77,7 @@ pub mod interaction;
 pub mod library_cache;
 pub mod library_category;
 pub mod messaging;
+pub mod mock;
 pub mod mpd;
 pub mod traits;
 pub mod youtube;
@@ -103,6 +104,7 @@ pub use api::{
 // === Legacy types (MPD-flavored, for migration) ===
 pub use client::BackendDispatcher;
 pub use library_category::LibraryCategory;
+pub use mock::MockBackend;
 pub use mpd::MpdBackend;
 // === Deprecated Legacy Traits ===
 // These are kept for backward compatibility but are no longer used by client.rs

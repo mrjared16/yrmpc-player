@@ -6,7 +6,6 @@
 //!
 //! Design rationale: See docs/design-choices.md
 
-mod convert;
 mod display;
 mod items;
 
@@ -240,6 +239,7 @@ impl From<crate::backends::api::Item> for SearchItem {
                 duration: item.duration,
                 thumbnail: item.thumbnail,
                 explicit: false,
+                radio_playlist_id: None,
             })),
             ContentType::Artist => SearchItem::Browsable(BrowsableItem::Artist(ArtistItem {
                 name: item.title,

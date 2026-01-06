@@ -1,7 +1,6 @@
 // Integration tests for YouTubeBackend search functionality
 // These tests verify the search implementation works correctly with ytmapi-rs
 
-#[cfg(test)]
 mod integration_tests {
     use std::collections::HashMap;
 
@@ -285,6 +284,7 @@ mod search_display_e2e_tests {
                 duration: Some(Duration::from_secs(245)),
                 thumbnail: Some("https://i.ytimg.com/vi/abc123/sddefault.jpg".into()),
                 explicit: false,
+                radio_playlist_id: None,
             })),
             // Album result (would be in "Albums" section)
             SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
