@@ -78,9 +78,9 @@ backlog task edit <id> -s Done
 | Project overview | [docs/PROJECT_OVERVIEW.md](docs/PROJECT_OVERVIEW.md) |
 | Architecture | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) |
 | UI/UX spec | [docs/ui-ux-provised.md](docs/ui-ux-provised.md) |
-| Rich List UI | [docs/ADR-rich-list-ui.md](docs/ADR-rich-list-ui.md) |
+| Rich List UI | [docs/arch/ui-navigation.md](docs/arch/ui-navigation.md) |
 | YouTube API | [docs/YOUTUBE_API.md](docs/YOUTUBE_API.md) |
-| Current status | [docs/PROJECT_STATUS.md](docs/PROJECT_STATUS.md) |
+| Project goals | [docs/VISION.md](docs/VISION.md) |
 
 ---
 
