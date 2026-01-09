@@ -308,7 +308,7 @@ fn main() -> Result<()> {
             let (event_tx, event_rx) = unbounded::<AppEvent>();
             logging::init(event_tx.clone()).expect("Logger to initialize");
 
-            log::debug!(rev = env!("VERGEN_GIT_DESCRIBE"); "rmpc started");
+            log::debug!(rev = option_env!("VERGEN_GIT_DESCRIBE").unwrap_or("dev"); "rmpc started");
             std::thread::Builder::new()
                 .name("dependency_check".to_string())
                 .spawn(|| DEPENDENCIES.iter().for_each(|d| d.log()))?;
