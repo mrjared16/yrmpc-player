@@ -46,7 +46,7 @@ use crossbeam::channel::{self, Receiver, Sender};
 use super::{
     config::ExtractorType,
     protocol::{ServerCommand, ServerResponse, framing},
-    services::{ApiService, PlaybackService, PlaybackStateTracker, QueueService},
+    services::{ApiService, InternalEvent, PlaybackService, PlaybackStateTracker, QueueService},
 };
 
 /// YouTube server orchestrates services and handles IPC
@@ -60,6 +60,8 @@ pub struct YouTubeServer {
     mpv_socket_path: PathBuf,
     event_tx: Sender<String>,
     event_rx: Receiver<String>,
+    internal_event_tx: Sender<InternalEvent>,
+    internal_event_rx: Receiver<InternalEvent>,
 }
 
 impl YouTubeServer {
@@ -90,6 +92,7 @@ impl YouTubeServer {
 
         // Create event broadcast channel (unbounded for non-blocking sends)
         let (event_tx, event_rx) = channel::unbounded();
+        let (internal_event_tx, internal_event_rx) = channel::unbounded();
 
         Ok(Self {
             api,
@@ -101,6 +104,8 @@ impl YouTubeServer {
             mpv_socket_path: mpv_socket,
             event_tx,
             event_rx,
+            internal_event_tx,
+            internal_event_rx,
         })
     }
 
@@ -116,8 +121,11 @@ impl YouTubeServer {
         self.running.store(true, Ordering::SeqCst);
 
         // Start the MPV event loop for property observation
-        if let Err(e) = self.playback.start_event_loop(&self.mpv_socket_path, self.event_tx.clone())
-        {
+        if let Err(e) = self.playback.start_event_loop(
+            &self.mpv_socket_path,
+            self.event_tx.clone(),
+            self.internal_event_tx.clone(),
+        ) {
             log::error!("Failed to start MPV event loop: {}", e);
         }
 
@@ -149,7 +157,8 @@ impl YouTubeServer {
 
     /// Start internal event processor thread
     fn start_internal_event_processor(&self) {
-        let event_rx = self.event_rx.clone();
+        let internal_event_rx = self.internal_event_rx.clone();
+        let event_tx = self.event_tx.clone();
         let running = Arc::clone(&self.running);
         let playback = Arc::clone(&self.playback);
         let queue = Arc::clone(&self.queue);
@@ -159,18 +168,30 @@ impl YouTubeServer {
             log::info!("Internal event processor started");
 
             while running.load(Ordering::SeqCst) {
-                match event_rx.recv_timeout(Duration::from_millis(500)) {
+                match internal_event_rx.recv_timeout(Duration::from_millis(500)) {
                     Ok(event) => {
-                        log::debug!("Internal event processor received: {}", event);
+                        log::debug!("Internal event processor received: {:?}", event);
 
-                        if event.starts_with("end-file:") {
-                            let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                            orchestrator::handle_track_ended(
-                                &playback,
-                                &queue,
-                                &state_tracker,
-                                reason,
-                            );
+                        match event {
+                            InternalEvent::EndFile { reason } => {
+                                orchestrator::handle_track_ended(
+                                    &playback,
+                                    &queue,
+                                    &state_tracker,
+                                    &reason,
+                                );
+                                let _ = event_tx.send("player".to_string());
+                            }
+                            InternalEvent::TrackChanged { position } => {
+                                orchestrator::handle_track_changed(
+                                    &playback,
+                                    &queue,
+                                    &state_tracker,
+                                    position,
+                                );
+                                let _ = event_tx.send("player".to_string());
+                            }
+                            InternalEvent::IdleChanged { .. } => {}
                         }
                     }
                     Err(crossbeam::channel::RecvTimeoutError::Timeout) => {}
@@ -230,7 +251,7 @@ impl YouTubeServer {
             }
 
             // Playback handlers
-            ServerCommand::Play => handlers::handle_play(&self.playback, &self.event_tx),
+            ServerCommand::Play => handlers::handle_play(&self.playback, &self.queue, &self.state_tracker, &self.event_tx),
             ServerCommand::Pause => handlers::handle_pause(&self.playback, &self.event_tx),
             ServerCommand::Stop => handlers::handle_stop(&self.playback, &self.event_tx),
             ServerCommand::SeekAbsolute(pos) => handlers::handle_seek_absolute(&self.playback, pos),
@@ -328,17 +349,6 @@ impl YouTubeServer {
 
         match self.event_rx.recv_timeout(Duration::from_secs(30)) {
             Ok(event) => {
-                if event.starts_with("end-file:") {
-                    let reason = event.strip_prefix("end-file:").unwrap_or("unknown");
-                    orchestrator::handle_track_ended(
-                        &self.playback,
-                        &self.queue,
-                        &self.state_tracker,
-                        reason,
-                    );
-                    return ServerResponse::IdleEvents(vec!["player".to_string()]);
-                }
-
                 if subsystems.is_empty() || subsystems.contains(&event) {
                     log::debug!("Idle woke up with event: {}", event);
                     ServerResponse::IdleEvents(vec![event])
