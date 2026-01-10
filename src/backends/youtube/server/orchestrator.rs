@@ -8,7 +8,11 @@
 //! This module is used by both the main server and the internal event
 //! processor.
 
-use std::sync::Arc;
+use std::{
+    sync::Arc,
+    thread,
+    time::{Duration, Instant},
+};
 
 use anyhow::Result;
 
@@ -194,8 +198,8 @@ fn handle_eof(
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
 ) {
-    log::info!("[DIAG-EOF] handle_eof: start");
-    state_tracker.force_set(PlaybackState::EndOfFile);
+    log::trace!("[DIAG-EOF] EOF");
+
     let repeat_mode = queue.repeat_mode();
     let current_idx = queue.current_index();
     let queue_len = queue.len();
@@ -224,20 +228,93 @@ fn handle_eof(
         return;
     }
 
-    // Natural end - MPV auto-advanced to next track
-    // Use queue.current_index() as source of truth (NOT mpv_pos) for reliability
-    // Check mpv_pos primarily to detect if we advanced within the window or if the
-    // window is done
-    let mpv_pos = playback.get_playlist_pos().unwrap_or(-1);
-    log::info!("[DIAG-EOF] handle_eof: mpv_pos={}", mpv_pos);
+    let from_position = queue.current_index().unwrap_or(0);
+    state_tracker.force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position });
+    log::info!("EOF transition pending, waiting for MPV event confirmation");
+    log::trace!("[DIAG-EOF] EOF -> PendingAdvance(from_position={})", from_position);
 
-    if mpv_pos < 0 {
-        log::info!("[DIAG-EOF] handle_eof: calling handle_end_of_window");
+    spawn_pending_advance_timeout(playback, queue, state_tracker);
+}
+
+fn spawn_pending_advance_timeout(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) {
+    let playback = Arc::clone(playback);
+    let queue = Arc::clone(queue);
+    let state_tracker = Arc::clone(state_tracker);
+
+    thread::spawn(move || {
+        let timeout = Duration::from_secs(2);
+        thread::sleep(timeout);
+
+        if !state_tracker.is_pending_expired(timeout) {
+            return;
+        }
+        if !matches!(state_tracker.get(), PlaybackState::PendingAdvance { .. }) {
+            return;
+        }
+
+        let mpv_pos = match playback.get_playlist_pos() {
+            Ok(pos) => pos,
+            Err(e) => {
+                log::warn!(
+                    "[DIAG-EOF] PendingAdvance timeout fallback failed to query MPV playlist-pos: {}",
+                    e
+                );
+                -1
+            }
+        };
+
+        log::warn!(
+            "[DIAG-EOF] PendingAdvance timeout ({}s), falling back to MPV playlist-pos={}",
+            timeout.as_secs(),
+            mpv_pos
+        );
+
+        let position = mpv_pos
+            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        handle_track_changed(&playback, &queue, &state_tracker, position);
+    });
+}
+
+pub fn handle_track_changed(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    position: i32,
+) {
+    let state = state_tracker.get();
+    let PlaybackState::PendingAdvance { from_position, .. } = state else {
+        log::trace!("[DIAG-EOF] TrackChanged({}) ignored (state={:?})", position, state);
+        return;
+    };
+
+    log::trace!(
+        "[DIAG-EOF] PendingAdvance -> TrackChanged({}) (from_position={})",
+        position,
+        from_position
+    );
+
+    let repeat_mode = queue.repeat_mode();
+    let sync_ok = if position < 0 {
         handle_end_of_window(playback, queue, state_tracker, repeat_mode);
+        true
     } else {
-        log::info!("[DIAG-EOF] handle_eof: calling handle_within_window_advance");
-        handle_within_window_advance(playback, queue, state_tracker, mpv_pos as usize);
+        handle_within_window_advance(playback, queue, state_tracker, position as usize)
+    };
+
+    if !sync_ok || matches!(state_tracker.get(), PlaybackState::PendingAdvance { .. }) {
+        log::warn!(
+            "[DIAG-EOF] Queue sync failed (position={}), forcing recovery",
+            position
+        );
+        queue.set_current(None);
+        state_tracker.force_set(PlaybackState::Idle);
     }
+
+    log::trace!("[DIAG-EOF] TrackChanged({}) -> {:?}", position, state_tracker.get());
 }
 
 /// Handle when we've reached end of prefetch window
@@ -248,21 +325,21 @@ fn handle_end_of_window(
     repeat_mode: RepeatMode,
 ) {
     log::info!("[DIAG-EOF] handle_end_of_window: start");
-    if let Some(current) = queue.current_index() {
-        let next_pos = current + 1;
-        log::info!(
-            "[DIAG-EOF] handle_end_of_window: current={} next_pos={} queue_len={}",
-            current,
-            next_pos,
-            queue.len()
-        );
-        if next_pos < queue.len() {
-            // More songs in queue - start new prefetch window
-            log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", next_pos);
-            let _ = play_position_internal(playback, queue, next_pos, state_tracker);
-        } else {
-            // At end of queue - check Repeat All
-            if repeat_mode == RepeatMode::All {
+    let next_pos = queue.next_index();
+    log::info!(
+        "[DIAG-EOF] handle_end_of_window: current={:?} next_pos={:?} queue_len={}",
+        queue.current_index(),
+        next_pos,
+        queue.len()
+    );
+
+    match next_pos {
+        Some(pos) => {
+            log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", pos);
+            let _ = play_position_internal(playback, queue, pos, state_tracker);
+        }
+        None => {
+            if repeat_mode == RepeatMode::All && queue.len() > 0 {
                 log::info!("[DIAG-EOF] Repeat All: looping back to start");
                 let _ = play_position_internal(playback, queue, 0, state_tracker);
             } else {
@@ -271,26 +348,20 @@ fn handle_end_of_window(
                 state_tracker.force_set(PlaybackState::Idle);
             }
         }
-    } else {
-        log::warn!("[DIAG-EOF] EOF with no current_index - staying idle");
-        state_tracker.force_set(PlaybackState::Idle);
     }
 }
 
 /// Handle MPV advancing within the prefetch window
+/// Returns true if queue sync succeeded, false if recovery is needed
 fn handle_within_window_advance(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
     mpv_pos: usize,
-) {
-    // KEY FIX: Use prefetch lookup instead of sequential arithmetic
-    // This respects shuffle order and repeat mode that were applied when building
-    // the window
+) -> bool {
     let new_queue_pos = match queue.get_prefetched_at(mpv_pos) {
         Some(idx) => idx,
         None => {
-            // Fallback: if prefetch indices not available, use old behavior
             let base_index = queue.playback_base_index();
             log::warn!(
                 "[DIAG-EOF] Prefetch lookup failed for mpv_pos={}, falling back to base_index({}) + mpv_pos",
@@ -308,34 +379,37 @@ fn handle_within_window_advance(
         queue.len()
     );
 
-    if new_queue_pos < queue.len() {
-        log::info!("[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
-        queue.set_current(Some(new_queue_pos));
-        state_tracker.force_set(PlaybackState::Playing);
+    if new_queue_pos >= queue.len() {
+        log::warn!("[DIAG-EOF] new_queue_pos {} out of bounds (len={})", new_queue_pos, queue.len());
+        return false;
+    }
 
-        // Update MPRIS metadata for current track
-        if let Ok(song) = queue.get_by_index(new_queue_pos) {
-            let title = song
-                .metadata
-                .get("title")
-                .and_then(|v| v.first())
-                .cloned()
-                .unwrap_or_else(|| song.uri.clone());
-            let artist =
-                song.metadata.get("artist").and_then(|v| v.first()).cloned().unwrap_or_default();
-            let _ = playback.set_media_title(&title, &artist);
-        }
+    log::info!("[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
+    queue.set_current(Some(new_queue_pos));
+    state_tracker.force_set(PlaybackState::Playing);
 
-        // Maintain prefetch window - extend using queue's playback order logic
-        if let Some(next_idx) = queue.extend_prefetch_window() {
-            if let Ok(song) = queue.get_by_index(next_idx) {
-                if let Ok(url) = playback.build_playback_url(&song.uri) {
-                    let _ = playback.playlist_append(&url);
-                    log::debug!("Extended prefetch window with queue index {}", next_idx);
-                }
+    if let Ok(song) = queue.get_by_index(new_queue_pos) {
+        let title = song
+            .metadata
+            .get("title")
+            .and_then(|v| v.first())
+            .cloned()
+            .unwrap_or_else(|| song.uri.clone());
+        let artist =
+            song.metadata.get("artist").and_then(|v| v.first()).cloned().unwrap_or_default();
+        let _ = playback.set_media_title(&title, &artist);
+    }
+
+    if let Some(next_idx) = queue.extend_prefetch_window() {
+        if let Ok(song) = queue.get_by_index(next_idx) {
+            if let Ok(url) = playback.build_playback_url(&song.uri) {
+                let _ = playback.playlist_append(&url);
+                log::debug!("Extended prefetch window with queue index {}", next_idx);
             }
         }
     }
+
+    true
 }
 
 /// Handle playback error by skipping to next track
@@ -473,6 +547,7 @@ mod tests {
         queue.set_current(Some(0));
 
         handle_eof(&playback, &queue, &state_tracker);
+        handle_track_changed(&playback, &queue, &state_tracker, 1);
 
         assert_eq!(queue.current_index(), Some(1));
     }
@@ -498,6 +573,7 @@ mod tests {
         queue.set_repeat_mode(RepeatMode::All);
 
         handle_eof(&playback, &queue, &state_tracker);
+        handle_track_changed(&playback, &queue, &state_tracker, -1);
 
         assert_eq!(queue.current_index(), Some(0)); // Looped
     }
@@ -510,6 +586,7 @@ mod tests {
         queue.set_repeat_mode(RepeatMode::Off);
 
         handle_eof(&playback, &queue, &state_tracker);
+        handle_track_changed(&playback, &queue, &state_tracker, -1);
 
         assert_eq!(queue.current_index(), None);
         assert_eq!(state_tracker.get(), PlaybackState::Idle);
