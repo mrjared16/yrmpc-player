@@ -6,6 +6,7 @@ use crossbeam::channel::Sender;
 
 use crate::backends::youtube::{
     protocol::ServerResponse,
+    server::orchestrator::PREFETCH_WINDOW_SIZE,
     services::{PlaybackService, QueueService, RepeatMode},
 };
 
@@ -56,6 +57,11 @@ pub fn handle_set_shuffle(
     enabled: bool,
 ) -> ServerResponse {
     queue.set_shuffle_enabled(enabled);
+
+    if let Some(current_pos) = queue.current_index() {
+        queue.build_prefetch_window(current_pos, PREFETCH_WINDOW_SIZE);
+    }
+
     let _ = event_tx.send("options".to_string());
     ServerResponse::Ok
 }

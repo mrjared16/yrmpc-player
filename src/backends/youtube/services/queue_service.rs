@@ -345,8 +345,8 @@ impl QueueService {
     }
 
     /// Set shuffle enabled state
-    /// When disabling, clears shuffle history
-    /// When enabling, adds current track to history
+    /// When enabling: regenerates shuffle_order, clears prefetch_indices, starts fresh history
+    /// When disabling: clears shuffle_order, prefetch_indices, and history
     pub fn set_shuffle_enabled(&self, enabled: bool) {
         *self.shuffle_enabled.lock() = enabled;
 
@@ -358,9 +358,23 @@ impl QueueService {
             if let Some(idx) = current {
                 history.push(idx);
             }
+
+            // Regenerate shuffle order for immediate effect
+            let len = self.len();
+            if len > 0 {
+                *self.shuffle_order.lock() =
+                    Some(self.generate_shuffle_order_internal(len, current));
+            }
+
+            // Clear stale prefetch indices so next prefetch uses new shuffle order
+            self.prefetch_indices.lock().clear();
         } else {
             // Clear history when disabling shuffle
             self.shuffle_history.lock().clear();
+            // Clear shuffle order
+            *self.shuffle_order.lock() = None;
+            // Clear stale prefetch indices so next prefetch uses sequential order
+            self.prefetch_indices.lock().clear();
         }
     }
 
