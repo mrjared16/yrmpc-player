@@ -61,15 +61,13 @@ pub fn handle_get_status(
 
 /// Handle GetCurrentSong command
 pub fn handle_get_current_song(
-    playback: &Arc<PlaybackService>,
+    _playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
 ) -> ServerResponse {
-    let mpv_playlist_pos = playback.get_playlist_pos().unwrap_or(-1);
-    if mpv_playlist_pos < 0 {
-        return ServerResponse::Song(None);
-    }
-
-    let queue_pos = queue.playback_base_index() + (mpv_playlist_pos as usize);
+    let queue_pos = match queue.current_index() {
+        Some(pos) => pos,
+        None => return ServerResponse::Song(None),
+    };
 
     match queue.get_by_index(queue_pos) {
         Ok(song) => ServerResponse::Song(Some(SongData::from(song))),

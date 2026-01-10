@@ -4,10 +4,32 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 
-use crate::backends::youtube::{protocol::ServerResponse, services::PlaybackService};
+use crate::backends::youtube::{
+    protocol::ServerResponse,
+    server::orchestrator,
+    services::{PlaybackService, PlaybackState, PlaybackStateTracker, QueueService},
+};
 
 /// Handle Play command
-pub fn handle_play(playback: &Arc<PlaybackService>, event_tx: &Sender<String>) -> ServerResponse {
+///
+/// When in Idle state with items in queue, reloads the track at current position.
+/// Otherwise just unpauses playback.
+pub fn handle_play(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    event_tx: &Sender<String>,
+) -> ServerResponse {
+    let state = state_tracker.get();
+
+    if matches!(state, PlaybackState::Idle | PlaybackState::Stopped)
+        && queue.len() > 0
+    {
+        let pos = queue.current_index().unwrap_or(0);
+        log::info!("handle_play: state={:?}, reloading track at pos={}", state, pos);
+        return orchestrator::play_position(playback, queue, pos, state_tracker);
+    }
+
     match playback.unpause() {
         Ok(_) => {
             let _ = event_tx.send("player".to_string());
