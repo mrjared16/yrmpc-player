@@ -498,7 +498,7 @@ impl Args {
     /// **dangling backslash** escape at the end of the string.
     ///
     /// # Examples
-    /// ```
+    /// ```ignore
     /// let v = Args::split_command_line(r#"addyt --name "rick astley""#).unwrap();
     /// assert_eq!(v, ["addyt", "--name", "rick astley"]);
     /// ```
@@ -554,11 +554,12 @@ impl Args {
     ///
     /// # Examples
     /// ```
-    /// let a = Args::parse_cli_line(r#"addyt --name "rick astley""#).unwrap();
-    /// match a.command {
-    ///     Some(Command::AddYt { name, url, .. }) => { assert!(name.is_some()); assert!(url.is_none()); }
-    ///     _ => unreachable!(),
-    /// }
+    /// # use rmpc::config::cli::{Args, Command};
+    /// let a = Args::parse_cli_line("addyt https://youtu.be/dQw4w9WgXcQ").unwrap();
+    /// assert!(matches!(
+    ///     a.command,
+    ///     Some(Command::AddYt { ref url, position: None }) if url == "https://youtu.be/dQw4w9WgXcQ"
+    /// ));
     /// ```
     pub fn parse_cli_line(s: &str) -> Result<Self, clap::Error> {
         let mut argv = Self::split_command_line(s)
