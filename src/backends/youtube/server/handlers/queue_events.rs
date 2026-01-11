@@ -7,22 +7,27 @@
 use std::sync::Arc;
 
 use crate::{
-    backends::youtube::services::{PlaybackService, QueueService},
+    backends::youtube::services::{AudioPrefetcherHandle, PlaybackService, QueueService},
     shared::play_queue::{QueueEvent, QueueId, RepeatMode},
 };
 
-/// Prefetch window size - number of tracks to keep loaded in MPV
 const PREFETCH_WINDOW_SIZE: usize = 3;
 
 pub struct QueueEventHandler {
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
+    audio_prefetcher: Option<AudioPrefetcherHandle>,
 }
 
 impl QueueEventHandler {
     #[must_use]
     pub fn new(playback: Arc<PlaybackService>, queue: Arc<QueueService>) -> Self {
-        Self { playback, queue }
+        Self { playback, queue, audio_prefetcher: None }
+    }
+
+    pub fn with_audio_prefetcher(mut self, handle: AudioPrefetcherHandle) -> Self {
+        self.audio_prefetcher = Some(handle);
+        self
     }
 
     pub fn handle(&mut self, event: QueueEvent) {
@@ -54,16 +59,33 @@ impl QueueEventHandler {
             .collect();
 
         if !video_ids.is_empty() {
-            self.playback.prefetch_audio_batch(video_ids);
+            if let Some(ref prefetcher) = self.audio_prefetcher {
+                prefetcher.queue_batch(video_ids);
+            } else {
+                self.playback.prefetch_audio_batch(video_ids);
+            }
         }
     }
 
     fn handle_items_removed(&mut self, ids: &[QueueId]) {
         log::debug!("QueueEvent::ItemsRemoved: {ids:?}");
+
+        if let Some(ref prefetcher) = self.audio_prefetcher {
+            let video_ids: Vec<String> = ids
+                .iter()
+                .filter_map(|&id| {
+                    let id_u32: u32 = id.try_into().ok()?;
+                    self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
+                })
+                .filter(|uri| !uri.is_empty())
+                .collect();
+
+            if !video_ids.is_empty() {
+                prefetcher.cancel(video_ids);
+            }
+        }
     }
 
-    /// Atomic rebuild: keep MPV[0] (current track), rebuild [1..n] from new
-    /// order.
     fn handle_order_changed(&mut self, play_order: &[QueueId], current_id: Option<QueueId>) {
         log::debug!("QueueEvent::OrderChanged: {} items, current={current_id:?}", play_order.len());
 
@@ -155,7 +177,27 @@ impl QueueEventHandler {
 
         if !video_ids.is_empty() {
             self.playback.prefetch(video_ids.clone());
-            self.playback.prefetch_audio_batch(video_ids);
+
+            if let Some(ref prefetcher) = self.audio_prefetcher {
+                let current_video_id = current_id.and_then(|id| {
+                    let id_u32: u32 = id.try_into().ok()?;
+                    self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
+                });
+
+                let play_order_ids: Vec<String> = play_order
+                    .iter()
+                    .filter_map(|&id| {
+                        let id_u32: u32 = id.try_into().ok()?;
+                        self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
+                    })
+                    .filter(|uri| !uri.is_empty())
+                    .collect();
+
+                prefetcher.update_context(current_video_id, play_order_ids);
+                prefetcher.queue_batch(video_ids);
+            } else {
+                self.playback.prefetch_audio_batch(video_ids);
+            }
         }
     }
 

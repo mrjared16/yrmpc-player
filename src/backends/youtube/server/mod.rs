@@ -47,7 +47,10 @@ use handlers::queue_events::QueueEventHandler;
 use super::{
     config::ExtractorType,
     protocol::{ServerCommand, ServerResponse, framing},
-    services::{ApiService, InternalEvent, PlaybackService, PlaybackStateTracker, QueueService},
+    services::{
+        ApiService, AudioPrefetcher, AudioPrefetcherConfig, InternalEvent,
+        PlaybackService, PlaybackServiceCallback, PlaybackStateTracker, QueueService,
+    },
 };
 
 /// YouTube server orchestrates services and handles IPC
@@ -58,6 +61,8 @@ pub struct YouTubeServer {
     state_tracker: Arc<PlaybackStateTracker>,
     #[allow(dead_code)]
     queue_event_handler: QueueEventHandler,
+    #[allow(dead_code)]
+    audio_prefetcher: AudioPrefetcher,
     running: Arc<AtomicBool>,
     socket_path: PathBuf,
     mpv_socket_path: PathBuf,
@@ -97,7 +102,12 @@ impl YouTubeServer {
         let (event_tx, event_rx) = channel::unbounded();
         let (internal_event_tx, internal_event_rx) = channel::unbounded();
 
-        let queue_event_handler = QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue));
+        let callback = PlaybackServiceCallback::new(Arc::clone(&playback));
+        let audio_prefetcher = AudioPrefetcher::new(AudioPrefetcherConfig::default(), callback);
+        let prefetcher_handle = audio_prefetcher.handle();
+
+        let queue_event_handler = QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue))
+            .with_audio_prefetcher(prefetcher_handle);
 
         Ok(Self {
             api,
@@ -105,6 +115,7 @@ impl YouTubeServer {
             queue,
             state_tracker,
             queue_event_handler,
+            audio_prefetcher,
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,

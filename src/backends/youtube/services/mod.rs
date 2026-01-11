@@ -4,14 +4,20 @@
 //! - ApiService: YouTube Music API calls
 //! - PlaybackService: MPV control and stream extraction
 //! - QueueService: Playback queue management
+//! - AudioPrefetcher: Rate-limited audio prefetching with priority queue
 
 pub mod api_service;
+pub mod audio_prefetcher;
 pub mod internal_event;
 pub mod playback_service;
 pub mod playback_state;
 pub mod queue_service;
 
 pub use api_service::ApiService;
+pub use audio_prefetcher::{
+    AudioPrefetcher, AudioPrefetcherConfig, AudioPrefetcherHandle, AudioPrefetcherStats,
+    PlaybackServiceCallback, PrefetchCallback,
+};
 pub use internal_event::InternalEvent;
 pub use playback_service::PlaybackService;
 pub use playback_state::{AdvanceIntent, PlaybackState, PlaybackStateTracker};
