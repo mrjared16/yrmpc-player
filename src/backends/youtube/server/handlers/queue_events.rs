@@ -6,9 +6,11 @@
 
 use std::sync::Arc;
 
+use parking_lot::Mutex;
+
 use crate::{
     backends::youtube::services::{AudioPrefetcherHandle, PlaybackService, QueueService},
-    shared::play_queue::{QueueEvent, QueueId, RepeatMode},
+    shared::play_queue::{PlayQueue, QueueEvent, QueueId, RepeatMode},
 };
 
 const PREFETCH_WINDOW_SIZE: usize = 3;
@@ -16,13 +18,18 @@ const PREFETCH_WINDOW_SIZE: usize = 3;
 pub struct QueueEventHandler {
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
+    play_queue: Arc<Mutex<PlayQueue>>,
     audio_prefetcher: Option<AudioPrefetcherHandle>,
 }
 
 impl QueueEventHandler {
     #[must_use]
-    pub fn new(playback: Arc<PlaybackService>, queue: Arc<QueueService>) -> Self {
-        Self { playback, queue, audio_prefetcher: None }
+    pub fn new(
+        playback: Arc<PlaybackService>,
+        queue: Arc<QueueService>,
+        play_queue: Arc<Mutex<PlayQueue>>,
+    ) -> Self {
+        Self { playback, queue, play_queue, audio_prefetcher: None }
     }
 
     pub fn with_audio_prefetcher(mut self, handle: AudioPrefetcherHandle) -> Self {
@@ -49,14 +56,13 @@ impl QueueEventHandler {
     fn handle_items_added(&mut self, ids: &[QueueId]) {
         log::debug!("QueueEvent::ItemsAdded: {ids:?}");
 
+        let play_queue = self.play_queue.lock();
         let video_ids: Vec<String> = ids
             .iter()
-            .filter_map(|&id| {
-                let id_u32: u32 = id.try_into().ok()?;
-                self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
-            })
+            .filter_map(|&id| play_queue.get_song(id).map(|s| s.uri.clone()))
             .filter(|uri| !uri.is_empty())
             .collect();
+        drop(play_queue);
 
         if !video_ids.is_empty() {
             if let Some(ref prefetcher) = self.audio_prefetcher {
@@ -132,15 +138,8 @@ impl QueueEventHandler {
     }
 
     fn resolve_playback_url(&self, id: QueueId) -> Option<String> {
-        let id_u32: u32 = id.try_into().ok()?;
-        let song = match self.queue.get_by_id(id_u32) {
-            Ok(s) => s,
-            Err(e) => {
-                log::warn!("Failed to get song by ID {id}: {e}");
-                return None;
-            }
-        };
-
+        let play_queue = self.play_queue.lock();
+        let song = play_queue.get_song(id)?;
         let video_id = &song.uri;
         if video_id.is_empty() {
             log::warn!("Song {id} has empty video_id");
@@ -166,32 +165,28 @@ impl QueueEventHandler {
         let window = &play_order[current_pos..window_end];
         log::debug!("New prefetch window: {:?}", window);
 
+        let play_queue = self.play_queue.lock();
         let video_ids: Vec<String> = window
             .iter()
-            .filter_map(|&id| {
-                let id_u32: u32 = id.try_into().ok()?;
-                self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
-            })
+            .filter_map(|&id| play_queue.get_song(id).map(|s| s.uri.clone()))
             .filter(|uri| !uri.is_empty())
             .collect();
+        drop(play_queue);
 
         if !video_ids.is_empty() {
             self.playback.prefetch(video_ids.clone());
 
             if let Some(ref prefetcher) = self.audio_prefetcher {
-                let current_video_id = current_id.and_then(|id| {
-                    let id_u32: u32 = id.try_into().ok()?;
-                    self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
-                });
+                let play_queue = self.play_queue.lock();
+                let current_video_id =
+                    current_id.and_then(|id| play_queue.get_song(id).map(|s| s.uri.clone()));
 
                 let play_order_ids: Vec<String> = play_order
                     .iter()
-                    .filter_map(|&id| {
-                        let id_u32: u32 = id.try_into().ok()?;
-                        self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
-                    })
+                    .filter_map(|&id| play_queue.get_song(id).map(|s| s.uri.clone()))
                     .filter(|uri| !uri.is_empty())
                     .collect();
+                drop(play_queue);
 
                 prefetcher.update_context(current_video_id, play_order_ids);
                 prefetcher.queue_batch(video_ids);

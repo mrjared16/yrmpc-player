@@ -16,7 +16,7 @@ use crossbeam::channel::Sender;
 use parking_lot::Mutex;
 
 use super::{
-    super::{audio_cache::AudioCache, config::ExtractorType, url_resolver::UrlResolver},
+    super::{config::ExtractorType, url_resolver::UrlResolver},
     InternalEvent,
 };
 use crate::backends::youtube::mpv::{MpvEvent, MpvIpc};
@@ -26,19 +26,11 @@ const OBSERVER_PLAYLIST_POS: u64 = 1;
 const OBSERVER_PAUSE: u64 = 2;
 const OBSERVER_IDLE: u64 = 3;
 
-/// Default prefetch duration for audio cache (seconds)
-const DEFAULT_AUDIO_PREFETCH_SECS: f64 = 10.0;
-
-fn escape_edl_segment(s: &str) -> String {
-    s.replace('%', "%25").replace(';', "%3B").replace(',', "%2C")
-}
-
 /// Playback service manages MPV process and URL resolution
 pub struct PlaybackService {
     mpv: Mutex<MpvIpc>,
     mpv_process: Option<Child>,
     url_resolver: UrlResolver,
-    audio_cache: Option<AudioCache>,
     event_loop_running: Arc<AtomicBool>,
 }
 
@@ -47,24 +39,11 @@ impl PlaybackService {
     pub fn new(socket_path: &Path, extractor_type: ExtractorType) -> Result<Self> {
         let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path)?;
 
-        // Initialize audio cache for instant playback
-        // This is optional - if it fails, we fall back to direct URLs
-        let audio_cache = match AudioCache::new() {
-            Ok(cache) => {
-                log::info!("Audio cache initialized: {:?}", cache.stats().cache_dir);
-                Some(cache)
-            }
-            Err(e) => {
-                log::warn!("Failed to initialize audio cache, using direct URLs: {}", e);
-                None
-            }
-        };
 
         Ok(Self {
             mpv: Mutex::new(mpv),
             mpv_process,
             url_resolver: UrlResolver::new(extractor_type),
-            audio_cache,
             event_loop_running: Arc::new(AtomicBool::new(false)),
         })
     }
@@ -145,6 +124,7 @@ impl PlaybackService {
                                     let _ = event_tx.send("player".to_string());
                                 }
                             }
+                            MpvEvent::TimeRemaining { .. } => {}
                             MpvEvent::Other(_) => {
                                 // Ignore other events
                             }
@@ -322,9 +302,21 @@ impl PlaybackService {
         self.url_resolver.get_url(video_id)
     }
 
+    pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
+        self.get_stream_url(video_id)
+    }
+
     /// Prefetch stream URLs for upcoming videos
     pub fn prefetch(&self, video_ids: Vec<String>) {
         self.url_resolver.prefetch(video_ids);
+    }
+
+    pub fn prefetch_audio_batch(&self, video_ids: Vec<String>) {
+        self.prefetch(video_ids);
+    }
+
+    pub fn has_cached_audio(&self, _video_id: &str) -> bool {
+        false
     }
 
     // ========== MPV Playlist Commands ==========
@@ -391,93 +383,6 @@ impl PlaybackService {
             if artist.is_empty() { title.to_string() } else { format!("{} - {}", artist, title) };
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
         Ok(())
-    }
-
-    // ========== Audio Cache & EDL URL Building ==========
-
-    /// Build optimal playback URL for a video ID.
-    ///
-    /// If audio cache has the first 10s cached, builds an EDL URL for instant
-    /// playback:
-    /// - First 10s from local cache (instant, no network latency)
-    /// - Remainder from network stream (seamless transition)
-    ///
-    /// If no cache, returns the direct stream URL.
-    pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
-        // First, resolve the stream URL (may be cached)
-        let stream_url = self.url_resolver.get_url(video_id)?;
-
-        // Check if we have cached audio
-        if let Some(ref cache) = self.audio_cache {
-            if let Some(cache_path) = cache.get_path(video_id) {
-                let cached_duration =
-                    cache.get_cached_duration(video_id).unwrap_or(DEFAULT_AUDIO_PREFETCH_SECS);
-
-                let cache_path_str = escape_edl_segment(&cache_path.display().to_string());
-                let stream_url_escaped = escape_edl_segment(&stream_url);
-
-                let edl_url = format!(
-                    "edl://{},0,{};{},{},",
-                    cache_path_str, cached_duration, stream_url_escaped, cached_duration
-                );
-
-                log::debug!("Built EDL URL for {}: cache {}s + network", video_id, cached_duration);
-                return Ok(edl_url);
-            }
-        }
-
-        // No cache - return direct URL
-        log::debug!("No audio cache for {}, using direct URL", video_id);
-        Ok(stream_url)
-    }
-
-    /// Prefetch audio data for a video ID.
-    ///
-    /// Downloads the first N seconds of audio and caches to disk.
-    /// Call this after URL resolution to prepare for instant playback.
-    pub fn prefetch_audio(&self, video_id: &str, stream_url: &str) {
-        if let Some(ref cache) = self.audio_cache {
-            let video_id = video_id.to_string();
-            let stream_url = stream_url.to_string();
-
-            // Check if already cached
-            if cache.has(&video_id) {
-                log::debug!("Audio already cached for {}", video_id);
-                return;
-            }
-
-            // Prefetch in background
-            cache.prefetch_async(video_id, stream_url);
-        }
-    }
-
-    /// Prefetch audio for multiple video IDs.
-    ///
-    /// Resolves URLs and downloads first N seconds for each.
-    pub fn prefetch_audio_batch(&self, video_ids: Vec<String>) {
-        if self.audio_cache.is_none() {
-            return;
-        }
-
-        // First resolve URLs
-        let url_results = self.url_resolver.get_urls(&video_ids);
-
-        // Then prefetch audio for successful resolutions
-        for (video_id, url_result) in url_results {
-            if let Ok(url) = url_result {
-                self.prefetch_audio(&video_id, &url);
-            }
-        }
-    }
-
-    /// Check if audio is cached for a video ID.
-    pub fn has_cached_audio(&self, video_id: &str) -> bool {
-        self.audio_cache.as_ref().map_or(false, |c| c.has(video_id))
-    }
-
-    /// Get audio cache statistics.
-    pub fn audio_cache_stats(&self) -> Option<super::super::audio_cache::AudioCacheStats> {
-        self.audio_cache.as_ref().map(|c| c.stats())
     }
 }
 

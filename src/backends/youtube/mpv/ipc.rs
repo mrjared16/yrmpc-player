@@ -44,6 +44,8 @@ pub enum MpvEvent {
     EndFile { reason: String, file_error: Option<String> },
     /// Idle state changed
     IdleChanged { idle: bool },
+    /// Time remaining in current track (seconds)
+    TimeRemaining { seconds: f64 },
     /// Some other event we don't care about
     Other(String),
 }
@@ -287,6 +289,11 @@ impl MpvIpc {
                             let idle =
                                 resp.data.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                             MpvEvent::IdleChanged { idle }
+                        }
+                        "time-remaining" => {
+                            let seconds =
+                                resp.data.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
+                            MpvEvent::TimeRemaining { seconds }
                         }
                         _ => MpvEvent::Other(format!("property-change: {}", name)),
                     }

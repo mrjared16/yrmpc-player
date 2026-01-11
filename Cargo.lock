@@ -2812,6 +2812,7 @@ dependencies = [
  "serde_with",
  "strum 0.27.1",
  "sysinfo",
+ "tempfile",
  "test-case",
  "textwrap",
  "thiserror 2.0.12",

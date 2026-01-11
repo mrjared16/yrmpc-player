@@ -8,7 +8,7 @@
 //!
 //! ```text
 //! QueueEvent::ItemsAdded ─┐
-//!                         ├─▶ AudioPrefetcher.queue_batch()
+//!                         ├─> AudioPrefetcher.queue_batch()
 //! QueueEvent::OrderChanged┘           │
 //!                                     ▼
 //!                            ┌─────────────────┐
@@ -24,7 +24,7 @@
 //!                                     │
 //!                                     ▼
 //!                            ┌─────────────────┐
-//!                            │ AudioCache      │
+//!                            │AudioFileManager │
 //!                            │ .prefetch()     │
 //!                            └─────────────────┘
 //! ```
@@ -32,8 +32,8 @@
 use std::{
     collections::{BinaryHeap, HashSet},
     sync::{
-        atomic::{AtomicBool, Ordering},
         Arc,
+        atomic::{AtomicBool, Ordering},
     },
     thread::{self, JoinHandle},
     time::{Duration, Instant},
@@ -135,8 +135,7 @@ impl AudioPrefetcherHandle {
 
     /// Update playback context for priority calculation.
     pub fn update_context(&self, current_id: Option<String>, play_order: Vec<String>) {
-        if let Err(e) =
-            self.cmd_tx.send(PrefetchCommand::UpdateContext { current_id, play_order })
+        if let Err(e) = self.cmd_tx.send(PrefetchCommand::UpdateContext { current_id, play_order })
         {
             log::warn!("Failed to send prefetch context update: {}", e);
         }
@@ -178,9 +177,7 @@ impl PrefetchCallback for PlaybackServiceCallback {
     }
 
     fn prefetch(&self, video_id: &str) {
-        if let Ok(url) = self.playback.get_stream_url(video_id) {
-            self.playback.prefetch_audio(video_id, &url);
-        }
+        self.playback.prefetch(vec![video_id.to_string()]);
     }
 }
 
@@ -455,8 +452,8 @@ impl AudioPrefetcher {
     /// Get current prefetcher statistics.
     pub fn stats(&self) -> AudioPrefetcherStats {
         AudioPrefetcherStats {
-            queue_size: 0,      // Would need shared state to expose
-            pending_count: 0,   // Would need shared state to expose
+            queue_size: 0,    // Would need shared state to expose
+            pending_count: 0, // Would need shared state to expose
             is_running: self.handle.is_running(),
         }
     }
@@ -464,8 +461,9 @@ impl AudioPrefetcher {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use std::sync::atomic::AtomicUsize;
+
+    use super::*;
 
     struct MockCallback {
         cached: Mutex<HashSet<String>>,
@@ -507,16 +505,13 @@ mod tests {
         let handle = prefetcher.handle();
 
         // Set up play order: a, b, c, d, e with c as current
-        handle.update_context(
-            Some("c".to_string()),
-            vec![
-                "a".to_string(),
-                "b".to_string(),
-                "c".to_string(),
-                "d".to_string(),
-                "e".to_string(),
-            ],
-        );
+        handle.update_context(Some("c".to_string()), vec![
+            "a".to_string(),
+            "b".to_string(),
+            "c".to_string(),
+            "d".to_string(),
+            "e".to_string(),
+        ]);
 
         // Queue d and e (after current), should be prioritized in order
         handle.queue_batch(vec!["d".to_string(), "e".to_string()]);
@@ -564,10 +559,8 @@ mod tests {
         // Pre-cache one item
         callback.cached.lock().insert("cached_item".to_string());
 
-        let config = AudioPrefetcherConfig {
-            min_delay: Duration::from_millis(10),
-            max_concurrent: 1,
-        };
+        let config =
+            AudioPrefetcherConfig { min_delay: Duration::from_millis(10), max_concurrent: 1 };
 
         let prefetcher = AudioPrefetcher::new(config, Arc::clone(&callback));
         let handle = prefetcher.handle();

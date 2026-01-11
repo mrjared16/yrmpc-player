@@ -7,7 +7,7 @@
 
 use std::{sync::Arc, time::Duration};
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 
 use super::{
     config::ExtractorType,
@@ -20,6 +20,14 @@ use super::{
         YtxExtractor,
     },
 };
+
+#[derive(Debug, Clone)]
+pub struct StreamInfo {
+    pub url: String,
+    pub content_length: u64,
+    pub bitrate: u32,
+    pub mime_type: String,
+}
 
 /// URL resolver facade.
 ///
@@ -111,6 +119,87 @@ impl UrlResolver {
     /// Get stream URL for a video ID, using cache if available.
     pub fn get_url(&self, video_id: &str) -> Result<String> {
         self.inner.extract_one(video_id)
+    }
+
+    pub fn get_stream_info(&self, video_id: &str) -> Result<StreamInfo> {
+        let url = self.get_url(video_id)?;
+        let (content_length, mime_type) = Self::probe_stream_headers(&url)?;
+        Ok(StreamInfo { url, content_length, bitrate: 0, mime_type })
+    }
+
+    pub fn get_stream_infos(
+        &self,
+        video_ids: &[String],
+    ) -> std::collections::HashMap<String, Result<StreamInfo>> {
+        let urls = self.get_urls(video_ids);
+        urls.into_iter()
+            .map(|(video_id, url_result)| {
+                let info_result = url_result.and_then(|url| {
+                    let (content_length, mime_type) = Self::probe_stream_headers(&url)?;
+                    Ok(StreamInfo { url, content_length, bitrate: 0, mime_type })
+                });
+                (video_id, info_result)
+            })
+            .collect()
+    }
+
+    fn probe_stream_headers(url: &str) -> Result<(u64, String)> {
+        use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
+
+        let client = reqwest::blocking::Client::new();
+
+        if let Ok(resp) = client.head(url).send() {
+            if resp.status().is_success() {
+                let content_length = resp
+                    .headers()
+                    .get(CONTENT_LENGTH)
+                    .and_then(|v| v.to_str().ok())
+                    .and_then(|s| s.parse::<u64>().ok())
+                    .or_else(|| resp.content_length())
+                    .unwrap_or(0);
+
+                let mime_type = resp
+                    .headers()
+                    .get(CONTENT_TYPE)
+                    .and_then(|v| v.to_str().ok())
+                    .unwrap_or("")
+                    .to_string();
+
+                if content_length > 0 {
+                    return Ok((content_length, mime_type));
+                }
+            }
+        }
+
+        let resp = client
+            .get(url)
+            .header(RANGE, "bytes=0-0")
+            .send()
+            .context("Failed to probe stream headers")?;
+
+        let mime_type = resp
+            .headers()
+            .get(CONTENT_TYPE)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("")
+            .to_string();
+
+        if let Some(range) = resp.headers().get(CONTENT_RANGE).and_then(|v| v.to_str().ok()) {
+            if let Some((_, total)) = range.split_once('/') {
+                if let Ok(total) = total.parse::<u64>() {
+                    return Ok((total, mime_type));
+                }
+            }
+        }
+
+        let content_length = resp
+            .headers()
+            .get(CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|s| s.parse::<u64>().ok())
+            .unwrap_or(0);
+
+        Ok((content_length, mime_type))
     }
 
     /// Get stream URLs for multiple video IDs.

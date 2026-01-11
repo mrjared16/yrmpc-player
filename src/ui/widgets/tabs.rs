@@ -43,7 +43,7 @@ use super::get_line_offset;
 /// # use ratatui::style::{Style, Color};
 /// # use ratatui::text::{Line};
 /// # use ratatui::symbols::{DOT};
-/// let titles = ["Tab1", "Tab2", "Tab3", "Tab4"].iter().cloned().map(Line::from).collect();
+/// let titles: Vec<_> = ["Tab1", "Tab2", "Tab3", "Tab4"].iter().cloned().map(Line::from).collect();
 /// Tabs::new(titles)
 ///     .block(Block::default().title("Tabs").borders(Borders::ALL))
 ///     .style(Style::default().fg(Color::White))

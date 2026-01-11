@@ -43,24 +43,33 @@ use std::{
 use anyhow::{Context, Result};
 use crossbeam::channel::{self, Receiver, Sender};
 use handlers::queue_events::QueueEventHandler;
+use parking_lot::Mutex;
 
 use super::{
     config::ExtractorType,
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
-        ApiService, AudioPrefetcher, AudioPrefetcherConfig, InternalEvent,
-        PlaybackService, PlaybackServiceCallback, PlaybackStateTracker, QueueService,
+        ApiService,
+        AudioPrefetcher,
+        AudioPrefetcherConfig,
+        InternalEvent,
+        PlaybackService,
+        PlaybackServiceCallback,
+        PlaybackStateTracker,
+        QueueService,
     },
 };
+use crate::shared::play_queue::{PlayQueue, QueueCommand, QueueEvent};
 
 /// YouTube server orchestrates services and handles IPC
 pub struct YouTubeServer {
     api: Arc<ApiService>,
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
+    /// PlayQueue - the new event-driven queue state machine
+    play_queue: Arc<Mutex<PlayQueue>>,
     state_tracker: Arc<PlaybackStateTracker>,
-    #[allow(dead_code)]
-    queue_event_handler: QueueEventHandler,
+    queue_event_handler: Mutex<QueueEventHandler>,
     #[allow(dead_code)]
     audio_prefetcher: AudioPrefetcher,
     running: Arc<AtomicBool>,
@@ -106,15 +115,22 @@ impl YouTubeServer {
         let audio_prefetcher = AudioPrefetcher::new(AudioPrefetcherConfig::default(), callback);
         let prefetcher_handle = audio_prefetcher.handle();
 
-        let queue_event_handler = QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue))
-            .with_audio_prefetcher(prefetcher_handle);
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+
+        let queue_event_handler = QueueEventHandler::new(
+            Arc::clone(&playback),
+            Arc::clone(&queue),
+            Arc::clone(&play_queue),
+        )
+        .with_audio_prefetcher(prefetcher_handle);
 
         Ok(Self {
             api,
             playback,
             queue,
+            play_queue,
             state_tracker,
-            queue_event_handler,
+            queue_event_handler: Mutex::new(queue_event_handler),
             audio_prefetcher,
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
@@ -209,6 +225,9 @@ impl YouTubeServer {
                                 let _ = event_tx.send("player".to_string());
                             }
                             InternalEvent::IdleChanged { .. } => {}
+                            InternalEvent::TimeRemaining { seconds } => {
+                                orchestrator::handle_time_remaining(&playback, &queue, seconds);
+                            }
                         }
                     }
                     Err(crossbeam::channel::RecvTimeoutError::Timeout) => {}
@@ -296,9 +315,15 @@ impl YouTubeServer {
             }
 
             // Queue handlers
-            ServerCommand::Add { uri, position } => {
-                handlers::handle_add(&self.queue, &self.playback, &self.event_tx, &uri, position)
-            }
+            ServerCommand::Add { uri, position } => handlers::handle_add(
+                &self.queue,
+                &self.playback,
+                &self.event_tx,
+                &uri,
+                position,
+                &self.play_queue,
+                &self.queue_event_handler,
+            ),
             ServerCommand::AddSong { song, position } => {
                 log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
                 let result = handlers::handle_add_song(
@@ -307,19 +332,36 @@ impl YouTubeServer {
                     &self.event_tx,
                     song,
                     position,
+                    &self.play_queue,
+                    &self.queue_event_handler,
                 );
                 log::info!("AddSong result: {:?}", result);
                 result
             }
-            ServerCommand::DeleteId(id) => {
-                handlers::handle_delete_id(&self.queue, &self.playback, &self.event_tx, id)
-            }
-            ServerCommand::Clear => {
-                handlers::handle_clear(&self.queue, &self.playback, &self.event_tx)
-            }
-            ServerCommand::MoveId { from, to } => {
-                handlers::handle_move_id(&self.queue, &self.playback, &self.event_tx, from, to)
-            }
+            ServerCommand::DeleteId(id) => handlers::handle_delete_id(
+                &self.queue,
+                &self.playback,
+                &self.event_tx,
+                id,
+                &self.play_queue,
+                &self.queue_event_handler,
+            ),
+            ServerCommand::Clear => handlers::handle_clear(
+                &self.queue,
+                &self.playback,
+                &self.event_tx,
+                &self.play_queue,
+                &self.queue_event_handler,
+            ),
+            ServerCommand::MoveId { from, to } => handlers::handle_move_id(
+                &self.queue,
+                &self.playback,
+                &self.event_tx,
+                from,
+                to,
+                &self.play_queue,
+                &self.queue_event_handler,
+            ),
 
             // Volume/options handlers
             ServerCommand::GetVolume => handlers::handle_get_volume(&self.playback),
@@ -390,6 +432,23 @@ impl YouTubeServer {
     /// Stop the server
     pub fn stop(&self) {
         self.running.store(false, Ordering::SeqCst);
+    }
+
+    pub fn apply_queue_command(&self, cmd: QueueCommand) -> Vec<QueueEvent> {
+        let events = self.play_queue.lock().apply(cmd);
+
+        let mut handler = self.queue_event_handler.lock();
+        for event in &events {
+            handler.handle(event.clone());
+        }
+
+        let _ = self.event_tx.send("playlist".to_string());
+
+        events
+    }
+
+    pub fn play_queue(&self) -> &Arc<Mutex<PlayQueue>> {
+        &self.play_queue
     }
 }
 

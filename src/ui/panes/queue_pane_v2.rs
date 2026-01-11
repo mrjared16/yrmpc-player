@@ -369,8 +369,7 @@ impl Pane for QueuePaneV2 {
     }
 
     fn on_event(&mut self, event: &mut UiEvent, _is_visible: bool, ctx: &Ctx) -> Result<()> {
-        // Sync queue on player events
-        if matches!(event, UiEvent::Player) {
+        if matches!(event, UiEvent::Player | UiEvent::QueueChanged) {
             self.sync_queue(ctx);
         }
         Ok(())

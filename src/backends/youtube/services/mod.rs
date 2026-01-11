@@ -15,8 +15,12 @@ pub mod queue_service;
 
 pub use api_service::ApiService;
 pub use audio_prefetcher::{
-    AudioPrefetcher, AudioPrefetcherConfig, AudioPrefetcherHandle, AudioPrefetcherStats,
-    PlaybackServiceCallback, PrefetchCallback,
+    AudioPrefetcher,
+    AudioPrefetcherConfig,
+    AudioPrefetcherHandle,
+    AudioPrefetcherStats,
+    PlaybackServiceCallback,
+    PrefetchCallback,
 };
 pub use internal_event::InternalEvent;
 pub use playback_service::PlaybackService;

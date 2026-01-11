@@ -3,14 +3,16 @@
 use std::sync::Arc;
 
 use crossbeam::channel::Sender;
+use parking_lot::Mutex;
 
-use super::super::orchestrator::PREFETCH_WINDOW_SIZE;
+use super::{super::orchestrator::PREFETCH_WINDOW_SIZE, queue_events::QueueEventHandler};
 use crate::{
     backends::youtube::{
         protocol::{ServerResponse, SongData},
         services::{PlaybackService, QueueService},
     },
     domain::Song,
+    shared::play_queue::{PlayQueue, QueueCommand},
 };
 
 /// Handle Add command (URI only, legacy)
@@ -20,14 +22,15 @@ pub fn handle_add(
     event_tx: &Sender<String>,
     uri: &str,
     position: Option<u32>,
+    play_queue: &Arc<Mutex<PlayQueue>>,
+    queue_event_handler: &Mutex<QueueEventHandler>,
 ) -> ServerResponse {
-    // Create simple song from URI (legacy - prefer handle_add_song)
     let mut song = Song::default();
     song.uri = uri.to_string();
     song.metadata.insert("title".into(), vec![uri.to_string()]);
 
     let song_data = SongData::from(song);
-    handle_add_song(queue, playback, event_tx, song_data, position)
+    handle_add_song(queue, playback, event_tx, song_data, position, play_queue, queue_event_handler)
 }
 
 /// Handle AddSong command with full metadata
@@ -37,6 +40,8 @@ pub fn handle_add_song(
     event_tx: &Sender<String>,
     song_data: SongData,
     position: Option<u32>,
+    play_queue: &Arc<Mutex<PlayQueue>>,
+    queue_event_handler: &Mutex<QueueEventHandler>,
 ) -> ServerResponse {
     let video_id = song_data.file.clone();
 
@@ -46,13 +51,19 @@ pub fn handle_add_song(
 
     // 1. Store metadata in QueueService immediately
     let song = song_data.to_song();
-    let queue_id = queue.add(song, position);
+    let queue_id = queue.add(song.clone(), position);
     log::debug!("Added song to queue: id={}, video_id={}", queue_id, video_id);
 
-    // 2. Calculate where the song was inserted
+    // 2. Route through PlayQueue for event-driven updates
+    let events = play_queue.lock().apply(QueueCommand::Add { song });
+    for event in events {
+        queue_event_handler.lock().handle(event);
+    }
+
+    // 3. Calculate where the song was inserted
     let insert_pos = position.map(|p| (p as usize).min(queue_len)).unwrap_or(queue_len);
 
-    // 3. If inserted within the rolling window AND we're currently playing, resolve
+    // 4. If inserted within the rolling window AND we're currently playing, resolve
     //    URL and add to MPV buffer for seamless playback
     if queue.current_index().is_some()
         && insert_pos >= base
@@ -95,20 +106,24 @@ pub fn handle_delete_id(
     playback: &Arc<PlaybackService>,
     event_tx: &Sender<String>,
     id: u32,
+    play_queue: &Arc<Mutex<PlayQueue>>,
+    queue_event_handler: &Mutex<QueueEventHandler>,
 ) -> ServerResponse {
-    // Check if we're deleting the currently playing track
     let current_idx = queue.current_index();
     let deleting_current = current_idx
         .and_then(|idx| queue.get_by_index(idx).ok())
         .map(|s| s.id == Some(id))
         .unwrap_or(false);
 
-    // Get the rolling window bounds BEFORE removal
     let base = queue.playback_base_index();
 
     match queue.remove(id) {
         Ok((_removed_item, removed_pos)) => {
-            // Sync MPV buffer if deleted song was in the rolling window
+            let events = play_queue.lock().apply(QueueCommand::Remove { id: id as u64 });
+            for event in events {
+                queue_event_handler.lock().handle(event);
+            }
+
             if removed_pos >= base && removed_pos < base + PREFETCH_WINDOW_SIZE {
                 let mpv_idx = removed_pos - base;
                 if let Err(e) = playback.playlist_remove(mpv_idx) {
@@ -117,7 +132,6 @@ pub fn handle_delete_id(
                 log::debug!("Removed song from MPV buffer at index {}", mpv_idx);
             }
 
-            // If we deleted the playing track, stop playback
             if deleting_current {
                 if let Err(e) = playback.stop() {
                     log::warn!("Failed to stop playback after delete: {}", e);
@@ -136,8 +150,16 @@ pub fn handle_clear(
     queue: &Arc<QueueService>,
     playback: &Arc<PlaybackService>,
     event_tx: &Sender<String>,
+    play_queue: &Arc<Mutex<PlayQueue>>,
+    queue_event_handler: &Mutex<QueueEventHandler>,
 ) -> ServerResponse {
     queue.clear();
+
+    let events = play_queue.lock().apply(QueueCommand::Clear);
+    for event in events {
+        queue_event_handler.lock().handle(event);
+    }
+
     if let Err(e) = playback.stop() {
         log::warn!("Failed to stop playback on clear: {}", e);
     }
@@ -153,12 +175,20 @@ pub fn handle_move_id(
     event_tx: &Sender<String>,
     from: u32,
     to: u32,
+    play_queue: &Arc<Mutex<PlayQueue>>,
+    queue_event_handler: &Mutex<QueueEventHandler>,
 ) -> ServerResponse {
     let base = queue.playback_base_index();
 
     match queue.move_song(from, to) {
         Ok((from_idx, to_idx)) => {
-            // Sync MPV buffer if either position affects the rolling window
+            let events = play_queue
+                .lock()
+                .apply(QueueCommand::Move { id: from as u64, to_position: to_idx });
+            for event in events {
+                queue_event_handler.lock().handle(event);
+            }
+
             let from_in_window = from_idx >= base && from_idx < base + PREFETCH_WINDOW_SIZE;
             let to_in_window = to_idx >= base && to_idx < base + PREFETCH_WINDOW_SIZE;
 
