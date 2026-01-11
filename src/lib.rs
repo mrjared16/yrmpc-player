@@ -22,11 +22,12 @@ pub mod tests;
 
 // Backward compatibility: re-export mpd protocol at crate::mpd
 // This allows existing `use crate::mpd::*` imports to continue working
-pub use backends::mpd::protocol as mpd;
-
 // Internal re-exports (used by modules via crate::X)
 pub(crate) use app_state::AppState;
-pub(crate) use shared::events::{AppEvent, WorkRequest};
-pub(crate) use shared::macros::{status_warn, try_skip};
 pub(crate) use backends::messaging::{PlayerCommand, Query, QueryResult};
-pub(crate) use shared::tmux;
+pub use backends::mpd::protocol as mpd;
+pub(crate) use shared::{
+    events::{AppEvent, WorkRequest},
+    macros::{status_warn, try_skip},
+    tmux,
+};

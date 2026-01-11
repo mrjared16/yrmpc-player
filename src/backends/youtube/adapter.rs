@@ -7,11 +7,19 @@
 
 use std::time::Duration;
 
-use ytmapi_rs::common::YoutubeID;
-use ytmapi_rs::parse::{
-    BasicSearchResultCommunityPlaylist, SearchResultAlbum, SearchResultArtist,
-    SearchResultCommunityPlaylist, SearchResultFeaturedPlaylist, SearchResultSong,
-    SearchResultVideo, TopResult, TopResultType,
+use ytmapi_rs::{
+    common::YoutubeID,
+    parse::{
+        BasicSearchResultCommunityPlaylist,
+        SearchResultAlbum,
+        SearchResultArtist,
+        SearchResultCommunityPlaylist,
+        SearchResultFeaturedPlaylist,
+        SearchResultSong,
+        SearchResultVideo,
+        TopResult,
+        TopResultType,
+    },
 };
 
 use crate::backends::api::{ContentType, Item, SearchResults, SearchSection};
@@ -151,12 +159,7 @@ impl From<SearchResultVideo> for Item {
     fn from(r: SearchResultVideo) -> Self {
         match r {
             SearchResultVideo::Video {
-                title,
-                channel_name,
-                video_id,
-                length,
-                thumbnails,
-                ..
+                title, channel_name, video_id, length, thumbnails, ..
             } => Item {
                 id: video_id.get_raw().to_string(),
                 content_type: ContentType::Track,
@@ -167,11 +170,7 @@ impl From<SearchResultVideo> for Item {
                 queue_id: None,
             },
             SearchResultVideo::VideoEpisode {
-                title,
-                channel_name,
-                episode_id,
-                thumbnails,
-                ..
+                title, channel_name, episode_id, thumbnails, ..
             } => Item {
                 id: episode_id.get_raw().to_string(),
                 content_type: ContentType::Track,
@@ -215,12 +214,12 @@ impl TryFrom<TopResult> for Item {
     fn try_from(r: TopResult) -> Result<Self, Self::Error> {
         let result_name = r.result_name.clone();
         let raw_type = r.result_type.as_ref().map(|t| format!("{:?}", t));
-        
+
         match r.result_type {
             Some(TopResultType::Song) | Some(TopResultType::Video) => {
-                let id = r.video_id.ok_or(TopResultError::MissingId { 
-                    result_name: result_name.clone(), 
-                    expected: "video_id" 
+                let id = r.video_id.ok_or(TopResultError::MissingId {
+                    result_name: result_name.clone(),
+                    expected: "video_id",
                 })?;
                 Ok(Item {
                     id,
@@ -242,9 +241,9 @@ impl TryFrom<TopResult> for Item {
                 queue_id: None,
             }),
             Some(TopResultType::Album(_)) => {
-                let id = r.browse_id.ok_or(TopResultError::MissingId { 
-                    result_name: result_name.clone(), 
-                    expected: "browse_id" 
+                let id = r.browse_id.ok_or(TopResultError::MissingId {
+                    result_name: result_name.clone(),
+                    expected: "browse_id",
                 })?;
                 Ok(Item {
                     id,
@@ -268,9 +267,9 @@ impl TryFrom<TopResult> for Item {
                         queue_id: None,
                     })
                 } else {
-                    let id = r.browse_id.ok_or(TopResultError::MissingId { 
-                        result_name: result_name.clone(), 
-                        expected: "browse_id" 
+                    let id = r.browse_id.ok_or(TopResultError::MissingId {
+                        result_name: result_name.clone(),
+                        expected: "browse_id",
                     })?;
                     Ok(Item {
                         id,
@@ -305,9 +304,9 @@ impl TryFrom<TopResult> for Item {
                         queue_id: None,
                     })
                 } else {
-                    Err(TopResultError::MissingId { 
-                        result_name, 
-                        expected: "video_id or browse_id" 
+                    Err(TopResultError::MissingId {
+                        result_name,
+                        expected: "video_id or browse_id",
                     })
                 }
             }
@@ -352,11 +351,8 @@ pub fn convert_search_results(results: ytmapi_rs::parse::SearchResults) -> Searc
 
     // Top results
     if !results.top_results.is_empty() {
-        let items: Vec<Item> = results
-            .top_results
-            .into_iter()
-            .filter_map(|r| Item::try_from(r).ok())
-            .collect();
+        let items: Vec<Item> =
+            results.top_results.into_iter().filter_map(|r| Item::try_from(r).ok()).collect();
         if !items.is_empty() {
             sections.push(SearchSection {
                 key: "top_results".to_string(),

@@ -42,6 +42,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use crossbeam::channel::{self, Receiver, Sender};
+use handlers::queue_events::QueueEventHandler;
 
 use super::{
     config::ExtractorType,
@@ -55,6 +56,8 @@ pub struct YouTubeServer {
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
     state_tracker: Arc<PlaybackStateTracker>,
+    #[allow(dead_code)]
+    queue_event_handler: QueueEventHandler,
     running: Arc<AtomicBool>,
     socket_path: PathBuf,
     mpv_socket_path: PathBuf,
@@ -99,6 +102,7 @@ impl YouTubeServer {
             playback,
             queue,
             state_tracker,
+            queue_event_handler: QueueEventHandler::new(),
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,
@@ -251,7 +255,12 @@ impl YouTubeServer {
             }
 
             // Playback handlers
-            ServerCommand::Play => handlers::handle_play(&self.playback, &self.queue, &self.state_tracker, &self.event_tx),
+            ServerCommand::Play => handlers::handle_play(
+                &self.playback,
+                &self.queue,
+                &self.state_tracker,
+                &self.event_tx,
+            ),
             ServerCommand::Pause => handlers::handle_pause(&self.playback, &self.event_tx),
             ServerCommand::Stop => handlers::handle_stop(&self.playback, &self.event_tx),
             ServerCommand::SeekAbsolute(pos) => handlers::handle_seek_absolute(&self.playback, pos),

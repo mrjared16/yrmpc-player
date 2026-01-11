@@ -1,4 +1,5 @@
 use serde_json::Value;
+
 use crate::backends::youtube::extract::{extract_string, paths};
 
 pub struct ResilientExtractor<'a> {

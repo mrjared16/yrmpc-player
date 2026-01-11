@@ -15,6 +15,7 @@
 pub mod options;
 pub mod playback;
 pub mod queue;
+pub mod queue_events;
 pub mod search;
 pub mod status;
 

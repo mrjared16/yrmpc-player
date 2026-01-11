@@ -8,14 +8,14 @@ use std::collections::HashMap;
 #[cfg(test)]
 mod metadata_validation {
     use super::*;
-    
+
     /// Simulates YouTube backend Song structure
     #[derive(Debug, Clone, Default)]
     struct MockSong {
         file: String,
         metadata: HashMap<String, Vec<String>>,
     }
-    
+
     impl MockSong {
         fn playlist(id: &str, title: &str) -> Self {
             let mut song = Self::default();
@@ -24,7 +24,7 @@ mod metadata_validation {
             song.metadata.insert("title".to_string(), vec![title.to_string()]);
             song
         }
-        
+
         fn album(id: &str, title: &str, artist: &str) -> Self {
             let mut song = Self::default();
             song.file = format!("album:{}", id);
@@ -33,7 +33,7 @@ mod metadata_validation {
             song.metadata.insert("artist".to_string(), vec![artist.to_string()]);
             song
         }
-        
+
         fn artist(id: &str, name: &str) -> Self {
             let mut song = Self::default();
             song.file = format!("artist:{}", id);
@@ -42,28 +42,26 @@ mod metadata_validation {
             song
         }
     }
-    
+
     /// TEST 1: Verify playlist metadata structure
     ///
-    /// This test ensures that YouTube backend creates correct metadata for playlists.
-    /// The Enter key routing depends on metadata["type"] being "playlist".
+    /// This test ensures that YouTube backend creates correct metadata for
+    /// playlists. The Enter key routing depends on metadata["type"] being
+    /// "playlist".
     #[test]
     fn test_playlist_has_correct_type_metadata() {
         let playlist = MockSong::playlist("PLxxx", "HYBS Mix");
-        
+
         // CRITICAL: The type field must exist and be "playlist"
-        let type_value = playlist.metadata
-            .get("type")
-            .and_then(|v| v.first())
-            .map(|s| s.as_str());
-        
+        let type_value = playlist.metadata.get("type").and_then(|v| v.first()).map(|s| s.as_str());
+
         assert_eq!(
             type_value,
             Some("playlist"),
             "Enter key routing requires type='playlist' in metadata"
         );
     }
-    
+
     /// TEST 2: Verify routing logic for all content types
     ///
     /// This validates the logic that decides whether to show detail view.
@@ -74,39 +72,37 @@ mod metadata_validation {
         let album = MockSong::album("AL1", "Test Album", "Test Artist");
         let artist = MockSong::artist("AR1", "Test Artist");
         let regular_song = MockSong::default(); // No type
-        
+
         // This is the EXACT logic from SearchPane.handle_action
         fn should_route_to_detail(song: &MockSong) -> Option<String> {
-            song.metadata.get("type")
-                .and_then(|v| v.first())
-                .and_then(|type_str| {
-                    match type_str.as_str() {
-                        "playlist" => Some("playlist".to_string()),
-                        "album" => Some("album".to_string()),
-                        "artist" => Some("artist".to_string()),
-                        _ => None,
-                    }
-                })
+            song.metadata.get("type").and_then(|v| v.first()).and_then(|type_str| {
+                match type_str.as_str() {
+                    "playlist" => Some("playlist".to_string()),
+                    "album" => Some("album".to_string()),
+                    "artist" => Some("artist".to_string()),
+                    _ => None,
+                }
+            })
         }
-        
+
         // All these should route to detail view
         assert_eq!(should_route_to_detail(&playlist), Some("playlist".to_string()));
         assert_eq!(should_route_to_detail(&album), Some("album".to_string()));
         assert_eq!(should_route_to_detail(&artist), Some("artist".to_string()));
-        
+
         // Regular song should NOT route to detail
         assert_eq!(should_route_to_detail(&regular_song), None);
     }
-    
+
     /// TEST 3: Verify file ID format
-    /// 
+    ///
     /// YouTube IDs have specific prefixes that are used in routing
     #[test]
     fn test_file_id_format() {
         let playlist = MockSong::playlist("PLxxx", "Test");
         let album = MockSong::album("MPREb_xxx", "Test", "Artist");
         let artist = MockSong::artist("UCxxx", "Artist");
-        
+
         assert!(playlist.file.starts_with("playlist:"));
         assert!(album.file.starts_with("album:"));
         assert!(artist.file.starts_with("artist:"));
@@ -158,7 +154,7 @@ mod user_bug_reproduction {
 // ✅ test_routing_logic_for_all_types - PASS
 //    Validates the routing logic works correctly
 //
-// ✅ test_file_id_format - PASS  
+// ✅ test_file_id_format - PASS
 //    Validates ID prefixes
 //
 // ⏸️  test_enter_on_playlist_should_show_detail_view_but_doesnt - IGNORED

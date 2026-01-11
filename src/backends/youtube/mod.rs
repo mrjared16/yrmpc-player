@@ -58,9 +58,9 @@ pub mod api;
 pub mod audio_cache;
 pub mod client;
 pub mod config;
-pub mod extract;
 pub mod details;
 pub mod error;
+pub mod extract;
 pub mod extractor;
 pub mod mpv; // MPV IPC module - internal to YouTube backend
 pub mod protocol;

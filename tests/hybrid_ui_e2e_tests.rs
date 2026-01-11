@@ -9,7 +9,7 @@ mod layout_mode_tests {
         // This test passes if the code compiles, proving the enum is correctly defined
         assert!(true, "LayoutMode enum defined successfully");
     }
-    
+
     #[test]
     fn test_detail_view_enum_exists() {
         // Verify DetailView enum compiles with Playlist/Album/Artist variants
@@ -29,14 +29,14 @@ mod selection_mode_tests {
 #[cfg(test)]
 mod integration_validation_tests {
     use std::path::Path;
-    
-   #[test]
+
+    #[test]
     fn test_search_pane_compiles() {
         // Verify SearchPane module compiles with all new fields
         let search_pane_path = Path::new("src/ui/panes/search/mod.rs");
         assert!(search_pane_path.exists(), "SearchPane source file exists");
     }
-    
+
     #[test]
     fn test_hybrid_ui_features_documented() {
         // Verify we have documentation for new features
@@ -46,9 +46,9 @@ mod integration_validation_tests {
 }
 
 /// Manual Test Scenarios (to be run interactively)
-/// 
+///
 /// These tests require a running instance of rmpc with YouTube backend
-/// 
+///
 /// ## Test 1: Search and Browse Results
 /// 1. Start rmpc
 /// 2. Navigate to Search pane (likely Tab key or similar)
@@ -56,7 +56,7 @@ mod integration_validation_tests {
 /// 4. Press Enter to search
 /// 5. **EXPECTED**: See grouped results (Artists, Albums, Songs)
 /// 6. **EXPECTED**: Can navigate with j/k
-/// 
+///
 /// ## Test 2: Enter Detail View (Playlist)
 /// 1. From search results, navigate to a playlist item
 /// 2. Press Enter
@@ -64,13 +64,13 @@ mod integration_validation_tests {
 /// 4. **EXPECTED**: Breadcrumb shows "Search > Playlist: [name]"
 /// 5. **EXPECTED**: Track list is visible
 /// 6. **EXPECTED**: Can navigate tracks with j/k
-/// 
+///
 /// ## Test 3: Back Navigation  
 /// 1. While in detail view
 /// 2. Press Esc or h
 /// 3. **EXPECTED**: Returns to search results
 /// 4. **EXPECTED**: Previous selection/position restored
-/// 
+///
 /// ## Test 4: Visual Selection Mode
 /// 1. In search results or detail view
 /// 2. Press 'v'
@@ -79,14 +79,14 @@ mod integration_validation_tests {
 /// 5. **EXPECTED**: Multiple items get marked/highlighted
 /// 6. Press Esc
 /// 7. **EXPECTED**: Visual mode exits, marks cleared
-/// 
+///
 /// ## Test 5: Enter Detail View (Album)
 /// 1. Search for an artist (e.g., "chappell roan")
 /// 2. Navigate to an album result
 /// 3. Press Enter
 /// 4. **EXPECTED**: Breadcrumb shows "Search > Album: [title] - [artist]"
 /// 5. **EXPECTED**: Album tracks displayed
-/// 
+///
 /// ## Test 6: Enter Detail View (Artist)
 /// 1. Search for an artist
 /// 2. Navigate to artist result (usually in "Artists" section)
@@ -109,4 +109,3 @@ mod documentation_tests {
         assert!(true, "Manual test scenarios documented in test file");
     }
 }
-

@@ -345,8 +345,9 @@ impl QueueService {
     }
 
     /// Set shuffle enabled state
-    /// When enabling: regenerates shuffle_order, clears prefetch_indices, starts fresh history
-    /// When disabling: clears shuffle_order, prefetch_indices, and history
+    /// When enabling: regenerates shuffle_order, clears prefetch_indices,
+    /// starts fresh history When disabling: clears shuffle_order,
+    /// prefetch_indices, and history
     pub fn set_shuffle_enabled(&self, enabled: bool) {
         *self.shuffle_enabled.lock() = enabled;
 

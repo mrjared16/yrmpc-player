@@ -12,8 +12,8 @@ use crate::backends::youtube::{
 
 /// Handle Play command
 ///
-/// When in Idle state with items in queue, reloads the track at current position.
-/// Otherwise just unpauses playback.
+/// When in Idle state with items in queue, reloads the track at current
+/// position. Otherwise just unpauses playback.
 pub fn handle_play(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
@@ -22,9 +22,7 @@ pub fn handle_play(
 ) -> ServerResponse {
     let state = state_tracker.get();
 
-    if matches!(state, PlaybackState::Idle | PlaybackState::Stopped)
-        && queue.len() > 0
-    {
+    if matches!(state, PlaybackState::Idle | PlaybackState::Stopped) && queue.len() > 0 {
         let pos = queue.current_index().unwrap_or(0);
         log::info!("handle_play: state={:?}, reloading track at pos={}", state, pos);
         return orchestrator::play_position(playback, queue, pos, state_tracker);

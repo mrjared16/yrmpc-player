@@ -1,5 +1,6 @@
 //! Real YouTube API integration tests
-//! These tests actually call the YouTube Music API to verify the full stack works.
+//! These tests actually call the YouTube Music API to verify the full stack
+//! works.
 //!
 //! IMPORTANT: These tests are IGNORED by default to avoid network calls in CI.
 //!
@@ -64,9 +65,7 @@ fn test_raw_api_response() {
 
         let client = Client::new()?;
         let token = BrowserToken::from_str(&cookie_string, &client).await?;
-        let api = YtMusicBuilder::new_with_client(client)
-            .with_browser_token(token)
-            .build()?;
+        let api = YtMusicBuilder::new_with_client(client).with_browser_token(token).build()?;
 
         println!("Searching for 'kho hon'...");
         let results = api.query(SearchQuery::new("kho hon")).await?;
@@ -77,37 +76,37 @@ fn test_raw_api_response() {
     match result {
         Ok(results) => {
             println!("\n========== RAW YTMAPI-RS RESPONSE ==========\n");
-            
+
             println!(">>> TOP RESULTS ({} items):", results.top_results.len());
             for (i, r) in results.top_results.iter().enumerate() {
                 println!("[{}] FULL STRUCT: {:#?}", i, r);
             }
-            
+
             println!("\n>>> SONGS ({} items):", results.songs.len());
             for (i, r) in results.songs.iter().take(2).enumerate() {
                 println!("[{}] {:#?}", i, r);
             }
-            
+
             println!("\n>>> VIDEOS ({} items):", results.videos.len());
             for (i, r) in results.videos.iter().take(2).enumerate() {
                 println!("[{}] {:#?}", i, r);
             }
-            
+
             println!("\n>>> ALBUMS ({} items):", results.albums.len());
             for (i, r) in results.albums.iter().take(2).enumerate() {
                 println!("[{}] {:#?}", i, r);
             }
-            
+
             println!("\n>>> ARTISTS ({} items):", results.artists.len());
             for (i, r) in results.artists.iter().take(2).enumerate() {
                 println!("[{}] {:#?}", i, r);
             }
-            
+
             println!("\n>>> COMMUNITY PLAYLISTS ({} items):", results.community_playlists.len());
             for (i, r) in results.community_playlists.iter().take(2).enumerate() {
                 println!("[{}] {:#?}", i, r);
             }
-            
+
             println!("\n>>> FEATURED PLAYLISTS ({} items):", results.featured_playlists.len());
         }
         Err(e) => panic!("Search failed: {}", e),
@@ -144,7 +143,7 @@ fn test_rmpc_youtube_api_wrapper() {
                     println!("    [{}] {:?}", i, item);
                 }
             }
-            
+
             // Check if top_results has playable item
             if let Some(top) = results.sections.iter().find(|s| s.key == "top_results") {
                 println!("\nTop Result section found with {} items", top.items.len());

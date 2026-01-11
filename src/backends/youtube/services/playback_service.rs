@@ -15,8 +15,10 @@ use anyhow::{Context, Result, bail};
 use crossbeam::channel::Sender;
 use parking_lot::Mutex;
 
-use super::super::{audio_cache::AudioCache, config::ExtractorType, url_resolver::UrlResolver};
-use super::InternalEvent;
+use super::{
+    super::{audio_cache::AudioCache, config::ExtractorType, url_resolver::UrlResolver},
+    InternalEvent,
+};
 use crate::backends::youtube::mpv::{MpvEvent, MpvIpc};
 
 /// Observer IDs for MPV properties
@@ -110,11 +112,12 @@ impl PlaybackService {
                         match event {
                             MpvEvent::TrackChanged { position } => {
                                 log::info!("Track changed to position {}", position);
-                                let position = position
-                                    .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-                                // Send to internal processor only - it will emit "player" after queue sync
-                                let _ =
-                                    internal_event_tx.send(InternalEvent::TrackChanged { position });
+                                let position =
+                                    position.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+                                // Send to internal processor only - it will emit "player" after
+                                // queue sync
+                                let _ = internal_event_tx
+                                    .send(InternalEvent::TrackChanged { position });
                             }
                             MpvEvent::PauseChanged { paused } => {
                                 log::debug!("Pause state: {}", paused);
@@ -130,7 +133,8 @@ impl PlaybackService {
                                 } else {
                                     log::info!("Track ended: {}", reason);
                                 }
-                                // Send to internal processor only - it will emit "player" after queue sync
+                                // Send to internal processor only - it will emit "player" after
+                                // queue sync
                                 let _ = internal_event_tx
                                     .send(InternalEvent::EndFile { reason: reason.clone() });
                             }

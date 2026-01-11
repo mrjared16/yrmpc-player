@@ -96,7 +96,8 @@ impl YouTubeApi {
 
     /// Search for music - returns structured SearchResults with sections
     ///
-    /// Uses adapter layer for ytmapi-rs conversions, keeping domain types clean.
+    /// Uses adapter layer for ytmapi-rs conversions, keeping domain types
+    /// clean.
     pub fn search_items(&self, query: &str) -> Result<crate::domain::search::SearchResults> {
         use super::adapter::convert_search_results;
         use crate::domain::search::{SearchItem, SearchResults, SearchSection};

@@ -1,5 +1,7 @@
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::{
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
@@ -34,7 +36,9 @@ impl PlaybackStateTracker {
     pub fn transition(&self, from: PlaybackState, to: PlaybackState) -> bool {
         let mut state = self.state.lock().unwrap();
         let is_from_match = match from {
-            PlaybackState::PendingAdvance { .. } => matches!(*state, PlaybackState::PendingAdvance { .. }),
+            PlaybackState::PendingAdvance { .. } => {
+                matches!(*state, PlaybackState::PendingAdvance { .. })
+            }
             _ => *state == from,
         };
 
@@ -80,7 +84,8 @@ mod tests {
             PlaybackState::Playing
         ));
 
-        tracker.force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 1 });
+        tracker
+            .force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 1 });
         assert!(tracker.transition(
             PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 },
             PlaybackState::Idle
@@ -92,7 +97,8 @@ mod tests {
         let tracker = PlaybackStateTracker::new();
         let timeout = Duration::from_millis(50);
 
-        tracker.force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 });
+        tracker
+            .force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 });
         assert!(!tracker.is_pending_expired(timeout));
 
         tracker.force_set(PlaybackState::PendingAdvance {

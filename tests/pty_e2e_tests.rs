@@ -1,17 +1,22 @@
 //! E2E tests using portable-pty for reliable terminal interaction.
 //!
-//! This module provides reliable TUI testing by using a real PTY (pseudo-terminal)
-//! with synchronous I/O and proper terminal emulation via vt100.
+//! This module provides reliable TUI testing by using a real PTY
+//! (pseudo-terminal) with synchronous I/O and proper terminal emulation via
+//! vt100.
 //!
-//! Based on the pattern used by git-branchless for testing interactive TUI apps.
+//! Based on the pattern used by git-branchless for testing interactive TUI
+//! apps.
 
-use portable_pty::{native_pty_system, CommandBuilder, ExitStatus, PtySize};
-use std::fs;
-use std::io::{Read, Write};
-use std::path::PathBuf;
-use std::sync::{mpsc::channel, Arc, Mutex};
-use std::thread;
-use std::time::Duration;
+use std::{
+    fs,
+    io::{Read, Write},
+    path::PathBuf,
+    sync::{Arc, Mutex, mpsc::channel},
+    thread,
+    time::Duration,
+};
+
+use portable_pty::{CommandBuilder, ExitStatus, PtySize, native_pty_system};
 
 /// Terminal escape codes for special keys
 pub const UP_ARROW: &str = "\x1b[A";
@@ -41,23 +46,14 @@ fn get_rmpc_bin() -> PathBuf {
 /// Get path to config file
 fn get_config_path() -> PathBuf {
     let manifest_dir = env!("CARGO_MANIFEST_DIR");
-    PathBuf::from(manifest_dir)
-        .parent()
-        .expect("parent dir")
-        .join("config/rmpc.ron")
+    PathBuf::from(manifest_dir).parent().expect("parent dir").join("config/rmpc.ron")
 }
 
 /// Generate unique log file for test
 fn get_log_file(test_name: &str) -> PathBuf {
-    let safe_name = test_name
-        .chars()
-        .map(|c| if c.is_alphanumeric() { c } else { '_' })
-        .collect::<String>();
-    PathBuf::from(format!(
-        "/tmp/rmpc-pty-{}-{}.log",
-        safe_name,
-        std::process::id()
-    ))
+    let safe_name =
+        test_name.chars().map(|c| if c.is_alphanumeric() { c } else { '_' }).collect::<String>();
+    PathBuf::from(format!("/tmp/rmpc-pty-{}-{}.log", safe_name, std::process::id()))
 }
 
 /// Clear log file before test
@@ -105,21 +101,12 @@ pub fn run_rmpc_in_pty(
 
     // Create PTY
     let pty_system = native_pty_system();
-    let pty_size = PtySize {
-        rows: 24,
-        cols: 80,
-        pixel_width: 0,
-        pixel_height: 0,
-    };
+    let pty_size = PtySize { rows: 24, cols: 80, pixel_width: 0, pixel_height: 0 };
 
-    let pty = pty_system
-        .openpty(pty_size)
-        .map_err(|e| format!("Could not open PTY: {}", e))?;
+    let pty = pty_system.openpty(pty_size).map_err(|e| format!("Could not open PTY: {}", e))?;
 
-    let mut pty_master = pty
-        .master
-        .take_writer()
-        .map_err(|e| format!("Could not take PTY writer: {}", e))?;
+    let mut pty_master =
+        pty.master.take_writer().map_err(|e| format!("Could not take PTY writer: {}", e))?;
 
     // Build command
     let mut cmd = CommandBuilder::new(&rmpc_bin);
@@ -138,16 +125,12 @@ pub fn run_rmpc_in_pty(
     }
 
     // Spawn process
-    let mut child = pty
-        .slave
-        .spawn_command(cmd)
-        .map_err(|e| format!("Could not spawn rmpc: {}", e))?;
+    let mut child =
+        pty.slave.spawn_command(cmd).map_err(|e| format!("Could not spawn rmpc: {}", e))?;
 
     // Set up terminal parser
-    let reader = pty
-        .master
-        .try_clone_reader()
-        .map_err(|e| format!("Could not clone PTY reader: {}", e))?;
+    let reader =
+        pty.master.try_clone_reader().map_err(|e| format!("Could not clone PTY reader: {}", e))?;
     let reader = Arc::new(Mutex::new(reader));
 
     let parser = vt100::Parser::new(pty_size.rows, pty_size.cols, 0);
@@ -168,9 +151,7 @@ pub fn run_rmpc_in_pty(
 
                 write!(pty_master, "{}", value)
                     .map_err(|e| format!("Failed to write to PTY: {}", e))?;
-                pty_master
-                    .flush()
-                    .map_err(|e| format!("Failed to flush PTY: {}", e))?;
+                pty_master.flush().map_err(|e| format!("Failed to flush PTY: {}", e))?;
             }
 
             PtyAction::WaitUntilContains(value) => {
@@ -221,10 +202,7 @@ pub fn run_rmpc_in_pty(
                     ));
                 }
 
-                wait_thread
-                    .join()
-                    .map_err(|_| "Wait thread panicked")?
-                    .map_err(|e| e)?;
+                wait_thread.join().map_err(|_| "Wait thread panicked")?.map_err(|e| e)?;
             }
 
             PtyAction::Sleep(duration) => {
@@ -252,11 +230,7 @@ pub fn run_rmpc_in_pty(
 
     let log_contents = read_log_file(&log_file);
 
-    Ok(PtyTestResult {
-        exit_status,
-        screen_contents,
-        log_contents,
-    })
+    Ok(PtyTestResult { exit_status, screen_contents, log_contents })
 }
 
 // =============================================================================
@@ -268,10 +242,7 @@ fn test_ui_app_starts_and_shows_tabs() {
     let result = run_rmpc_in_pty(
         "ui_app_starts",
         &[],
-        &[
-            PtyAction::WaitUntilContains("Queue"),
-            PtyAction::WaitUntilContains("Saved"),
-        ],
+        &[PtyAction::WaitUntilContains("Queue"), PtyAction::WaitUntilContains("Saved")],
         10,
     );
 
@@ -294,12 +265,8 @@ fn test_ui_app_starts_and_shows_tabs() {
 
 #[test]
 fn test_ui_search_pane_elements() {
-    let result = run_rmpc_in_pty(
-        "ui_search_pane",
-        &[],
-        &[PtyAction::WaitUntilContains("Any Tag")],
-        10,
-    );
+    let result =
+        run_rmpc_in_pty("ui_search_pane", &[], &[PtyAction::WaitUntilContains("Any Tag")], 10);
 
     match result {
         Ok(r) => {
@@ -343,7 +310,7 @@ fn test_ui_tab_navigation() {
 // =============================================================================
 // FEATURE TESTS - DISABLED: PTY input doesn't work with crossterm
 // =============================================================================
-// 
+//
 // NOTE: These tests are disabled because portable-pty keyboard input doesn't
 // reach crossterm-based apps. crossterm uses its own input polling mechanism
 // that doesn't work properly in a PTY environment.
@@ -355,7 +322,7 @@ fn test_ui_tab_navigation() {
 //
 // Known bugs to fix:
 // - Bug #1: Enter on song = HTTP 400 (play_id issue)
-// - Bug #2: Artist view shows debug logs (browse_artist issue)  
+// - Bug #2: Artist view shows debug logs (browse_artist issue)
 // - Bug #3: Album view shows IDs not metadata (browse_album issue)
 // =============================================================================
 
@@ -405,7 +372,7 @@ fn test_feature_play_song() {
             PtyAction::Sleep(Duration::from_millis(500)),
             PtyAction::Write("l"), // Move right to results pane
             PtyAction::Sleep(Duration::from_millis(500)),
-            PtyAction::Write("l"), // Move to Songs column  
+            PtyAction::Write("l"), // Move to Songs column
             PtyAction::Sleep(Duration::from_millis(500)),
             PtyAction::Write("j"), // Move down to first song
             PtyAction::Sleep(Duration::from_millis(500)),
@@ -422,10 +389,10 @@ fn test_feature_play_song() {
             let screen = &r.screen_contents;
 
             // First, verify search was attempted
-            let search_attempted = log.contains("search_yt") || 
-                                   log.contains("SearchResult") ||
-                                   log.contains("Phase set to BrowseResults");
-            
+            let search_attempted = log.contains("search_yt")
+                || log.contains("SearchResult")
+                || log.contains("Phase set to BrowseResults");
+
             assert!(
                 search_attempted,
                 "FAIL: Search was never attempted.\n\
@@ -438,10 +405,10 @@ fn test_feature_play_song() {
 
             // STRICT CHECK: Must have loadfile command (actual MPV playback)
             let has_loadfile = log.contains("loadfile");
-            
+
             // Check for HTTP 400 error (the actual bug)
             let has_400_error = log.contains("status: 400") || log.contains("Bad Request");
-            
+
             // Fail if we got HTTP 400
             assert!(
                 !has_400_error,
@@ -515,7 +482,7 @@ fn test_feature_view_artist() {
 
             // Check for HTTP 400 error
             let has_400_error = log.contains("status: 400") || log.contains("Bad Request");
-            
+
             assert!(
                 !has_400_error,
                 "FAIL: browse_artist triggered HTTP 400 error.\n\
@@ -525,11 +492,11 @@ fn test_feature_view_artist() {
             );
 
             // Check that screen doesn't show raw debug output
-            let has_debug_on_screen = screen.contains("DEBUG") || 
-                                       screen.contains("TRACE") ||
-                                       screen.contains("browse_artist") ||
-                                       screen.contains("raw_id=");
-            
+            let has_debug_on_screen = screen.contains("DEBUG")
+                || screen.contains("TRACE")
+                || screen.contains("browse_artist")
+                || screen.contains("raw_id=");
+
             assert!(
                 !has_debug_on_screen,
                 "FAIL: Screen shows debug/log output instead of proper UI.\n\
@@ -599,7 +566,7 @@ fn test_feature_view_album() {
 
             // Check for HTTP 400 error
             let has_400_error = log.contains("status: 400") || log.contains("Bad Request");
-            
+
             assert!(
                 !has_400_error,
                 "FAIL: browse_album triggered HTTP 400 error.\n\
@@ -614,9 +581,10 @@ fn test_feature_view_album() {
                 .iter()
                 .filter(|line| {
                     let trimmed = line.trim();
-                    // Check if line looks like just a video ID (11 chars, alphanumeric with - and _)
-                    trimmed.len() == 11 && 
-                    trimmed.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
+                    // Check if line looks like just a video ID (11 chars, alphanumeric with - and
+                    // _)
+                    trimmed.len() == 11
+                        && trimmed.chars().all(|c| c.is_alphanumeric() || c == '-' || c == '_')
                 })
                 .copied()
                 .collect();
@@ -631,15 +599,17 @@ fn test_feature_view_album() {
                 screen
             );
 
-            // Screen should show some indication of song info (duration format like "3:45" or metadata)
-            let has_duration_format = screen.contains(':') && 
-                screen.chars().filter(|c| c.is_numeric()).count() > 5;
-            let has_song_metadata = screen.contains("Artist") || 
-                                    screen.contains("Title") || 
-                                    screen.contains("Duration") ||
-                                    screen.contains("Album");
+            // Screen should show some indication of song info (duration format like "3:45"
+            // or metadata)
+            let has_duration_format =
+                screen.contains(':') && screen.chars().filter(|c| c.is_numeric()).count() > 5;
+            let has_song_metadata = screen.contains("Artist")
+                || screen.contains("Title")
+                || screen.contains("Duration")
+                || screen.contains("Album");
 
-            // This is a softer check - at least something that looks like metadata should be present
+            // This is a softer check - at least something that looks like metadata should
+            // be present
             if !has_duration_format && !has_song_metadata {
                 // Log warning but don't fail yet - need to see actual output first
                 eprintln!(

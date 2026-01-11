@@ -273,8 +273,7 @@ fn spawn_pending_advance_timeout(
             mpv_pos
         );
 
-        let position = mpv_pos
-            .clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
+        let position = mpv_pos.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
         handle_track_changed(&playback, &queue, &state_tracker, position);
     });
 }
@@ -306,10 +305,7 @@ pub fn handle_track_changed(
     };
 
     if !sync_ok || matches!(state_tracker.get(), PlaybackState::PendingAdvance { .. }) {
-        log::warn!(
-            "[DIAG-EOF] Queue sync failed (position={}), forcing recovery",
-            position
-        );
+        log::warn!("[DIAG-EOF] Queue sync failed (position={}), forcing recovery", position);
         queue.set_current(None);
         state_tracker.force_set(PlaybackState::Idle);
     }
@@ -380,7 +376,11 @@ fn handle_within_window_advance(
     );
 
     if new_queue_pos >= queue.len() {
-        log::warn!("[DIAG-EOF] new_queue_pos {} out of bounds (len={})", new_queue_pos, queue.len());
+        log::warn!(
+            "[DIAG-EOF] new_queue_pos {} out of bounds (len={})",
+            new_queue_pos,
+            queue.len()
+        );
         return false;
     }
 
