@@ -97,12 +97,14 @@ impl YouTubeServer {
         let (event_tx, event_rx) = channel::unbounded();
         let (internal_event_tx, internal_event_rx) = channel::unbounded();
 
+        let queue_event_handler = QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue));
+
         Ok(Self {
             api,
             playback,
             queue,
             state_tracker,
-            queue_event_handler: QueueEventHandler::new(),
+            queue_event_handler,
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,

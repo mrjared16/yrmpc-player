@@ -80,8 +80,8 @@ pub fn handle_add_song(
             }
         }
     } else if queue.current_index().is_some() {
-        playback.prefetch(vec![video_id.clone()]);
-        log::debug!("Triggered background URL prefetch for {}", video_id);
+        playback.prefetch_audio_batch(vec![video_id.clone()]);
+        log::debug!("Triggered background audio prefetch for {}", video_id);
     }
 
     // 5. Notify clients

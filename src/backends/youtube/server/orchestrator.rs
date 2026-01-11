@@ -18,7 +18,14 @@ use anyhow::Result;
 
 use crate::backends::youtube::{
     protocol::{ServerResponse, SongData},
-    services::{PlaybackService, PlaybackState, PlaybackStateTracker, QueueService, RepeatMode},
+    services::{
+        AdvanceIntent,
+        PlaybackService,
+        PlaybackState,
+        PlaybackStateTracker,
+        QueueService,
+        RepeatMode,
+    },
 };
 
 /// Prefetch window size for gapless playback
@@ -210,14 +217,17 @@ fn handle_eof(
         queue_len
     );
 
-    // Handle Repeat One - replay current track
-    if repeat_mode == RepeatMode::One {
+    // Determine intent based on repeat mode at EOF time
+    let intent = determine_advance_intent(queue, repeat_mode);
+    log::info!("[DIAG-EOF] Captured intent: {:?}", intent);
+
+    // Handle RepeatOne immediately - no need to wait for MPV confirmation
+    if intent == AdvanceIntent::Repeat {
         log::info!("[DIAG-EOF] Repeat One: replaying current track");
         if let Some(current_idx) = queue.current_index() {
             let _ = play_position_internal(playback, queue, current_idx, state_tracker);
             return;
         }
-        // Fallback to old behavior if no current index (shouldn't happen)
         if let Err(e) = playback.seek(0.0, "absolute") {
             log::error!("Failed to seek to start: {}", e);
         }
@@ -229,11 +239,33 @@ fn handle_eof(
     }
 
     let from_position = queue.current_index().unwrap_or(0);
-    state_tracker.force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position });
+    state_tracker.force_set(PlaybackState::PendingAdvance {
+        since: Instant::now(),
+        from_position,
+        intent,
+    });
     log::info!("EOF transition pending, waiting for MPV event confirmation");
-    log::trace!("[DIAG-EOF] EOF -> PendingAdvance(from_position={})", from_position);
+    log::trace!(
+        "[DIAG-EOF] EOF -> PendingAdvance(from_position={}, intent={:?})",
+        from_position,
+        intent
+    );
 
     spawn_pending_advance_timeout(playback, queue, state_tracker);
+}
+
+fn determine_advance_intent(queue: &Arc<QueueService>, repeat_mode: RepeatMode) -> AdvanceIntent {
+    match repeat_mode {
+        RepeatMode::One => AdvanceIntent::Repeat,
+        RepeatMode::All => AdvanceIntent::Advance,
+        RepeatMode::Off => {
+            if queue.next_index().is_some() {
+                AdvanceIntent::Advance
+            } else {
+                AdvanceIntent::Stop
+            }
+        }
+    }
 }
 
 fn spawn_pending_advance_timeout(
@@ -285,24 +317,19 @@ pub fn handle_track_changed(
     position: i32,
 ) {
     let state = state_tracker.get();
-    let PlaybackState::PendingAdvance { from_position, .. } = state else {
+    let PlaybackState::PendingAdvance { from_position, intent, .. } = state else {
         log::trace!("[DIAG-EOF] TrackChanged({}) ignored (state={:?})", position, state);
         return;
     };
 
     log::trace!(
-        "[DIAG-EOF] PendingAdvance -> TrackChanged({}) (from_position={})",
+        "[DIAG-EOF] PendingAdvance -> TrackChanged({}) (from_position={}, intent={:?})",
         position,
-        from_position
+        from_position,
+        intent
     );
 
-    let repeat_mode = queue.repeat_mode();
-    let sync_ok = if position < 0 {
-        handle_end_of_window(playback, queue, state_tracker, repeat_mode);
-        true
-    } else {
-        handle_within_window_advance(playback, queue, state_tracker, position as usize)
-    };
+    let sync_ok = execute_intent(playback, queue, state_tracker, position, intent);
 
     if !sync_ok || matches!(state_tracker.get(), PlaybackState::PendingAdvance { .. }) {
         log::warn!("[DIAG-EOF] Queue sync failed (position={}), forcing recovery", position);
@@ -311,6 +338,41 @@ pub fn handle_track_changed(
     }
 
     log::trace!("[DIAG-EOF] TrackChanged({}) -> {:?}", position, state_tracker.get());
+}
+
+fn execute_intent(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    position: i32,
+    intent: AdvanceIntent,
+) -> bool {
+    match intent {
+        AdvanceIntent::Repeat => {
+            if let Some(current_idx) = queue.current_index() {
+                let _ = play_position_internal(playback, queue, current_idx, state_tracker);
+            } else {
+                let _ = playback.seek(0.0, "absolute");
+                let _ = playback.unpause();
+                state_tracker.force_set(PlaybackState::Playing);
+            }
+            true
+        }
+        AdvanceIntent::Stop => {
+            log::info!("[DIAG-EOF] Intent::Stop - end of queue");
+            queue.set_current(None);
+            state_tracker.force_set(PlaybackState::Idle);
+            true
+        }
+        AdvanceIntent::Advance => {
+            if position < 0 {
+                handle_end_of_window(playback, queue, state_tracker, queue.repeat_mode());
+                true
+            } else {
+                handle_within_window_advance(playback, queue, state_tracker, position as usize)
+            }
+        }
+    }
 }
 
 /// Handle when we've reached end of prefetch window

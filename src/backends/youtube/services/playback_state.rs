@@ -3,12 +3,23 @@ use std::{
     time::{Duration, Instant},
 };
 
+/// Intent captured at EOF time, determines what should happen when MPV confirms
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AdvanceIntent {
+    /// Normal advance to next track in queue
+    Advance,
+    /// RepeatOne: seek to 0, stay on current track
+    Repeat,
+    /// End of queue, no repeat: stop playback
+    Stop,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackState {
     Idle,
     Loaded,
     Playing,
-    PendingAdvance { since: Instant, from_position: usize },
+    PendingAdvance { since: Instant, from_position: usize, intent: AdvanceIntent },
     Stopped,
     Paused,
 }
@@ -73,21 +84,36 @@ mod tests {
         let tracker = PlaybackStateTracker::new();
         tracker.force_set(PlaybackState::Playing);
 
-        let to = PlaybackState::PendingAdvance { since: Instant::now(), from_position: 7 };
+        let to = PlaybackState::PendingAdvance {
+            since: Instant::now(),
+            from_position: 7,
+            intent: AdvanceIntent::Advance,
+        };
         assert!(tracker.transition(PlaybackState::Playing, to));
 
         let current = tracker.get();
         assert!(matches!(current, PlaybackState::PendingAdvance { from_position: 7, .. }));
 
         assert!(tracker.transition(
-            PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 },
+            PlaybackState::PendingAdvance {
+                since: Instant::now(),
+                from_position: 0,
+                intent: AdvanceIntent::Advance,
+            },
             PlaybackState::Playing
         ));
 
-        tracker
-            .force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 1 });
+        tracker.force_set(PlaybackState::PendingAdvance {
+            since: Instant::now(),
+            from_position: 1,
+            intent: AdvanceIntent::Advance,
+        });
         assert!(tracker.transition(
-            PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 },
+            PlaybackState::PendingAdvance {
+                since: Instant::now(),
+                from_position: 0,
+                intent: AdvanceIntent::Advance,
+            },
             PlaybackState::Idle
         ));
     }
@@ -97,13 +123,17 @@ mod tests {
         let tracker = PlaybackStateTracker::new();
         let timeout = Duration::from_millis(50);
 
-        tracker
-            .force_set(PlaybackState::PendingAdvance { since: Instant::now(), from_position: 0 });
+        tracker.force_set(PlaybackState::PendingAdvance {
+            since: Instant::now(),
+            from_position: 0,
+            intent: AdvanceIntent::Advance,
+        });
         assert!(!tracker.is_pending_expired(timeout));
 
         tracker.force_set(PlaybackState::PendingAdvance {
             since: Instant::now() - (timeout + Duration::from_millis(1)),
             from_position: 0,
+            intent: AdvanceIntent::Advance,
         });
         assert!(tracker.is_pending_expired(timeout));
 

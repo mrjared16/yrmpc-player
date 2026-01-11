@@ -14,5 +14,5 @@ pub mod queue_service;
 pub use api_service::ApiService;
 pub use internal_event::InternalEvent;
 pub use playback_service::PlaybackService;
-pub use playback_state::{PlaybackState, PlaybackStateTracker};
+pub use playback_state::{AdvanceIntent, PlaybackState, PlaybackStateTracker};
 pub use queue_service::{QueueItem, QueueService, RepeatMode};
