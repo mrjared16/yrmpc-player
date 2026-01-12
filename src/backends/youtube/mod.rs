@@ -80,4 +80,4 @@ pub use mpv::{MpvEvent, MpvIpc};
 pub use range_set::RangeSet;
 pub use server::YouTubeServer;
 pub use services::{ApiService, PlaybackService, QueueService};
-pub use streaming_audio_file::StreamingAudioFile;
+pub use streaming_audio_file::ProgressiveAudioFile;

@@ -128,6 +128,24 @@ impl RangeSet {
 
         None
     }
+
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.ranges.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.ranges.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        self.ranges.clear();
+    }
+
+    pub fn iter(&self) -> impl Iterator<Item = &(u64, u64)> {
+        self.ranges.iter()
+    }
 }
 
 #[cfg(test)]
@@ -158,8 +176,8 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(0, 50);
         rs.add_range(30, 100); // Overlaps
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 100));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 100)]);
     }
 
     #[test]
@@ -167,8 +185,8 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(0, 50);
         rs.add_range(50, 100); // Adjacent
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 100));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 100)]);
     }
 
     #[test]
@@ -176,7 +194,7 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(0, 50);
         rs.add_range(100, 150); // Gap at 50-100
-        assert_eq!(rs.ranges.len(), 2);
+        assert_eq!(rs.len(), 2);
         assert!(rs.contains(49));
         assert!(!rs.contains(50));
         assert!(!rs.contains(99));
@@ -191,8 +209,8 @@ mod tests {
         rs.add_range(0, 50);
         rs.add_range(100, 150);
         rs.add_range(50, 100); // Fill the gap
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 150));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 150)]);
     }
 
     #[test]
@@ -209,8 +227,8 @@ mod tests {
         rs.add_range(100, 150);
         rs.add_range(0, 50);
         rs.add_range(50, 100);
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 150));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 150)]);
     }
 
     #[test]
@@ -221,17 +239,17 @@ mod tests {
         rs.add_range(100, 130);
         // Add range that overlaps all three
         rs.add_range(20, 110);
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 130));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 130)]);
     }
 
     #[test]
     fn test_invalid_range() {
         let mut rs = RangeSet::new();
         rs.add_range(100, 50); // Invalid: start >= end
-        assert_eq!(rs.ranges.len(), 0);
+        assert_eq!(rs.len(), 0);
         rs.add_range(50, 50); // Invalid: start == end
-        assert_eq!(rs.ranges.len(), 0);
+        assert_eq!(rs.len(), 0);
     }
 
     #[test]
@@ -271,13 +289,12 @@ mod tests {
         rs.add_range(200, 250);
         // Fill first gap
         rs.add_range(50, 100);
-        assert_eq!(rs.ranges.len(), 2);
-        assert_eq!(rs.ranges[0], (0, 150));
-        assert_eq!(rs.ranges[1], (200, 250));
+        assert_eq!(rs.len(), 2);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 150), (200, 250)]);
         // Fill second gap
         rs.add_range(150, 200);
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 250));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 250)]);
     }
 
     #[test]
@@ -286,10 +303,8 @@ mod tests {
         rs.add_range(100, 150);
         rs.add_range(200, 250);
         rs.add_range(0, 50); // Insert before all existing ranges
-        assert_eq!(rs.ranges.len(), 3);
-        assert_eq!(rs.ranges[0], (0, 50));
-        assert_eq!(rs.ranges[1], (100, 150));
-        assert_eq!(rs.ranges[2], (200, 250));
+        assert_eq!(rs.len(), 3);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 50), (100, 150), (200, 250)]);
     }
 
     #[test]
@@ -298,8 +313,9 @@ mod tests {
         rs.add_range(0, 50);
         rs.add_range(100, 150);
         rs.add_range(300, 350); // Insert after all existing ranges
-        assert_eq!(rs.ranges.len(), 3);
-        assert_eq!(rs.ranges[2], (300, 350));
+        assert_eq!(rs.len(), 3);
+        let ranges: Vec<_> = rs.iter().copied().collect();
+        assert_eq!(ranges[2], (300, 350));
     }
 
     #[test]
@@ -307,8 +323,8 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(50, 100);
         rs.add_range(50, 100); // Exact duplicate
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (50, 100));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(50, 100)]);
     }
 
     #[test]
@@ -316,8 +332,8 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(0, 100);
         rs.add_range(25, 75); // Subset of existing range
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 100));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 100)]);
     }
 
     #[test]
@@ -325,7 +341,33 @@ mod tests {
         let mut rs = RangeSet::new();
         rs.add_range(25, 75);
         rs.add_range(0, 100); // Superset of existing range
-        assert_eq!(rs.ranges.len(), 1);
-        assert_eq!(rs.ranges[0], (0, 100));
+        assert_eq!(rs.len(), 1);
+        assert_eq!(rs.iter().copied().collect::<Vec<_>>(), vec![(0, 100)]);
+    }
+
+    #[test]
+    fn test_len_is_empty_clear() {
+        let mut rs = RangeSet::new();
+        assert!(rs.is_empty());
+        assert_eq!(rs.len(), 0);
+
+        rs.add_range(0, 50);
+        rs.add_range(100, 150);
+        assert!(!rs.is_empty());
+        assert_eq!(rs.len(), 2);
+
+        rs.clear();
+        assert!(rs.is_empty());
+        assert_eq!(rs.len(), 0);
+    }
+
+    #[test]
+    fn test_iter() {
+        let mut rs = RangeSet::new();
+        rs.add_range(0, 50);
+        rs.add_range(100, 150);
+
+        let ranges: Vec<_> = rs.iter().copied().collect();
+        assert_eq!(ranges, vec![(0, 50), (100, 150)]);
     }
 }

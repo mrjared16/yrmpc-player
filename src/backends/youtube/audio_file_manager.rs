@@ -2,7 +2,7 @@ use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;
 
-use crate::backends::youtube::streaming_audio_file::StreamingAudioFile;
+use crate::backends::youtube::streaming_audio_file::ProgressiveAudioFile;
 
 /// Prefetch priority for a track.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -41,14 +41,14 @@ impl Default for AudioFileManagerConfig {
 /// Metadata for a managed audio file.
 #[derive(Debug)]
 struct ManagedFile {
-    file: Arc<StreamingAudioFile>,
+    file: Arc<ProgressiveAudioFile>,
     video_id: String,
     content_length: u64,
     last_accessed: std::time::Instant,
     priority: PrefetchPriority,
 }
 
-/// Manages multiple StreamingAudioFile instances.
+/// Manages multiple ProgressiveAudioFile instances.
 ///
 /// Provides:
 /// - Get-or-create semantics by video_id
@@ -76,12 +76,12 @@ impl AudioFileManager {
     /// Get or create a streaming audio file for the given video.
     ///
     /// If file exists, returns existing Arc.
-    /// If not, creates new StreamingAudioFile and returns Arc.
+    /// If not, creates new ProgressiveAudioFile and returns Arc.
     pub fn get_or_create(
         &self,
         video_id: &str,
         content_length: u64,
-    ) -> io::Result<Arc<StreamingAudioFile>> {
+    ) -> io::Result<Arc<ProgressiveAudioFile>> {
         // Fast path: check if already exists (read lock)
         {
             let files = self.files.read();
@@ -100,7 +100,7 @@ impl AudioFileManager {
 
         // Create new streaming file
         let path = self.file_path(video_id);
-        let file = StreamingAudioFile::new(&path, content_length)?;
+        let file = ProgressiveAudioFile::new(&path, content_length)?;
         let arc_file = Arc::new(file);
 
         files.insert(video_id.to_string(), ManagedFile {
@@ -115,7 +115,7 @@ impl AudioFileManager {
     }
 
     /// Get existing file if it exists.
-    pub fn get(&self, video_id: &str) -> Option<Arc<StreamingAudioFile>> {
+    pub fn get(&self, video_id: &str) -> Option<Arc<ProgressiveAudioFile>> {
         let files = self.files.read();
         files.get(video_id).map(|m| Arc::clone(&m.file))
     }
