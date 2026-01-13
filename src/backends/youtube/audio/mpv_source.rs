@@ -30,4 +30,8 @@ pub trait MpvAudioSource: Send {
     fn shutdown(&mut self) {}
 
     fn build_mpv_input(&mut self, video_id: &str) -> Result<MpvInput>;
+
+    fn has_cached(&self, _video_id: &str) -> bool {
+        false
+    }
 }

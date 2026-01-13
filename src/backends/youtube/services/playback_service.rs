@@ -353,8 +353,12 @@ impl PlaybackService {
         self.prefetch(video_ids);
     }
 
-    pub fn has_cached_audio(&self, _video_id: &str) -> bool {
-        false
+    pub fn has_cached_audio(&self, video_id: &str) -> bool {
+        if let Some(ref source) = self.audio_source {
+            source.lock().has_cached(video_id)
+        } else {
+            false
+        }
     }
 
     // ========== MPV Playlist Commands ==========
