@@ -1,3 +1,8 @@
+#![deprecated(
+    since = "0.1.0",
+    note = "Use audio::AudioCache instead. This module will be removed in a future version."
+)]
+
 use std::{collections::HashMap, io, path::PathBuf, sync::Arc};
 
 use parking_lot::RwLock;

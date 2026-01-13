@@ -99,7 +99,7 @@ impl YouTubeServer {
         }
 
         // Create playback service (spawns MPV)
-        let playback = Arc::new(PlaybackService::new(&mpv_socket, extractor_type)?);
+        let playback = Arc::new(PlaybackService::new(&mpv_socket, extractor_type, None)?);
 
         // Create queue service
         let queue = Arc::new(QueueService::new());

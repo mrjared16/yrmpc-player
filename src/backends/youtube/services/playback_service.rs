@@ -19,7 +19,10 @@ use super::{
     super::{config::ExtractorType, url_resolver::UrlResolver},
     InternalEvent,
 };
-use crate::backends::youtube::mpv::{MpvEvent, MpvIpc};
+use crate::backends::youtube::{
+    audio::{MpvAudioSource, MpvInput},
+    mpv::{MpvEvent, MpvIpc},
+};
 
 /// Observer IDs for MPV properties
 const OBSERVER_PLAYLIST_POS: u64 = 1;
@@ -32,11 +35,16 @@ pub struct PlaybackService {
     mpv_process: Option<Child>,
     url_resolver: UrlResolver,
     event_loop_running: Arc<AtomicBool>,
+    audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
 }
 
 impl PlaybackService {
     /// Create new playback service, spawning MPV if needed
-    pub fn new(socket_path: &Path, extractor_type: ExtractorType) -> Result<Self> {
+    pub fn new(
+        socket_path: &Path,
+        extractor_type: ExtractorType,
+        audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
+    ) -> Result<Self> {
         let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path)?;
 
 
@@ -45,6 +53,7 @@ impl PlaybackService {
             mpv_process,
             url_resolver: UrlResolver::new(extractor_type),
             event_loop_running: Arc::new(AtomicBool::new(false)),
+            audio_source,
         })
     }
 
@@ -235,6 +244,22 @@ impl PlaybackService {
         Ok(())
     }
 
+    /// Play using MpvInput (with potential extra MPV args)
+    pub fn play_with_input(&self, input: &MpvInput, title: &str, artist: &str) -> Result<()> {
+        let media_title = if artist.is_empty() {
+            title.to_string()
+        } else {
+            format!("{} - {}", artist, title)
+        };
+
+        log::debug!("Setting force-media-title to: {}", media_title);
+        self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
+
+        self.mpv.lock().send_command(vec!["loadfile", &input.url, "replace"])?;
+        self.mpv.lock().set_property("pause", serde_json::json!(false))?;
+        Ok(())
+    }
+
     /// Pause playback
     pub fn pause(&self) -> Result<()> {
         self.mpv.lock().set_property("pause", serde_json::json!(true))?;
@@ -302,8 +327,21 @@ impl PlaybackService {
         self.url_resolver.get_url(video_id)
     }
 
+    /// Build MPV input for a video, using audio source if available
+    pub fn build_mpv_input(&self, video_id: &str) -> Result<MpvInput> {
+        if let Some(ref audio_source) = self.audio_source {
+            let mut source = audio_source.lock();
+            source.build_mpv_input(video_id)
+        } else {
+            // Fallback to direct URL
+            let url = self.get_stream_url(video_id)?;
+            Ok(MpvInput::new(url))
+        }
+    }
+
+    /// Keep old method for backward compatibility
     pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
-        self.get_stream_url(video_id)
+        Ok(self.build_mpv_input(video_id)?.url)
     }
 
     /// Prefetch stream URLs for upcoming videos

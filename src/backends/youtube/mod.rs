@@ -55,6 +55,7 @@
 
 pub mod adapter;
 pub mod api;
+pub mod audio;
 pub mod audio_file_manager;
 pub mod client;
 pub mod config;

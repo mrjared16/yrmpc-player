@@ -15,6 +15,42 @@ pub enum ExtractorType {
     Ytx,
 }
 
+/// Audio source type for playback
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum AudioSourceType {
+    /// ConcatSource: Uses ffmpeg concat+subfile for byte-perfect playback (default)
+    #[default]
+    Concat,
+    /// Direct URL: Falls back to streaming URL directly (no caching)
+    Direct,
+}
+
+/// Audio streaming configuration
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct AudioConfig {
+    /// Audio source type
+    pub source: AudioSourceType,
+    /// Cache directory for audio prefixes
+    pub cache_dir: Option<PathBuf>,
+    /// Prefix size in bytes (default: 200KB)
+    pub prefix_size: u64,
+    /// Maximum cache size in bytes (default: 200MB)
+    pub max_cache_size: u64,
+}
+
+impl Default for AudioConfig {
+    fn default() -> Self {
+        Self {
+            source: AudioSourceType::default(),
+            cache_dir: None,
+            prefix_size: 204_800,
+            max_cache_size: 209_715_200,
+        }
+    }
+}
+
 /// YouTube backend configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -38,6 +74,9 @@ pub struct YouTubeConfig {
 
     /// API configuration
     pub api: ApiConfig,
+
+    /// Audio streaming configuration
+    pub audio: AudioConfig,
 }
 
 /// Daemon configuration
@@ -95,6 +134,7 @@ impl Default for YouTubeConfig {
             daemon: DaemonConfig::default(),
             mpv: MpvConfig::default(),
             api: ApiConfig::default(),
+            audio: AudioConfig::default(),
         }
     }
 }

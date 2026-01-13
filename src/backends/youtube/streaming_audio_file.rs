@@ -1,10 +1,13 @@
+//! DORMANT: This module is kept for future ProxySource implementation.
+//! Currently not in active use - see audio::sources::concat for current implementation.
+
 use std::{
     fs::{File, OpenOptions},
     io::{self, Write},
     os::unix::fs::FileExt,
     path::{Path, PathBuf},
     sync::{Arc, Condvar, Mutex},
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use crate::backends::youtube::range_set::RangeSet;
@@ -125,11 +128,26 @@ impl ProgressiveAudioFile {
     /// Panics if the mutex is poisoned (another thread panicked while holding
     /// the lock).
     pub fn write_at(&self, offset: u64, data: &[u8]) -> io::Result<()> {
-        let mut inner = self.inner.lock().unwrap();
+        let path = {
+            let inner = self.inner.lock().unwrap();
+            if inner.write_file.is_none() {
+                return Ok(());
+            }
+            inner.path.clone()
+        };
 
-        if let Some(ref file) = inner.write_file {
-            file.write_at(data, offset)?;
+        let write_file = OpenOptions::new().write(true).open(&path)?;
+        let mut written = 0usize;
+        while written < data.len() {
+            let n = write_file.write_at(&data[written..], offset + written as u64)?;
+            if n == 0 {
+                return Err(io::Error::new(io::ErrorKind::WriteZero, "write_at returned 0"));
+            }
+            written += n;
+        }
 
+        {
+            let mut inner = self.inner.lock().unwrap();
             inner.downloaded.add_range(offset, offset + data.len() as u64);
 
             if inner.downloaded.is_complete(inner.content_length) {
@@ -154,6 +172,9 @@ impl ProgressiveAudioFile {
     ///
     /// Panics if the mutex is poisoned.
     pub fn read_at(&self, offset: u64, buf: &mut [u8]) -> io::Result<usize> {
+        const READ_TIMEOUT: Duration = Duration::from_secs(30);
+        let deadline = Instant::now() + READ_TIMEOUT;
+
         let (available, path) = {
             let mut inner = self.inner.lock().unwrap();
 
@@ -167,7 +188,13 @@ impl ProgressiveAudioFile {
                     break (available - offset, inner.path.clone());
                 }
 
-                let wait_result = self.condvar.wait_timeout(inner, Duration::from_secs(30)).unwrap();
+                let now = Instant::now();
+                if now >= deadline {
+                    return Err(io::Error::new(io::ErrorKind::TimedOut, "Read timed out waiting for data"));
+                }
+                let remaining = deadline - now;
+
+                let wait_result = self.condvar.wait_timeout(inner, remaining).unwrap();
                 inner = wait_result.0;
                 if wait_result.1.timed_out() {
                     return Err(io::Error::new(io::ErrorKind::TimedOut, "Read timed out waiting for data"));
@@ -178,9 +205,9 @@ impl ProgressiveAudioFile {
         let bytes_to_read = std::cmp::min(buf.len() as u64, available) as usize;
 
         let read_file = File::open(&path)?;
-        read_file.read_at(&mut buf[..bytes_to_read], offset)?;
+        let actual_read = read_file.read_at(&mut buf[..bytes_to_read], offset)?;
 
-        Ok(bytes_to_read)
+        Ok(actual_read)
     }
 
     #[must_use]
