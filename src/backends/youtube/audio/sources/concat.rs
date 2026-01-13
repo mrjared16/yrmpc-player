@@ -64,4 +64,17 @@ impl MpvAudioSource for FfmpegConcatSource {
     fn has_cached(&self, video_id: &str) -> bool {
         self.cache.has_prefix(video_id)
     }
+
+    fn cache_in_background(&self, video_id: &str, stream_url: &str) {
+        let cache = Arc::clone(&self.cache);
+        let video_id = video_id.to_string();
+        let stream_url = stream_url.to_string();
+        
+        std::thread::spawn(move || {
+            if let Ok(handle) = Handle::try_current() {
+                let _ = handle.block_on(cache.ensure_prefix(&video_id, &stream_url));
+                log::debug!("Background cached: {}", video_id);
+            }
+        });
+    }
 }

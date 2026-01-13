@@ -93,7 +93,13 @@ pub fn play_position(
             Ok(song) => {
                 let video_id = &song.uri;
 
-                match playback.build_playback_url(video_id) {
+                let url_result = if first_track {
+                    playback.build_playback_url_immediate(video_id)
+                } else {
+                    playback.build_playback_url(video_id)
+                };
+
+                match url_result {
                     Ok(url) => {
                         if let Err(e) = playback.playlist_append(&url) {
                             log::error!("Failed to append to playlist: {}", e);

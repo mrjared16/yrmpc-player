@@ -34,4 +34,6 @@ pub trait MpvAudioSource: Send {
     fn has_cached(&self, _video_id: &str) -> bool {
         false
     }
+
+    fn cache_in_background(&self, _video_id: &str, _stream_url: &str) {}
 }
