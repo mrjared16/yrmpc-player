@@ -46,7 +46,8 @@ use handlers::queue_events::QueueEventHandler;
 use parking_lot::Mutex;
 
 use super::{
-    config::ExtractorType,
+    audio::{AudioCache, CacheConfig, FfmpegConcatSource, MpvAudioSource, PassthroughSource},
+    config::{AudioSourceType, ExtractorType},
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
         ApiService,
@@ -58,6 +59,7 @@ use super::{
         PlaybackStateTracker,
         QueueService,
     },
+    url_resolver::UrlResolver,
 };
 use crate::shared::play_queue::{PlayQueue, QueueCommand, QueueEvent};
 
@@ -87,6 +89,7 @@ impl YouTubeServer {
         socket_path: &Path,
         cookie_file: Option<&str>,
         extractor_type: ExtractorType,
+        audio_source_type: AudioSourceType,
     ) -> Result<Self> {
         let mpv_socket = socket_path.with_extension("mpv.sock");
 
@@ -98,8 +101,33 @@ impl YouTubeServer {
             }
         }
 
+        // Create audio source based on config
+        let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = match audio_source_type {
+            AudioSourceType::FfmpegConcat => {
+                let cache_config = CacheConfig::default();
+                match AudioCache::new(cache_config.clone()) {
+                    Ok(cache) => {
+                        let resolver = UrlResolver::new(extractor_type);
+                        let url_fn: Box<dyn Fn(&str) -> Result<String> + Send + Sync> = 
+                            Box::new(move |video_id| resolver.get_url(video_id));
+                        let source = FfmpegConcatSource::new(Arc::new(cache), url_fn);
+                        log::info!("Audio source: FfmpegConcat (cache: {:?})", cache_config.cache_dir);
+                        Some(Arc::new(Mutex::new(source)))
+                    }
+                    Err(e) => {
+                        log::warn!("Failed to create audio cache, falling back to passthrough: {}", e);
+                        None
+                    }
+                }
+            }
+            AudioSourceType::Passthrough => {
+                log::info!("Audio source: Passthrough (no caching)");
+                None
+            }
+        };
+
         // Create playback service (spawns MPV)
-        let playback = Arc::new(PlaybackService::new(&mpv_socket, extractor_type, None)?);
+        let playback = Arc::new(PlaybackService::new(&mpv_socket, extractor_type, audio_source)?);
 
         // Create queue service
         let queue = Arc::new(QueueService::new());
@@ -465,7 +493,7 @@ mod tests {
     #[test]
     fn test_server_creation() {
         let socket = std::path::Path::new("/tmp/test-yt.sock");
-        let result = YouTubeServer::new(socket, None, ExtractorType::default());
+        let result = YouTubeServer::new(socket, None, ExtractorType::default(), AudioSourceType::default());
         assert!(result.is_ok() || result.is_err());
     }
 }

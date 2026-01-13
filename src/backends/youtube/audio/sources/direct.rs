@@ -4,29 +4,21 @@ use crate::backends::youtube::audio::mpv_source::{MpvAudioSource, MpvInput};
 
 type UrlResolver = Box<dyn Fn(&str) -> Result<String> + Send + Sync>;
 
-/// Direct URL streaming to MPV.
+/// Passthrough URL streaming to MPV.
 ///
-/// This is the simplest audio source strategy - it resolves the stream URL
-/// and passes it directly to MPV with no caching or protocol manipulation.
-///
-/// **Behavior**:
-/// - Resolves video_id → stream URL via yt-dlp/ytx
-/// - Passes URL directly to MPV
-/// - No local caching, no prefix download
-/// - Startup latency depends on YouTube's initial response
-///
-/// **Use case**: Default/fallback when caching is disabled or unavailable.
-pub struct DirectSource {
+/// Resolves video_id to stream URL and passes directly to MPV.
+/// No caching, no protocol manipulation. Startup latency depends on YouTube.
+pub struct PassthroughSource {
     resolve_url: UrlResolver,
 }
 
-impl DirectSource {
+impl PassthroughSource {
     pub fn new(resolve_url: UrlResolver) -> Self {
         Self { resolve_url }
     }
 }
 
-impl MpvAudioSource for DirectSource {
+impl MpvAudioSource for PassthroughSource {
     fn build_mpv_input(&mut self, video_id: &str) -> Result<MpvInput> {
         let stream_url = (self.resolve_url)(video_id)
             .context("Failed to resolve stream URL")?;
@@ -40,12 +32,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_direct_source_returns_url() {
+    fn test_passthrough_source_returns_url() {
         let resolver = Box::new(|id: &str| -> Result<String> {
             Ok(format!("https://example.com/stream/{}", id))
         });
 
-        let mut source = DirectSource::new(resolver);
+        let mut source = PassthroughSource::new(resolver);
         let input = source.build_mpv_input("abc123").unwrap();
 
         assert_eq!(input.url, "https://example.com/stream/abc123");
@@ -53,12 +45,12 @@ mod tests {
     }
 
     #[test]
-    fn test_direct_source_propagates_resolver_error() {
+    fn test_passthrough_source_propagates_resolver_error() {
         let resolver = Box::new(|_: &str| -> Result<String> {
             anyhow::bail!("URL resolution failed")
         });
 
-        let mut source = DirectSource::new(resolver);
+        let mut source = PassthroughSource::new(resolver);
         let result = source.build_mpv_input("abc123");
 
         assert!(result.is_err());

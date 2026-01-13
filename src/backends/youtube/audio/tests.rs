@@ -4,7 +4,7 @@ use tempfile::TempDir;
 
 use super::cache::{AudioCache, CacheConfig};
 use super::mpv_source::MpvInput;
-use super::sources::concat::ConcatSource;
+use super::sources::concat::FfmpegConcatSource;
 
 // ============================================================================
 // MpvInput Tests
@@ -237,12 +237,12 @@ fn test_audio_cache_eviction_multiple_rounds() {
 }
 
 // ============================================================================
-// ConcatSource Tests
+// FfmpegConcatSource Tests
 // ============================================================================
 
 #[test]
-fn test_concat_source_build_url() {
-    let url = ConcatSource::build_concat_url(
+fn test_ffmpeg_concat_source_build_url() {
+    let url = FfmpegConcatSource::build_concat_url(
         &PathBuf::from("/cache/video.m4a"),
         200000,
         "https://youtube.com/stream",
@@ -254,8 +254,8 @@ fn test_concat_source_build_url() {
 }
 
 #[test]
-fn test_concat_source_build_url_with_spaces() {
-    let url = ConcatSource::build_concat_url(
+fn test_ffmpeg_concat_source_build_url_with_spaces() {
+    let url = FfmpegConcatSource::build_concat_url(
         &PathBuf::from("/cache/my video.m4a"),
         204800,
         "https://example.com/stream?id=123",
@@ -267,8 +267,8 @@ fn test_concat_source_build_url_with_spaces() {
 }
 
 #[test]
-fn test_concat_source_protocol_whitelist() {
-    let args = ConcatSource::protocol_whitelist_args();
+fn test_ffmpeg_concat_source_protocol_whitelist() {
+    let args = FfmpegConcatSource::protocol_whitelist_args();
     assert_eq!(args.len(), 1);
     assert!(args[0].contains("protocol_whitelist"));
     assert!(args[0].contains("concat"));
@@ -279,7 +279,7 @@ fn test_concat_source_protocol_whitelist() {
 }
 
 #[test]
-fn test_concat_source_creation() {
+fn test_ffmpeg_concat_source_creation() {
     let temp_dir = TempDir::new().unwrap();
     let config = CacheConfig {
         cache_dir: temp_dir.path().to_path_buf(),
@@ -292,8 +292,7 @@ fn test_concat_source_creation() {
         Ok("https://test.com/stream".to_string())
     });
     
-    let _source = ConcatSource::new(cache, url_resolver);
-    // Just verify it compiles and constructs
+    let _source = FfmpegConcatSource::new(cache, url_resolver);
 }
 
 // ============================================================================

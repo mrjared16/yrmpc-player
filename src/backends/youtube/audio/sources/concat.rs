@@ -7,12 +7,12 @@ use crate::backends::youtube::audio::mpv_source::{MpvAudioSource, MpvInput};
 
 type UrlResolver = Box<dyn Fn(&str) -> Result<String> + Send + Sync>;
 
-pub struct ConcatSource {
+pub struct FfmpegConcatSource {
     cache: Arc<AudioCache>,
     resolve_url: UrlResolver,
 }
 
-impl ConcatSource {
+impl FfmpegConcatSource {
     pub fn new(cache: Arc<AudioCache>, resolve_url: UrlResolver) -> Self {
         Self { cache, resolve_url }
     }
@@ -37,7 +37,7 @@ impl ConcatSource {
     }
 }
 
-impl MpvAudioSource for ConcatSource {
+impl MpvAudioSource for FfmpegConcatSource {
     fn build_mpv_input(&mut self, video_id: &str) -> Result<MpvInput> {
         let stream_url = (self.resolve_url)(video_id)
             .context("Failed to resolve stream URL")?;

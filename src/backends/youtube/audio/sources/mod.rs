@@ -1,5 +1,5 @@
 pub mod concat;
 pub mod direct;
 
-pub use concat::ConcatSource;
-pub use direct::DirectSource;
+pub use concat::FfmpegConcatSource;
+pub use direct::PassthroughSource;

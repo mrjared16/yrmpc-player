@@ -19,11 +19,11 @@ pub enum ExtractorType {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
 pub enum AudioSourceType {
-    /// ConcatSource: Uses ffmpeg concat+subfile for byte-perfect playback (default)
+    /// FfmpegConcatSource: Uses ffmpeg concat+subfile for byte-perfect playback (default)
     #[default]
-    Concat,
-    /// Direct URL: Falls back to streaming URL directly (no caching)
-    Direct,
+    FfmpegConcat,
+    /// Passthrough: Streams URL directly to MPV (no caching)
+    Passthrough,
 }
 
 /// Audio streaming configuration
