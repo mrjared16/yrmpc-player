@@ -59,7 +59,7 @@ impl AudioCache {
     }
 
     pub fn cache_path(&self, video_id: &str) -> PathBuf {
-        self.config.cache_dir.join(format!("{}.m4a", video_id))
+        self.config.cache_dir.join(format!("{}.webm", video_id))
     }
 
     pub fn has_prefix(&self, video_id: &str) -> bool {

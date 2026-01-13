@@ -66,7 +66,7 @@ fn test_audio_cache_path() {
     };
     let cache = AudioCache::new(config).unwrap();
     let path = cache.cache_path("dQw4w9WgXcQ");
-    assert_eq!(path, temp_dir.path().join("dQw4w9WgXcQ.m4a"));
+    assert_eq!(path, temp_dir.path().join("dQw4w9WgXcQ.webm"));
 }
 
 #[test]
@@ -79,7 +79,7 @@ fn test_audio_cache_register_and_get() {
     };
     let cache = AudioCache::new(config).unwrap();
     
-    let path = temp_dir.path().join("test.m4a");
+    let path = temp_dir.path().join("test.webm");
     cache.register_prefix("video1", path.clone(), 500, 10000);
     
     assert!(cache.has_prefix("video1"));
@@ -97,8 +97,8 @@ fn test_audio_cache_multiple_entries() {
     };
     let cache = AudioCache::new(config).unwrap();
     
-    let path1 = temp_dir.path().join("video1.m4a");
-    let path2 = temp_dir.path().join("video2.m4a");
+    let path1 = temp_dir.path().join("video1.webm");
+    let path2 = temp_dir.path().join("video2.webm");
     
     cache.register_prefix("video1", path1, 200, 5000);
     cache.register_prefix("video2", path2, 300, 6000);
@@ -135,9 +135,9 @@ fn test_audio_cache_lru_eviction() {
     let cache = AudioCache::new(config).unwrap();
     
     // Create actual files so eviction can delete them
-    let path1 = temp_dir.path().join("video1.m4a");
-    let path2 = temp_dir.path().join("video2.m4a");
-    let path3 = temp_dir.path().join("video3.m4a");
+    let path1 = temp_dir.path().join("video1.webm");
+    let path2 = temp_dir.path().join("video2.webm");
+    let path3 = temp_dir.path().join("video3.webm");
     
     std::fs::write(&path1, vec![0u8; 100]).unwrap();
     std::fs::write(&path2, vec![0u8; 100]).unwrap();
@@ -169,9 +169,9 @@ fn test_audio_cache_touch_updates_lru() {
     };
     let cache = AudioCache::new(config).unwrap();
     
-    let path1 = temp_dir.path().join("video1.m4a");
-    let path2 = temp_dir.path().join("video2.m4a");
-    let path3 = temp_dir.path().join("video3.m4a");
+    let path1 = temp_dir.path().join("video1.webm");
+    let path2 = temp_dir.path().join("video2.webm");
+    let path3 = temp_dir.path().join("video3.webm");
     
     std::fs::write(&path1, vec![0u8; 100]).unwrap();
     std::fs::write(&path2, vec![0u8; 100]).unwrap();
@@ -220,7 +220,7 @@ fn test_audio_cache_eviction_multiple_rounds() {
     
     // Add 4 entries (400 bytes total)
     for i in 1..=4 {
-        let path = temp_dir.path().join(format!("video{}.m4a", i));
+        let path = temp_dir.path().join(format!("video{}.webm", i));
         std::fs::write(&path, vec![0u8; 100]).unwrap();
         cache.register_prefix(&format!("video{}", i), path, 100, 1000);
         std::thread::sleep(std::time::Duration::from_millis(10));
@@ -243,26 +243,26 @@ fn test_audio_cache_eviction_multiple_rounds() {
 #[test]
 fn test_ffmpeg_concat_source_build_url() {
     let url = FfmpegConcatSource::build_concat_url(
-        &PathBuf::from("/cache/video.m4a"),
+        &PathBuf::from("/cache/video.webm"),
         200000,
         "https://youtube.com/stream",
     );
     assert_eq!(
         url,
-        "concat:/cache/video.m4a|subfile,,start,200000,end,0,,:https://youtube.com/stream"
+        "concat:/cache/video.webm|subfile,,start,200000,end,0,,:https://youtube.com/stream"
     );
 }
 
 #[test]
 fn test_ffmpeg_concat_source_build_url_with_spaces() {
     let url = FfmpegConcatSource::build_concat_url(
-        &PathBuf::from("/cache/my video.m4a"),
+        &PathBuf::from("/cache/my video.webm"),
         204800,
         "https://example.com/stream?id=123",
     );
     assert_eq!(
         url,
-        "concat:/cache/my video.m4a|subfile,,start,204800,end,0,,:https://example.com/stream?id=123"
+        "concat:/cache/my video.webm|subfile,,start,204800,end,0,,:https://example.com/stream?id=123"
     );
 }
 
