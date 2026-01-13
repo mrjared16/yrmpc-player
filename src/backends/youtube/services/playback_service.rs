@@ -329,47 +329,19 @@ impl PlaybackService {
 
     /// Build MPV input for a video, using audio source if available
     pub fn build_mpv_input(&self, video_id: &str) -> Result<MpvInput> {
-        self.build_mpv_input_with_cache(video_id, true)
-    }
-
-    /// Build MPV input for immediate playback (no cache blocking)
-    /// Streams directly to MPV and caches in background
-    pub fn build_mpv_input_immediate(&self, video_id: &str) -> Result<MpvInput> {
-        self.build_mpv_input_with_cache(video_id, false)
-    }
-
-    fn build_mpv_input_with_cache(&self, video_id: &str, use_cache: bool) -> Result<MpvInput> {
-        if use_cache {
-            if let Some(ref audio_source) = self.audio_source {
-                let mut source = audio_source.lock();
-                return source.build_mpv_input(video_id);
-            }
-        }
-        
-        let url = self.get_stream_url(video_id)?;
-        if self.audio_source.is_some() {
-            self.spawn_background_cache(video_id.to_string(), url.clone());
-        }
-        Ok(MpvInput::new(url))
-    }
-
-    fn spawn_background_cache(&self, video_id: String, stream_url: String) {
         if let Some(ref audio_source) = self.audio_source {
-            let source = audio_source.lock();
-            if !source.has_cached(&video_id) {
-                source.cache_in_background(&video_id, &stream_url);
-            }
+            let mut source = audio_source.lock();
+            source.build_mpv_input(video_id)
+        } else {
+            // Fallback to direct URL
+            let url = self.get_stream_url(video_id)?;
+            Ok(MpvInput::new(url))
         }
     }
 
     /// Keep old method for backward compatibility
     pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
         Ok(self.build_mpv_input(video_id)?.url)
-    }
-
-    /// Build URL for immediate playback (streams directly, caches in background)
-    pub fn build_playback_url_immediate(&self, video_id: &str) -> Result<String> {
-        Ok(self.build_mpv_input_immediate(video_id)?.url)
     }
 
     /// Prefetch stream URLs for upcoming videos
