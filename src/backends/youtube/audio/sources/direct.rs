@@ -20,8 +20,7 @@ impl PassthroughSource {
 
 impl MpvAudioSource for PassthroughSource {
     fn build_mpv_input(&mut self, video_id: &str) -> Result<MpvInput> {
-        let stream_url = (self.resolve_url)(video_id)
-            .context("Failed to resolve stream URL")?;
+        let stream_url = (self.resolve_url)(video_id).context("Failed to resolve stream URL")?;
 
         Ok(MpvInput::new(stream_url))
     }
@@ -46,9 +45,8 @@ mod tests {
 
     #[test]
     fn test_passthrough_source_propagates_resolver_error() {
-        let resolver = Box::new(|_: &str| -> Result<String> {
-            anyhow::bail!("URL resolution failed")
-        });
+        let resolver =
+            Box::new(|_: &str| -> Result<String> { anyhow::bail!("URL resolution failed") });
 
         let mut source = PassthroughSource::new(resolver);
         let result = source.build_mpv_input("abc123");

@@ -1,7 +1,9 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-use std::sync::RwLock;
-use std::time::Instant;
+use std::{
+    collections::HashMap,
+    path::{Path, PathBuf},
+    sync::RwLock,
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
 
@@ -17,15 +19,9 @@ pub struct CacheConfig {
 
 impl Default for CacheConfig {
     fn default() -> Self {
-        let cache_dir = dirs::cache_dir()
-            .unwrap_or_else(|| PathBuf::from("/tmp"))
-            .join("rmpc")
-            .join("audio");
-        Self {
-            cache_dir,
-            prefix_size: DEFAULT_PREFIX_SIZE,
-            max_cache_size: DEFAULT_MAX_CACHE_SIZE,
-        }
+        let cache_dir =
+            dirs::cache_dir().unwrap_or_else(|| PathBuf::from("/tmp")).join("rmpc").join("audio");
+        Self { cache_dir, prefix_size: DEFAULT_PREFIX_SIZE, max_cache_size: DEFAULT_MAX_CACHE_SIZE }
     }
 }
 
@@ -47,11 +43,8 @@ impl AudioCache {
     pub fn new(config: CacheConfig) -> Result<Self> {
         std::fs::create_dir_all(&config.cache_dir)
             .context("Failed to create audio cache directory")?;
-        
-        Ok(Self {
-            config,
-            entries: RwLock::new(HashMap::new()),
-        })
+
+        Ok(Self { config, entries: RwLock::new(HashMap::new()) })
     }
 
     pub fn with_defaults() -> Result<Self> {
@@ -77,23 +70,14 @@ impl AudioCache {
         entries.values().map(|e| e.size).sum()
     }
 
-    pub fn register_prefix(
-        &self,
-        video_id: &str,
-        path: PathBuf,
-        size: u64,
-        content_length: u64,
-    ) {
+    pub fn register_prefix(&self, video_id: &str, path: PathBuf, size: u64, content_length: u64) {
         let mut entries = self.entries.write().unwrap();
-        entries.insert(
-            video_id.to_string(),
-            CacheEntry {
-                path,
-                size,
-                content_length,
-                last_accessed: Instant::now(),
-            },
-        );
+        entries.insert(video_id.to_string(), CacheEntry {
+            path,
+            size,
+            content_length,
+            last_accessed: Instant::now(),
+        });
     }
 
     pub fn touch(&self, video_id: &str) {
@@ -136,22 +120,26 @@ impl AudioCache {
     /// Returns (path, content_length) where:
     /// - path: Path to the cached prefix file
     /// - content_length: Total file size (for byte offset calculation)
-    pub async fn ensure_prefix(
-        &self,
-        video_id: &str,
-        stream_url: &str,
-    ) -> Result<(PathBuf, u64)> {
+    pub async fn ensure_prefix(&self, video_id: &str, stream_url: &str) -> Result<(PathBuf, u64)> {
+        let start = std::time::Instant::now();
+        
         if let Some(content_length) = self.get_content_length(video_id) {
             let path = self.cache_path(video_id);
             if path.exists() {
                 self.touch(video_id);
+                log::info!(
+                    "[CACHE] hit video_id={} path={} elapsed={:?}",
+                    video_id, path.display(), start.elapsed()
+                );
                 return Ok((path, content_length));
             }
         }
 
+        log::info!("[CACHE] miss video_id={} downloading prefix...", video_id);
+        
         let path = self.cache_path(video_id);
         let client = reqwest::Client::new();
-        
+
         let range_header = format!("bytes=0-{}", self.config.prefix_size - 1);
         let response = client
             .get(stream_url)
@@ -171,7 +159,7 @@ impl AudioCache {
 
         let bytes = response.bytes().await.context("Failed to download prefix")?;
         let size = bytes.len() as u64;
-        
+
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -179,6 +167,11 @@ impl AudioCache {
 
         self.register_prefix(video_id, path.clone(), size, content_length);
         self.evict_lru()?;
+
+        log::info!(
+            "[CACHE] downloaded video_id={} size={} content_length={} elapsed={:?}",
+            video_id, size, content_length, start.elapsed()
+        );
 
         Ok((path, content_length))
     }

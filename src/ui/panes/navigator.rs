@@ -120,14 +120,16 @@ impl Navigator {
             ActionDispatcher,
             PlayHandler,
             QueueHandler,
+            RadioHandler,
             SaveHandler,
             TogglePlaybackHandler,
         };
 
         ActionDispatcher::new()
-            .with_handler(Box::new(TogglePlaybackHandler::new())) // Higher priority
+            .with_handler(Box::new(TogglePlaybackHandler::new()))
             .with_handler(Box::new(PlayHandler::new()))
             .with_handler(Box::new(QueueHandler::new()))
+            .with_handler(Box::new(RadioHandler::new()))
             .with_handler(Box::new(SaveHandler::new()))
     }
 

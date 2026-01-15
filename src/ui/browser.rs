@@ -15,6 +15,7 @@ use crate::{
         DeleteTarget,
         EXTERNAL_COMMAND,
         Enqueue,
+        youtube::protocol::play_intent::{MixType, PlayIntent},
     },
     config::keys::{
         CommonAction,
@@ -29,6 +30,7 @@ use crate::{
         mouse_event::{MouseEvent, MouseEventKind, calculate_scrollbar_position},
     },
     ui::{
+        dir_or_song::DirOrSong,
         dirstack::{DirStack, DirStackItem, WalkDirStackItem},
         modals::{
             input_modal::InputModal,
@@ -781,6 +783,28 @@ where
                         });
                         Ok(())
                     });
+                }
+
+                // Add "Start Radio" option for songs
+                if let Some(selected_item) = self.stack().current().selected() {
+                    let maybe_song = match current_items.first() {
+                        Some(Enqueue::Song { song }) => Some(song.clone()),
+                        _ => None,
+                    };
+
+                    if let Some(song) = maybe_song {
+                        section.add_item("Start Radio", move |ctx| {
+                            log::info!(
+                                "Starting radio from seed: {}. Note: auto-extend not implemented in v1",
+                                song.title()
+                            );
+                            ctx.queue_store().play(PlayIntent::Radio {
+                                seed: song,
+                                mix_type: MixType::SongRadio,
+                            });
+                            Ok(())
+                        });
+                    }
                 }
 
                 let songs_in_items_clone = list_songs_in_items.clone();

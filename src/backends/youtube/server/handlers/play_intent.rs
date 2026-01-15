@@ -1,11 +1,9 @@
 //! PlayIntent handler for declarative playback control.
 //!
 //! This handler processes PlayWithIntent commands, which express user intent
-//! declaratively rather than imperatively. The handler:
-//! 1. Validates the intent (empty tracks, invalid offset)
-//! 2. Derives preload priorities (logged only in Phase 1b, scheduled in Phase 1c)
-//! 3. Mutates queue (stubbed - actual wiring in task 1.4)
-//! 4. Initiates playback for Context/Radio intents
+//! declaratively rather than imperatively.
+//!
+//! Uses the unified CacheExecutor for all cache work (preload + prepare).
 
 use std::sync::Arc;
 
@@ -13,108 +11,114 @@ use crossbeam::channel::Sender;
 
 use crate::backends::youtube::{
     protocol::{
-        play_intent::{derive_priorities, PlayError, PlayIntent, RequestId},
         ServerResponse,
+        play_intent::{PlayError, PlayIntent, PreloadTier, RequestId, derive_priorities},
     },
-    services::{PlaybackService, PlaybackStateTracker, QueueService},
+    services::{
+        CacheExecutorHandle,
+        PlaybackService,
+        PlaybackStateTracker,
+        QueueService,
+    },
+    server::orchestrator,
 };
 
-/// Handle PlayWithIntent command
-///
-/// This is the daemon-side handler for the new PlayIntent architecture.
-/// It validates the intent, derives preload priorities, and coordinates
-/// queue mutation and playback.
-///
-/// # Phase 1b (Current Implementation)
-/// - Validation: Reject empty tracks, invalid offsets
-/// - Priority derivation: Call derive_priorities() and log results
-/// - Queue mutation: Log what would happen (stub)
-/// - Playback: Log play_pos() calls (stub)
-///
-/// # Future Phases
-/// - Phase 1c: Wire up actual preload scheduler
-/// - Phase 1.4: Wire up queue mutation (replace/insert/append)
 pub fn handle_play_with_intent(
     intent: PlayIntent,
     request_id: RequestId,
-    _playback: &Arc<PlaybackService>,
-    _queue: &Arc<QueueService>,
-    _state_tracker: &Arc<PlaybackStateTracker>,
-    _event_tx: &Sender<String>,
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    event_tx: &Sender<String>,
+    cache_executor: &CacheExecutorHandle,
 ) -> ServerResponse {
     if let Err(e) = validate_intent(&intent) {
-        log::warn!("PlayWithIntent validation failed: request_id={}, error={:?}", request_id, e);
+        log::warn!("[INTENT] validation_failed request_id={} error={:?}", request_id, e);
         return ServerResponse::PlayIntentError(e);
     }
 
     let priorities = derive_priorities(&intent);
-    
+
     for (song, tier) in &priorities {
-        log::debug!(
-            "Preload priority derived: request_id={}, song_uri={}, tier={:?}",
-            request_id,
-            &song.uri,
-            tier
-        );
+        let Some(track_id) = extract_video_id(&song.uri) else {
+            continue;
+        };
+
+        cache_executor.preload(track_id, *tier, request_id);
     }
-    
-    log::info!(
-        "PlayWithIntent received: request_id={}, intent_type={:?}, track_count={}",
-        request_id,
-        std::mem::discriminant(&intent),
-        priorities.len()
-    );
 
     match &intent {
         PlayIntent::Context { tracks, shuffle, offset, .. } => {
             log::info!(
-                "Would replace queue with tracks: request_id={}, count={}, shuffle={}, offset={}",
-                request_id,
-                tracks.len(),
-                shuffle,
-                offset
+                "[INTENT] context request_id={} count={} shuffle={} offset={}",
+                request_id, tracks.len(), shuffle, offset
             );
+
+            queue.clear();
+            for song in tracks {
+                queue.add(song.clone(), None);
+            }
+
+            if *shuffle {
+                queue.set_shuffle_enabled(true);
+            }
+
+            let _ = event_tx.send("queue".to_string());
+            
+            return orchestrator::play_position(playback, queue, *offset, state_tracker);
         }
+
         PlayIntent::Next { tracks } => {
-            log::info!(
-                "Would insert tracks after current: request_id={}, count={}",
-                request_id,
-                tracks.len()
-            );
+            log::info!("[INTENT] next request_id={} count={}", request_id, tracks.len());
+
+            let insert_pos = queue.current_index().map(|i| i + 1);
+            for (i, song) in tracks.iter().enumerate() {
+                let pos = insert_pos.map(|p| (p + i) as u32);
+                queue.add(song.clone(), pos);
+            }
+
+            let _ = event_tx.send("queue".to_string());
         }
+
         PlayIntent::Append { tracks } => {
-            log::info!(
-                "Would append tracks to queue: request_id={}, count={}",
-                request_id,
-                tracks.len()
-            );
+            log::info!("[INTENT] append request_id={} count={}", request_id, tracks.len());
+
+            for song in tracks {
+                queue.add(song.clone(), None);
+            }
+
+            let _ = event_tx.send("queue".to_string());
         }
+
         PlayIntent::Radio { seed, mix_type } => {
             log::info!(
-                "Would start radio from seed: request_id={}, seed_uri={}, mix_type={:?}",
-                request_id,
-                &seed.uri,
-                mix_type
+                "[INTENT] radio request_id={} seed={} mix_type={:?}",
+                request_id, &seed.uri, mix_type
             );
-        }
-    }
 
-    match &intent {
-        PlayIntent::Context { offset, .. } => {
-            log::info!(
-                "Would call player.play_pos({}): request_id={}",
-                offset,
-                request_id
-            );
-        }
-        PlayIntent::Radio { .. } => {
-            log::info!("Would call player.play_pos(0): request_id={}", request_id);
-        }
-        PlayIntent::Next { .. } | PlayIntent::Append { .. } => {
+            queue.clear();
+            queue.add(seed.clone(), None);
+
+            let _ = event_tx.send("queue".to_string());
+            
+            return orchestrator::play_position(playback, queue, 0, state_tracker);
         }
     }
 
     ServerResponse::Ok
+}
+
+/// Validate PlayIntent before processing
+fn extract_video_id(uri: &str) -> Option<String> {
+    if let Some(id) = uri.strip_prefix("youtube://") {
+        return Some(id.to_string());
+    }
+
+    if !uri.is_empty() && !uri.contains("://") {
+        return Some(uri.to_string());
+    }
+
+    None
 }
 
 /// Validate PlayIntent before processing
@@ -125,10 +129,7 @@ fn validate_intent(intent: &PlayIntent) -> Result<(), PlayError> {
                 return Err(PlayError::EmptyTracks);
             }
             if *offset >= tracks.len() {
-                return Err(PlayError::InvalidOffset {
-                    offset: *offset,
-                    len: tracks.len(),
-                });
+                return Err(PlayError::InvalidOffset { offset: *offset, len: tracks.len() });
             }
         }
         PlayIntent::Next { tracks } | PlayIntent::Append { tracks } => {
@@ -152,24 +153,14 @@ mod tests {
     use crate::domain::Song;
 
     fn test_song(uri: &str) -> Song {
-        Song {
-            uri: uri.to_string(),
-            ..Default::default()
-        }
+        Song { uri: uri.to_string(), ..Default::default() }
     }
 
     #[test]
     fn test_validate_context_empty_tracks() {
-        let intent = PlayIntent::Context {
-            tracks: vec![],
-            offset: 0,
-            shuffle: false,
-            source: None,
-        };
-        assert!(matches!(
-            validate_intent(&intent),
-            Err(PlayError::EmptyTracks)
-        ));
+        let intent =
+            PlayIntent::Context { tracks: vec![], offset: 0, shuffle: false, source: None };
+        assert!(matches!(validate_intent(&intent), Err(PlayError::EmptyTracks)));
     }
 
     #[test]
@@ -200,36 +191,23 @@ mod tests {
     #[test]
     fn test_validate_next_empty() {
         let intent = PlayIntent::Next { tracks: vec![] };
-        assert!(matches!(
-            validate_intent(&intent),
-            Err(PlayError::EmptyTracks)
-        ));
+        assert!(matches!(validate_intent(&intent), Err(PlayError::EmptyTracks)));
     }
 
     #[test]
     fn test_validate_append_empty() {
         let intent = PlayIntent::Append { tracks: vec![] };
-        assert!(matches!(
-            validate_intent(&intent),
-            Err(PlayError::EmptyTracks)
-        ));
+        assert!(matches!(validate_intent(&intent), Err(PlayError::EmptyTracks)));
     }
 
     #[test]
     fn test_validate_radio_invalid_seed() {
-        let seed = Song {
-            uri: String::new(),
-            id: None,
-            ..Default::default()
-        };
+        let seed = Song { uri: String::new(), id: None, ..Default::default() };
         let intent = PlayIntent::Radio {
             seed,
             mix_type: crate::backends::youtube::protocol::play_intent::MixType::SongRadio,
         };
-        assert!(matches!(
-            validate_intent(&intent),
-            Err(PlayError::RadioSeedInvalid)
-        ));
+        assert!(matches!(validate_intent(&intent), Err(PlayError::RadioSeedInvalid)));
     }
 
     #[test]

@@ -29,7 +29,10 @@ use ratatui::{
 use super::{Pane, browser::SongExt};
 use crate::{
     QueryResult,
-    backends::{BackendActions, youtube::protocol::play_intent::{PlayIntent, ContextSource}},
+    backends::{
+        BackendActions,
+        youtube::protocol::play_intent::{ContextSource, PlayIntent},
+    },
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
     domain::{ContentType, DetailItem, SearchResultsContent, SearchableContent, Song},

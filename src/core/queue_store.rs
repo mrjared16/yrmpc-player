@@ -21,15 +21,21 @@
 use std::{
     collections::HashSet,
     ops::Deref,
-    sync::{Arc, RwLock, RwLockReadGuard},
+    sync::{
+        Arc,
+        RwLock,
+        RwLockReadGuard,
+        atomic::{AtomicU64, Ordering},
+    },
 };
-
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use crossbeam::channel::Sender;
 
-use crate::{AppEvent, domain::Song};
-use crate::backends::youtube::protocol::play_intent::{PlayIntent, RequestId};
+use crate::{
+    AppEvent,
+    backends::youtube::protocol::play_intent::{PlayIntent, RequestId},
+    domain::Song,
+};
 
 static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
 
@@ -241,6 +247,9 @@ impl QueueStore {
         self.daemon.refresh();
     }
 
+    /// Deprecated: Use `play(PlayIntent::Context { ... })` instead.
+    /// This method will be removed in a future version.
+    #[deprecated(since = "0.1.0", note = "Use play(PlayIntent::Context) instead")]
     pub fn replace_and_play(&self, songs: Vec<Song>) {
         if songs.is_empty() {
             self.clear();
@@ -279,15 +288,19 @@ impl QueueStore {
     /// Play with explicit intent (new PlayIntent-based API)
     pub fn play(&self, intent: PlayIntent) {
         let request_id = next_request_id();
-        
+
         // Optimistic local update - adapt to available QueueStore methods
         match &intent {
             PlayIntent::Context { tracks, offset: _, shuffle: _, source: _ } => {
                 // For Context, replace the entire queue
-                let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
-                    s.id = None;
-                    s
-                }).collect();
+                let optimistic: Vec<Song> = tracks
+                    .iter()
+                    .cloned()
+                    .map(|mut s| {
+                        s.id = None;
+                        s
+                    })
+                    .collect();
                 {
                     let mut guard = self.inner.write().expect("queue lock poisoned");
                     *guard = Arc::new(optimistic);
@@ -298,10 +311,14 @@ impl QueueStore {
                 {
                     let mut guard = self.inner.write().expect("queue lock poisoned");
                     let mut new_queue = (**guard).clone();
-                    let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
-                        s.id = None;
-                        s
-                    }).collect();
+                    let optimistic: Vec<Song> = tracks
+                        .iter()
+                        .cloned()
+                        .map(|mut s| {
+                            s.id = None;
+                            s
+                        })
+                        .collect();
                     new_queue.extend(optimistic);
                     *guard = Arc::new(new_queue);
                 }
@@ -311,10 +328,14 @@ impl QueueStore {
                 {
                     let mut guard = self.inner.write().expect("queue lock poisoned");
                     let mut new_queue = (**guard).clone();
-                    let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
-                        s.id = None;
-                        s
-                    }).collect();
+                    let optimistic: Vec<Song> = tracks
+                        .iter()
+                        .cloned()
+                        .map(|mut s| {
+                            s.id = None;
+                            s
+                        })
+                        .collect();
                     new_queue.extend(optimistic);
                     *guard = Arc::new(new_queue);
                 }
@@ -329,10 +350,10 @@ impl QueueStore {
                 }
             }
         }
-        
+
         // Notify UI
         self.notify();
-        
+
         // Send to daemon (fire-and-forget)
         self.daemon.play_with_intent(intent, request_id);
     }

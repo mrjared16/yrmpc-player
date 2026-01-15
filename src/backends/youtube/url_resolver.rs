@@ -66,17 +66,26 @@ impl UrlResolver {
     /// Create a new extractor with the specified type.
     ///
     /// The extractor is wrapped with caching and fallback automatically.
-    pub fn new(extractor_type: ExtractorType) -> Self {
+    ///
+    /// # Visibility
+    ///
+    /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
+    /// External code should obtain resolvers from `YouTubeServices::url_resolver()`.
+    pub(crate) fn new(extractor_type: ExtractorType) -> Self {
         Self::with_config(extractor_type, CacheConfig::default(), true)
     }
 
     /// Create a new extractor with custom configuration.
     ///
+    /// # Visibility
+    ///
+    /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
+    ///
     /// # Arguments
     /// * `extractor_type` - Primary extractor to use
     /// * `cache_config` - Cache configuration
     /// * `enable_fallback` - Whether to fall back to yt-dlp if primary fails
-    pub fn with_config(
+    pub(crate) fn with_config(
         extractor_type: ExtractorType,
         cache_config: CacheConfig,
         enable_fallback: bool,
@@ -102,12 +111,20 @@ impl UrlResolver {
     }
 
     /// Create with default extractor (yt-dlp).
-    pub fn new_default() -> Self {
+    ///
+    /// # Visibility
+    ///
+    /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
+    pub(crate) fn new_default() -> Self {
         Self::new(ExtractorType::default())
     }
 
     /// Create with custom cache TTL.
-    pub fn with_cache_ttl(extractor_type: ExtractorType, ttl: Duration) -> Self {
+    ///
+    /// # Visibility
+    ///
+    /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
+    pub(crate) fn with_cache_ttl(extractor_type: ExtractorType, ttl: Duration) -> Self {
         Self::with_config(extractor_type, CacheConfig::default().with_ttl(ttl), true)
     }
 

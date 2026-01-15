@@ -8,17 +8,11 @@ pub struct MpvInput {
 
 impl MpvInput {
     pub fn new(url: impl Into<String>) -> Self {
-        Self {
-            url: url.into(),
-            mpv_args: Vec::new(),
-        }
+        Self { url: url.into(), mpv_args: Vec::new() }
     }
 
     pub fn with_args(url: impl Into<String>, args: Vec<String>) -> Self {
-        Self {
-            url: url.into(),
-            mpv_args: args,
-        }
+        Self { url: url.into(), mpv_args: args }
     }
 }
 

@@ -24,10 +24,11 @@ pub fn handle_play(
 
     if matches!(state, PlaybackState::Idle | PlaybackState::Stopped) && queue.len() > 0 {
         let pos = queue.current_index().unwrap_or(0);
-        log::info!("handle_play: state={:?}, reloading track at pos={}", state, pos);
+        log::info!("[STATE] play state={:?} pos={}", state, pos);
         return orchestrator::play_position(playback, queue, pos, state_tracker);
     }
 
+    log::info!("[STATE] unpause");
     match playback.unpause() {
         Ok(_) => {
             let _ = event_tx.send("player".to_string());
@@ -39,6 +40,7 @@ pub fn handle_play(
 
 /// Handle Pause command
 pub fn handle_pause(playback: &Arc<PlaybackService>, event_tx: &Sender<String>) -> ServerResponse {
+    log::info!("[STATE] pause");
     match playback.pause() {
         Ok(_) => {
             let _ = event_tx.send("player".to_string());
@@ -50,6 +52,7 @@ pub fn handle_pause(playback: &Arc<PlaybackService>, event_tx: &Sender<String>) 
 
 /// Handle Stop command
 pub fn handle_stop(playback: &Arc<PlaybackService>, event_tx: &Sender<String>) -> ServerResponse {
+    log::info!("[STATE] stop");
     match playback.stop() {
         Ok(_) => {
             let _ = event_tx.send("player".to_string());

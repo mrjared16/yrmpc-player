@@ -99,9 +99,8 @@ impl PlaylistDetailPane {
                 let songs = selection.songs_cloned();
 
                 // Get the playlist ID from current content
-                let playlist_id = self.view.current()
-                    .map(|level| level.content.id.clone())
-                    .unwrap_or_default();
+                let playlist_id =
+                    self.view.current().map(|level| level.content.id.clone()).unwrap_or_default();
 
                 if songs.len() > 1 {
                     // Multiple songs selected - play all starting from activated song

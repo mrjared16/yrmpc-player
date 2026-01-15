@@ -673,7 +673,8 @@ mod tests {
         // Mock socket path
         let socket = PathBuf::from("/tmp/test-mpv.sock");
 
-        let playback = Arc::new(PlaybackService::new(&socket, ExtractorType::default(), None).unwrap());
+        let playback =
+            Arc::new(PlaybackService::new(&socket, ExtractorType::default(), None).unwrap());
         let queue = Arc::new(QueueService::new());
         let state_tracker = Arc::new(PlaybackStateTracker::new());
 

@@ -14,7 +14,11 @@ use ratatui::{
 use super::{CommonAction, Pane};
 use crate::{
     QueryResult,
-    backends::{BackendActions as _, BackendDispatcher},
+    backends::{
+        BackendActions as _,
+        BackendDispatcher,
+        youtube::protocol::play_intent::{MixType, PlayIntent},
+    },
     config::{
         keys::{
             GlobalAction,
@@ -1243,6 +1247,21 @@ impl SearchPane {
                             });
                             Ok(())
                         });
+
+                        // Add "Start Radio" option for selected song
+                        if let Some(song) = self.songs_dir.selected().cloned() {
+                            section.add_item("Start Radio", move |ctx| {
+                                log::info!(
+                                    "Starting radio from seed: {}. Note: auto-extend not implemented in v1",
+                                    song.title()
+                                );
+                                ctx.queue_store().play(PlayIntent::Radio {
+                                    seed: song,
+                                    mix_type: MixType::SongRadio,
+                                });
+                                Ok(())
+                            });
+                        }
 
                         let song_files =
                             self.items(true).map(|(_, item)| item.uri.clone()).collect();

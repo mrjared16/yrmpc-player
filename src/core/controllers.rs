@@ -3,9 +3,17 @@ use std::sync::Arc;
 use crossbeam::channel::Sender;
 
 use super::queue_store::QueueDaemon;
-use crate::{AppEvent, Query, QueryResult, domain::Song, shared::events::ClientRequest};
-use crate::backends::youtube::protocol::play_intent::{PlayIntent, RequestId};
-use crate::backends::youtube::protocol::ServerCommand;
+use crate::{
+    AppEvent,
+    Query,
+    QueryResult,
+    backends::youtube::protocol::{
+        ServerCommand,
+        play_intent::{PlayIntent, RequestId},
+    },
+    domain::Song,
+    shared::events::ClientRequest,
+};
 
 pub struct CtxQueueDaemon {
     client_request_sender: Sender<ClientRequest>,

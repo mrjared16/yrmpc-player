@@ -238,6 +238,7 @@ pub fn run_rmpc_in_pty(
 // =============================================================================
 
 #[test]
+#[ignore = "Requires rmpcd daemon running"]
 fn test_ui_app_starts_and_shows_tabs() {
     let result = run_rmpc_in_pty(
         "ui_app_starts",
@@ -264,6 +265,7 @@ fn test_ui_app_starts_and_shows_tabs() {
 }
 
 #[test]
+#[ignore = "Requires rmpcd daemon running"]
 fn test_ui_search_pane_elements() {
     let result =
         run_rmpc_in_pty("ui_search_pane", &[], &[PtyAction::WaitUntilContains("Any Tag")], 10);
@@ -281,6 +283,7 @@ fn test_ui_search_pane_elements() {
 }
 
 #[test]
+#[ignore = "Requires rmpcd daemon running"]
 fn test_ui_tab_navigation() {
     let result = run_rmpc_in_pty(
         "ui_tab_nav",

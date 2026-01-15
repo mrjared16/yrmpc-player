@@ -56,5 +56,5 @@ pub mod intent;
 
 pub use dispatcher::ActionDispatcher;
 pub use handler::{BoxedHandler, HandleResult, Handler};
-pub use handlers::{PlayHandler, QueueHandler, SaveHandler, TogglePlaybackHandler};
+pub use handlers::{PlayHandler, QueueHandler, RadioHandler, SaveHandler, TogglePlaybackHandler};
 pub use intent::{Intent, IntentKind, Selection};

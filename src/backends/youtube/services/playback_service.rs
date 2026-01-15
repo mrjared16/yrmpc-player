@@ -15,10 +15,7 @@ use anyhow::{Context, Result, bail};
 use crossbeam::channel::Sender;
 use parking_lot::Mutex;
 
-use super::{
-    super::{config::ExtractorType, url_resolver::UrlResolver},
-    InternalEvent,
-};
+use super::{super::url_resolver::UrlResolver, InternalEvent};
 use crate::backends::youtube::{
     audio::{MpvAudioSource, MpvInput},
     mpv::{MpvEvent, MpvIpc},
@@ -33,7 +30,7 @@ const OBSERVER_IDLE: u64 = 3;
 pub struct PlaybackService {
     mpv: Mutex<MpvIpc>,
     mpv_process: Option<Child>,
-    url_resolver: UrlResolver,
+    url_resolver: Arc<UrlResolver>,
     event_loop_running: Arc<AtomicBool>,
     audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
 }
@@ -42,16 +39,15 @@ impl PlaybackService {
     /// Create new playback service, spawning MPV if needed
     pub fn new(
         socket_path: &Path,
-        extractor_type: ExtractorType,
+        url_resolver: Arc<UrlResolver>,
         audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
     ) -> Result<Self> {
         let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path)?;
 
-
         Ok(Self {
             mpv: Mutex::new(mpv),
             mpv_process,
-            url_resolver: UrlResolver::new(extractor_type),
+            url_resolver,
             event_loop_running: Arc::new(AtomicBool::new(false)),
             audio_source,
         })
@@ -200,11 +196,14 @@ impl PlaybackService {
             "--demuxer-max-bytes=50M".to_string(),
             "--demuxer-readahead-secs=30".to_string(),
             "--audio-buffer=1".to_string(),
+            // Enable FFmpeg concat protocol for prefix+streaming playback
+            // MUST use --stream-lavf-o-append (not --demuxer-lavf-o) to affect stream layer
+            "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat".to_string(),
             format!("--input-ipc-server={}", socket_str),
         ];
 
         // Add verbose MPV logging only at TRACE level
-        if log::log_enabled!(log::Level::Trace) {
+        if log::log_enabled!(log::Level::Debug) {
             args.push("--log-file=/tmp/mpv-debug.log".to_string());
             args.push("--msg-level=all=v".to_string());
             log::trace!("MPV verbose logging enabled: /tmp/mpv-debug.log");
@@ -244,19 +243,36 @@ impl PlaybackService {
         Ok(())
     }
 
-    /// Play using MpvInput (with potential extra MPV args)
+    /// Play using MpvInput. Sets mpv_args as properties before loadfile.
     pub fn play_with_input(&self, input: &MpvInput, title: &str, artist: &str) -> Result<()> {
-        let media_title = if artist.is_empty() {
-            title.to_string()
-        } else {
-            format!("{} - {}", artist, title)
-        };
+        let media_title =
+            if artist.is_empty() { title.to_string() } else { format!("{} - {}", artist, title) };
+
+        let mode = if input.url.starts_with("lavf://concat:") { "CONCAT" } else { "PASSTHROUGH" };
+        let url_preview = if input.url.len() > 80 { &input.url[..80] } else { &input.url };
+        
+        log::info!(
+            "[PLAYBACK] mode={} title=\"{}\" url_preview=\"{}...\"",
+            mode, media_title, url_preview
+        );
 
         log::debug!("Setting force-media-title to: {}", media_title);
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
 
+        for arg in &input.mpv_args {
+            if let Some(opt) = arg.strip_prefix("--") {
+                if let Some((key, value)) = opt.split_once('=') {
+                    log::debug!("[PLAYBACK] mpv_property: {}={}", key, value);
+                    self.mpv.lock().set_property(key, serde_json::json!(value))?;
+                }
+            }
+        }
+
+        log::info!("[PLAYBACK] loadfile: {}", &input.url);
         self.mpv.lock().send_command(vec!["loadfile", &input.url, "replace"])?;
+
         self.mpv.lock().set_property("pause", serde_json::json!(false))?;
+        log::info!("[PLAYBACK] started mode={}", mode);
         Ok(())
     }
 
@@ -341,7 +357,10 @@ impl PlaybackService {
 
     /// Keep old method for backward compatibility
     pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
-        Ok(self.build_mpv_input(video_id)?.url)
+        let input = self.build_mpv_input(video_id)?;
+        let mode = if input.url.starts_with("lavf://concat:") { "CONCAT" } else { "PASSTHROUGH" };
+        log::info!("[PLAYBACK] build_url video_id={} mode={}", video_id, mode);
+        Ok(input.url)
     }
 
     /// Prefetch stream URLs for upcoming videos
@@ -368,6 +387,8 @@ impl PlaybackService {
     /// Append URL to MPV's playlist without starting playback.
     /// Use this instead of `play()` when building a queue.
     pub fn playlist_append(&self, url: &str) -> Result<()> {
+        let url_preview = if url.len() > 100 { &url[..100] } else { url };
+        log::info!("[PLAYBACK] playlist_append url=\"{}...\"", url_preview);
         self.mpv.lock().send_command(vec!["loadfile", url, "append"])?;
         Ok(())
     }

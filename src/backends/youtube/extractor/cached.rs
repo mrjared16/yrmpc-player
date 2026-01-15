@@ -221,14 +221,17 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
     }
 
     fn extract_one(&self, video_id: &str) -> Result<String> {
+        let start = std::time::Instant::now();
+        
         if let Some(url) = self.get_cached(video_id) {
-            log::debug!("Cache hit for {}", video_id);
+            log::info!("[EXTRACT] cache_hit video_id={} elapsed={:?}", video_id, start.elapsed());
             return Ok(url);
         }
 
         let cell = {
             let mut in_flight = self.in_flight.lock();
             if let Some(existing) = in_flight.get(video_id) {
+                log::debug!("[EXTRACT] coalescing video_id={}", video_id);
                 Arc::clone(existing)
             } else {
                 let cell = Arc::new(OnceLock::new());
@@ -239,14 +242,24 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
 
         let result = cell.get_or_init(|| {
             let version = self.next_version.fetch_add(1, Ordering::Relaxed);
-            log::debug!("Cache miss for {}, extracting (v={})...", video_id, version);
+            log::info!("[EXTRACT] cache_miss video_id={} version={}", video_id, version);
 
             match self.inner.extract_one(video_id) {
                 Ok(url) => {
                     self.try_cache(video_id, url.clone(), version, true);
+                    log::info!(
+                        "[EXTRACT] complete video_id={} elapsed={:?}",
+                        video_id, start.elapsed()
+                    );
                     Ok(url)
                 }
-                Err(e) => Err(e.to_string()),
+                Err(e) => {
+                    log::warn!(
+                        "[EXTRACT] failed video_id={} elapsed={:?} error={}",
+                        video_id, start.elapsed(), e
+                    );
+                    Err(e.to_string())
+                }
             }
         });
 

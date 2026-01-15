@@ -1,4 +1,7 @@
 //! Rate-limited audio prefetcher with priority queue.
+#![allow(dead_code)]
+#![deprecated(since = "0.1.0", note = "Use PreloadScheduler instead")]
+
 //!
 //! Downloads audio data for upcoming tracks with proper rate limiting
 //! to avoid YouTube rate limiting/bans. Prioritizes tracks closest

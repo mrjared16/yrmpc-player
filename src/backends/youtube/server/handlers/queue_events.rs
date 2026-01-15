@@ -9,17 +9,21 @@ use std::sync::Arc;
 use parking_lot::Mutex;
 
 use crate::{
-    backends::youtube::services::{AudioPrefetcherHandle, PlaybackService, QueueService},
+    backends::youtube::{
+        protocol::play_intent::{PreloadTier, RequestId},
+        services::{CacheExecutorHandle, PlaybackService, QueueService},
+    },
     shared::play_queue::{PlayQueue, QueueEvent, QueueId, RepeatMode},
 };
 
 const PREFETCH_WINDOW_SIZE: usize = 3;
+const QUEUE_EVENT_REQUEST_ID: RequestId = 0;
 
 pub struct QueueEventHandler {
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
     play_queue: Arc<Mutex<PlayQueue>>,
-    audio_prefetcher: Option<AudioPrefetcherHandle>,
+    cache_executor: Option<CacheExecutorHandle>,
 }
 
 impl QueueEventHandler {
@@ -29,11 +33,11 @@ impl QueueEventHandler {
         queue: Arc<QueueService>,
         play_queue: Arc<Mutex<PlayQueue>>,
     ) -> Self {
-        Self { playback, queue, play_queue, audio_prefetcher: None }
+        Self { playback, queue, play_queue, cache_executor: None }
     }
 
-    pub fn with_audio_prefetcher(mut self, handle: AudioPrefetcherHandle) -> Self {
-        self.audio_prefetcher = Some(handle);
+    pub fn with_cache_executor(mut self, executor: CacheExecutorHandle) -> Self {
+        self.cache_executor = Some(executor);
         self
     }
 
@@ -64,32 +68,24 @@ impl QueueEventHandler {
             .collect();
         drop(play_queue);
 
-        if !video_ids.is_empty() {
-            if let Some(ref prefetcher) = self.audio_prefetcher {
-                prefetcher.queue_batch(video_ids);
-            } else {
-                self.playback.prefetch_audio_batch(video_ids);
+        if video_ids.is_empty() {
+            return;
+        }
+
+        if let Some(ref executor) = self.cache_executor {
+            for uri in &video_ids {
+                let Some(track_id) = extract_video_id(uri) else {
+                    continue;
+                };
+                executor.preload(track_id, PreloadTier::Background, QUEUE_EVENT_REQUEST_ID);
             }
+        } else {
+            self.playback.prefetch_audio_batch(video_ids);
         }
     }
 
     fn handle_items_removed(&mut self, ids: &[QueueId]) {
         log::debug!("QueueEvent::ItemsRemoved: {ids:?}");
-
-        if let Some(ref prefetcher) = self.audio_prefetcher {
-            let video_ids: Vec<String> = ids
-                .iter()
-                .filter_map(|&id| {
-                    let id_u32: u32 = id.try_into().ok()?;
-                    self.queue.get_by_id(id_u32).ok().map(|s| s.uri.clone())
-                })
-                .filter(|uri| !uri.is_empty())
-                .collect();
-
-            if !video_ids.is_empty() {
-                prefetcher.cancel(video_ids);
-            }
-        }
     }
 
     fn handle_order_changed(&mut self, play_order: &[QueueId], current_id: Option<QueueId>) {
@@ -173,26 +169,28 @@ impl QueueEventHandler {
             .collect();
         drop(play_queue);
 
-        if !video_ids.is_empty() {
-            self.playback.prefetch(video_ids.clone());
+        if video_ids.is_empty() {
+            return;
+        }
 
-            if let Some(ref prefetcher) = self.audio_prefetcher {
-                let play_queue = self.play_queue.lock();
-                let current_video_id =
-                    current_id.and_then(|id| play_queue.get_song(id).map(|s| s.uri.clone()));
+        self.playback.prefetch(video_ids.clone());
 
-                let play_order_ids: Vec<String> = play_order
-                    .iter()
-                    .filter_map(|&id| play_queue.get_song(id).map(|s| s.uri.clone()))
-                    .filter(|uri| !uri.is_empty())
-                    .collect();
-                drop(play_queue);
+        if let Some(ref executor) = self.cache_executor {
+            for (index, uri) in video_ids.iter().enumerate() {
+                let Some(track_id) = extract_video_id(uri) else {
+                    continue;
+                };
 
-                prefetcher.update_context(current_video_id, play_order_ids);
-                prefetcher.queue_batch(video_ids);
-            } else {
-                self.playback.prefetch_audio_batch(video_ids);
+                let tier = match index {
+                    0 => PreloadTier::Immediate,
+                    1 => PreloadTier::Gapless,
+                    _ => PreloadTier::Eager,
+                };
+
+                executor.preload(track_id, tier, QUEUE_EVENT_REQUEST_ID);
             }
+        } else {
+            self.playback.prefetch_audio_batch(video_ids);
         }
     }
 
@@ -211,4 +209,16 @@ impl QueueEventHandler {
     fn handle_stopped(&mut self) {
         log::debug!("QueueEvent::Stopped");
     }
+}
+
+fn extract_video_id(uri: &str) -> Option<String> {
+    if let Some(id) = uri.strip_prefix("youtube://") {
+        return Some(id.to_string());
+    }
+
+    if !uri.is_empty() && !uri.contains("://") {
+        return Some(uri.to_string());
+    }
+
+    None
 }

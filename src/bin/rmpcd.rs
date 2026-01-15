@@ -2,7 +2,10 @@ use std::path::PathBuf;
 
 use anyhow::Result;
 use clap::Parser;
-use rmpc::backends::youtube::{YouTubeServer, config::{AudioSourceType, ExtractorType}};
+use rmpc::backends::youtube::{
+    YouTubeServer,
+    config::{AudioSourceType, ExtractorType},
+};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "YouTube Music daemon server", long_about = None)]
@@ -26,7 +29,6 @@ struct Args {
 }
 
 fn find_default_cookie_file() -> Option<PathBuf> {
-    // Check common locations for cookie file
     let locations = vec![
         dirs::config_dir().map(|d| d.join("rmpc/cookie.txt")),
         dirs::config_dir().map(|d| d.join("yrmpc/cookies.txt")),
@@ -46,14 +48,12 @@ fn find_default_cookie_file() -> Option<PathBuf> {
 }
 
 fn main() -> Result<()> {
-    // Initialize logger so log::info!, log::debug! etc work
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
         .format_timestamp(Some(env_logger::fmt::TimestampPrecision::Millis))
         .init();
 
     let args = Args::parse();
 
-    // Determine cookie file path
     let cookie_path = args.cookies.or_else(find_default_cookie_file);
 
     log::info!("Starting YouTube daemon at {:?}", args.socket);
@@ -61,10 +61,9 @@ fn main() -> Result<()> {
         log::info!("Using cookies from {:?}", path);
     }
 
-    // Parse extractor type
     let extractor_type = match args.extractor.to_lowercase().as_str() {
         "ytx" => ExtractorType::Ytx,
-        _ => ExtractorType::YtDlp, // Default to yt-dlp
+        _ => ExtractorType::YtDlp,
     };
     log::info!("Using stream extractor: {:?}", extractor_type);
 
@@ -74,7 +73,9 @@ fn main() -> Result<()> {
     };
     log::info!("Using audio source: {:?}", audio_source_type);
 
-    // Create YouTube server
+    let rt = tokio::runtime::Runtime::new()?;
+    let _guard = rt.enter();
+
     let server = YouTubeServer::new(
         &args.socket,
         cookie_path.as_deref().and_then(|p| p.to_str()),
@@ -84,6 +85,5 @@ fn main() -> Result<()> {
 
     log::info!("YouTube daemon ready, entering event loop...");
 
-    // Run server (blocks until shutdown)
     server.run()
 }

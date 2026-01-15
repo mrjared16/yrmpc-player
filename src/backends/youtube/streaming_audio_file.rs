@@ -1,5 +1,6 @@
 //! DORMANT: This module is kept for future ProxySource implementation.
-//! Currently not in active use - see audio::sources::concat for current implementation.
+//! Currently not in active use - see audio::sources::concat for current
+//! implementation.
 
 use std::{
     fs::{File, OpenOptions},
@@ -190,14 +191,20 @@ impl ProgressiveAudioFile {
 
                 let now = Instant::now();
                 if now >= deadline {
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, "Read timed out waiting for data"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Read timed out waiting for data",
+                    ));
                 }
                 let remaining = deadline - now;
 
                 let wait_result = self.condvar.wait_timeout(inner, remaining).unwrap();
                 inner = wait_result.0;
                 if wait_result.1.timed_out() {
-                    return Err(io::Error::new(io::ErrorKind::TimedOut, "Read timed out waiting for data"));
+                    return Err(io::Error::new(
+                        io::ErrorKind::TimedOut,
+                        "Read timed out waiting for data",
+                    ));
                 }
             }
         };

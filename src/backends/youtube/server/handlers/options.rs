@@ -45,6 +45,7 @@ pub fn handle_set_repeat(
         "all" => RepeatMode::All,
         _ => RepeatMode::Off,
     };
+    log::info!("[STATE] repeat_mode={:?}", repeat_mode);
     queue.set_repeat_mode(repeat_mode);
     let _ = event_tx.send("options".to_string());
     ServerResponse::Ok
@@ -56,6 +57,7 @@ pub fn handle_set_shuffle(
     event_tx: &Sender<String>,
     enabled: bool,
 ) -> ServerResponse {
+    log::info!("[STATE] shuffle={}", enabled);
     queue.set_shuffle_enabled(enabled);
 
     if let Some(current_pos) = queue.current_index() {

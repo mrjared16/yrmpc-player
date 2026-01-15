@@ -50,6 +50,8 @@ pub enum IntentKind {
     MoveDown,
     /// Save to library
     SaveToLibrary,
+    /// Start radio from seed song
+    StartRadio,
     // Note: Navigate and ToggleMark removed - they are UI operations
     // handled via PaneAction::NavigateTo and SelectableList state
 }
@@ -82,6 +84,11 @@ impl Intent {
     /// Create an add-to-queue intent.
     pub fn add_to_queue(items: Vec<DetailItem>) -> Self {
         Self::new(IntentKind::AddToQueue, Selection::new(items))
+    }
+
+    /// Create a start-radio intent from a seed song.
+    pub fn start_radio(seed: DetailItem) -> Self {
+        Self::new(IntentKind::StartRadio, Selection::single(seed))
     }
 
     // Note: navigate() removed - use PaneAction::NavigateTo instead

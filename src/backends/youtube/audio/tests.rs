@@ -1,10 +1,12 @@
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
+
 use tempfile::TempDir;
 
-use super::cache::{AudioCache, CacheConfig};
-use super::mpv_source::MpvInput;
-use super::sources::concat::FfmpegConcatSource;
+use super::{
+    cache::{AudioCache, CacheConfig},
+    mpv_source::MpvInput,
+    sources::concat::FfmpegConcatSource,
+};
 
 // ============================================================================
 // MpvInput Tests
@@ -44,7 +46,7 @@ fn test_audio_cache_new() {
         max_cache_size: 10240,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     assert!(!cache.has_prefix("test_video_id"));
     assert_eq!(cache.total_size(), 0);
 }
@@ -78,10 +80,10 @@ fn test_audio_cache_register_and_get() {
         max_cache_size: 10240,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     let path = temp_dir.path().join("test.webm");
     cache.register_prefix("video1", path.clone(), 500, 10000);
-    
+
     assert!(cache.has_prefix("video1"));
     assert_eq!(cache.get_content_length("video1"), Some(10000));
     assert_eq!(cache.total_size(), 500);
@@ -96,13 +98,13 @@ fn test_audio_cache_multiple_entries() {
         max_cache_size: 10240,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     let path1 = temp_dir.path().join("video1.webm");
     let path2 = temp_dir.path().join("video2.webm");
-    
+
     cache.register_prefix("video1", path1, 200, 5000);
     cache.register_prefix("video2", path2, 300, 6000);
-    
+
     assert!(cache.has_prefix("video1"));
     assert!(cache.has_prefix("video2"));
     assert_eq!(cache.get_content_length("video1"), Some(5000));
@@ -119,7 +121,7 @@ fn test_audio_cache_get_nonexistent() {
         max_cache_size: 10240,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     assert!(!cache.has_prefix("nonexistent"));
     assert_eq!(cache.get_content_length("nonexistent"), None);
 }
@@ -133,25 +135,25 @@ fn test_audio_cache_lru_eviction() {
         max_cache_size: 250,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     // Create actual files so eviction can delete them
     let path1 = temp_dir.path().join("video1.webm");
     let path2 = temp_dir.path().join("video2.webm");
     let path3 = temp_dir.path().join("video3.webm");
-    
+
     std::fs::write(&path1, vec![0u8; 100]).unwrap();
     std::fs::write(&path2, vec![0u8; 100]).unwrap();
     std::fs::write(&path3, vec![0u8; 100]).unwrap();
-    
+
     cache.register_prefix("video1", path1.clone(), 100, 1000);
     std::thread::sleep(std::time::Duration::from_millis(10));
     cache.register_prefix("video2", path2.clone(), 100, 1000);
     std::thread::sleep(std::time::Duration::from_millis(10));
     cache.register_prefix("video3", path3.clone(), 100, 1000);
-    
+
     // Total is 300, max is 250, so eviction should remove oldest
     cache.evict_lru().unwrap();
-    
+
     // video1 should be evicted (oldest)
     assert!(!cache.has_prefix("video1"));
     assert!(cache.has_prefix("video2"));
@@ -168,29 +170,29 @@ fn test_audio_cache_touch_updates_lru() {
         max_cache_size: 250,
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     let path1 = temp_dir.path().join("video1.webm");
     let path2 = temp_dir.path().join("video2.webm");
     let path3 = temp_dir.path().join("video3.webm");
-    
+
     std::fs::write(&path1, vec![0u8; 100]).unwrap();
     std::fs::write(&path2, vec![0u8; 100]).unwrap();
     std::fs::write(&path3, vec![0u8; 100]).unwrap();
-    
+
     cache.register_prefix("video1", path1.clone(), 100, 1000);
     std::thread::sleep(std::time::Duration::from_millis(10));
     cache.register_prefix("video2", path2.clone(), 100, 1000);
     std::thread::sleep(std::time::Duration::from_millis(10));
-    
+
     // Touch video1 to make it more recent than video2
     cache.touch("video1");
     std::thread::sleep(std::time::Duration::from_millis(10));
-    
+
     cache.register_prefix("video3", path3.clone(), 100, 1000);
-    
+
     // Now evict - video2 should be oldest
     cache.evict_lru().unwrap();
-    
+
     assert!(cache.has_prefix("video1"));
     assert!(!cache.has_prefix("video2")); // video2 evicted, not video1
     assert!(cache.has_prefix("video3"));
@@ -217,7 +219,7 @@ fn test_audio_cache_eviction_multiple_rounds() {
         max_cache_size: 250, // Allow 2 entries (200 bytes) to remain
     };
     let cache = AudioCache::new(config).unwrap();
-    
+
     // Add 4 entries (400 bytes total)
     for i in 1..=4 {
         let path = temp_dir.path().join(format!("video{}.webm", i));
@@ -225,10 +227,10 @@ fn test_audio_cache_eviction_multiple_rounds() {
         cache.register_prefix(&format!("video{}", i), path, 100, 1000);
         std::thread::sleep(std::time::Duration::from_millis(10));
     }
-    
+
     // Evict until under limit (150) - should remove video1 and video2
     cache.evict_lru().unwrap();
-    
+
     assert!(!cache.has_prefix("video1"));
     assert!(!cache.has_prefix("video2"));
     assert!(cache.has_prefix("video3"));
@@ -287,11 +289,11 @@ fn test_ffmpeg_concat_source_creation() {
         max_cache_size: 10240,
     };
     let cache = Arc::new(AudioCache::new(config).unwrap());
-    
+
     let url_resolver = Box::new(|_video_id: &str| -> anyhow::Result<String> {
         Ok("https://test.com/stream".to_string())
     });
-    
+
     let _source = FfmpegConcatSource::new(cache, url_resolver);
 }
 
@@ -316,7 +318,7 @@ fn test_cache_config_custom() {
         prefix_size: 512_000,
         max_cache_size: 104_857_600,
     };
-    
+
     assert_eq!(config.cache_dir, custom_path);
     assert_eq!(config.prefix_size, 512_000);
     assert_eq!(config.max_cache_size, 104_857_600);
