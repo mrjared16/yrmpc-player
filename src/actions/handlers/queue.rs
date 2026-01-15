@@ -7,6 +7,7 @@ use crate::{
         handler::{HandleResult, Handler},
         intent::{Intent, IntentKind},
     },
+    backends::youtube::protocol::play_intent::PlayIntent,
     ctx::Ctx,
     domain::ContentType,
 };
@@ -42,7 +43,7 @@ impl Handler for QueueHandler {
                 if songs.is_empty() {
                     return Ok(HandleResult::NotApplicable("No songs to add"));
                 }
-                ctx.queue_store().add(songs);
+                ctx.queue_store().play(PlayIntent::Append { tracks: songs });
                 Ok(HandleResult::Done)
             }
 

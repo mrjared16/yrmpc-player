@@ -346,9 +346,16 @@ impl SearchPaneV2 {
 
         let count = songs.len();
         if play {
-            ctx.queue_store().add_and_play(songs);
+            // Play immediately (replace queue and play)
+            ctx.queue_store().play(PlayIntent::Context {
+                tracks: songs,
+                offset: 0,
+                shuffle: false,
+                source: None,
+            });
         } else {
-            ctx.queue_store().add(songs);
+            // Add to queue without playing
+            ctx.queue_store().play(PlayIntent::Append { tracks: songs });
         }
 
         let _ = ctx.render();
