@@ -223,7 +223,7 @@ impl YouTubeProxy {
     }
 
     /// Send command and expect Ok response
-    fn request_ok(&mut self, cmd: ServerCommand) -> Result<()> {
+    pub fn request_ok(&mut self, cmd: ServerCommand) -> Result<()> {
         log::debug!(
             "YouTubeClient::request_ok - sending command: {:?}",
             std::mem::discriminant(&cmd)

@@ -29,7 +29,7 @@ use ratatui::{
 use super::{Pane, browser::SongExt};
 use crate::{
     QueryResult,
-    backends::BackendActions,
+    backends::{BackendActions, youtube::protocol::play_intent::{PlayIntent, ContextSource}},
     config::{keys::CommonAction, tabs::PaneType},
     ctx::Ctx,
     domain::{ContentType, DetailItem, SearchResultsContent, SearchableContent, Song},
@@ -524,19 +524,13 @@ impl SearchPaneV2 {
     /// Play all songs starting from index
     fn play_all_songs(&self, ctx: &Ctx, songs: Vec<Song>, start_index: usize) {
         if !songs.is_empty() {
-            let queue_items: Vec<_> =
-                songs.into_iter().map(|s| Enqueue::Song { song: s }).collect();
-
-            let current_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
-
-            crate::backends::BackendDispatcher::resolve_and_enqueue(
-                ctx,
-                queue_items,
-                crate::config::keys::actions::Position::Replace,
-                crate::config::keys::actions::AutoplayKind::First,
-                current_idx,
-                Some(start_index),
-            );
+            let query = self.get_current_query_string();
+            ctx.queue_store().play(PlayIntent::Context {
+                tracks: songs,
+                offset: start_index,
+                shuffle: false,
+                source: Some(ContextSource::Search { query }),
+            });
         }
     }
 
@@ -581,7 +575,13 @@ impl SearchPaneV2 {
     }
 
     fn play_song(&self, ctx: &Ctx, song: Song) {
-        ctx.queue_store().replace_and_play(vec![song]);
+        let query = self.get_current_query_string();
+        ctx.queue_store().play(PlayIntent::Context {
+            tracks: vec![song],
+            offset: 0,
+            shuffle: false,
+            source: Some(ContextSource::Search { query }),
+        });
     }
 
     fn fetch_playlist_detail(&self, ctx: &Ctx, playlist_id: String) {

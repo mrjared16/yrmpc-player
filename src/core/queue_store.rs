@@ -24,9 +24,18 @@ use std::{
     sync::{Arc, RwLock, RwLockReadGuard},
 };
 
+use std::sync::atomic::{AtomicU64, Ordering};
+
 use crossbeam::channel::Sender;
 
 use crate::{AppEvent, domain::Song};
+use crate::backends::youtube::protocol::play_intent::{PlayIntent, RequestId};
+
+static REQUEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_request_id() -> RequestId {
+    REQUEST_COUNTER.fetch_add(1, Ordering::SeqCst)
+}
 
 /// Wrapper for RwLockReadGuard that derefs through Arc to Vec<Song>
 pub struct QueueReadGuard<'a> {
@@ -56,6 +65,8 @@ pub trait QueueDaemon: Send + Sync + 'static {
     fn clear(&self);
     /// Request a queue refresh from daemon (for reconciliation)
     fn refresh(&self);
+    /// Play with explicit intent (new PlayIntent-based API)
+    fn play_with_intent(&self, intent: PlayIntent, request_id: RequestId);
 }
 
 pub struct QueueStore {
@@ -265,6 +276,67 @@ impl QueueStore {
         self.notify();
     }
 
+    /// Play with explicit intent (new PlayIntent-based API)
+    pub fn play(&self, intent: PlayIntent) {
+        let request_id = next_request_id();
+        
+        // Optimistic local update - adapt to available QueueStore methods
+        match &intent {
+            PlayIntent::Context { tracks, offset: _, shuffle: _, source: _ } => {
+                // For Context, replace the entire queue
+                let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
+                    s.id = None;
+                    s
+                }).collect();
+                {
+                    let mut guard = self.inner.write().expect("queue lock poisoned");
+                    *guard = Arc::new(optimistic);
+                }
+            }
+            PlayIntent::Next { tracks } => {
+                // For Next, append to queue (no insert_after_current available)
+                {
+                    let mut guard = self.inner.write().expect("queue lock poisoned");
+                    let mut new_queue = (**guard).clone();
+                    let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
+                        s.id = None;
+                        s
+                    }).collect();
+                    new_queue.extend(optimistic);
+                    *guard = Arc::new(new_queue);
+                }
+            }
+            PlayIntent::Append { tracks } => {
+                // For Append, add to end
+                {
+                    let mut guard = self.inner.write().expect("queue lock poisoned");
+                    let mut new_queue = (**guard).clone();
+                    let optimistic: Vec<Song> = tracks.iter().cloned().map(|mut s| {
+                        s.id = None;
+                        s
+                    }).collect();
+                    new_queue.extend(optimistic);
+                    *guard = Arc::new(new_queue);
+                }
+            }
+            PlayIntent::Radio { seed, mix_type: _ } => {
+                // For Radio, replace with seed track
+                let mut optimistic = seed.clone();
+                optimistic.id = None;
+                {
+                    let mut guard = self.inner.write().expect("queue lock poisoned");
+                    *guard = Arc::new(vec![optimistic]);
+                }
+            }
+        }
+        
+        // Notify UI
+        self.notify();
+        
+        // Send to daemon (fire-and-forget)
+        self.daemon.play_with_intent(intent, request_id);
+    }
+
     // ========== INTERNAL ==========
 
     fn notify(&self) {
@@ -317,6 +389,10 @@ mod tests {
 
         fn refresh(&self) {
             self.refresh_count.fetch_add(1, Ordering::SeqCst);
+        }
+
+        fn play_with_intent(&self, _intent: PlayIntent, _request_id: RequestId) {
+            // No-op for tests
         }
     }
 

@@ -4,6 +4,8 @@ use crossbeam::channel::Sender;
 
 use super::queue_store::QueueDaemon;
 use crate::{AppEvent, Query, QueryResult, domain::Song, shared::events::ClientRequest};
+use crate::backends::youtube::protocol::play_intent::{PlayIntent, RequestId};
+use crate::backends::youtube::protocol::ServerCommand;
 
 pub struct CtxQueueDaemon {
     client_request_sender: Sender<ClientRequest>,
@@ -86,6 +88,18 @@ impl QueueDaemon for CtxQueueDaemon {
             }),
         };
         let _ = self.client_request_sender.send(ClientRequest::Query(query));
+    }
+
+    fn play_with_intent(&self, intent: PlayIntent, request_id: RequestId) {
+        let cmd = crate::PlayerCommand {
+            callback: Box::new(move |client| {
+                if let crate::backends::BackendDispatcher::YouTube(yt) = client {
+                    yt.request_ok(ServerCommand::PlayWithIntent { intent, request_id })?;
+                }
+                Ok(())
+            }),
+        };
+        let _ = self.client_request_sender.send(ClientRequest::Command(cmd));
     }
 }
 
