@@ -10,6 +10,7 @@ use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
 use crate::{
+    backends::youtube::protocol::play_intent::{ContextSource, PlayIntent},
     ctx::Ctx,
     domain::{DetailItem, PlaylistContent, content::ContentType},
     shared::key_event::KeyEvent,
@@ -71,7 +72,7 @@ impl NavigatorPane for PlaylistDetailPane {
         Ok(match self.view.handle_key(key, ctx) {
             ContentAction::Handled => PaneAction::Handled,
             ContentAction::Back => PaneAction::BackPane,
-            ContentAction::Activate(item) => self.resolve_action(item),
+            ContentAction::Activate(item) => self.resolve_action(item, ctx),
             ContentAction::Mark(_) => PaneAction::Handled,
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 PaneAction::Handled
@@ -90,21 +91,37 @@ impl PlaylistDetailPane {
     /// Interpret what activation means for a DetailItem in PlaylistDetailPane.
     ///
     /// Uses Selection to handle marked-items-vs-current logic uniformly.
-    fn resolve_action(&self, item: DetailItem) -> PaneAction {
+    fn resolve_action(&self, item: DetailItem, ctx: &Ctx) -> PaneAction {
         match item {
             DetailItem::Song(song) => {
                 // Use Selection to get marked items or fall back to current
                 let selection = self.view.get_selection();
                 let songs = selection.songs_cloned();
 
+                // Get the playlist ID from current content
+                let playlist_id = self.view.current()
+                    .map(|level| level.content.id.clone())
+                    .unwrap_or_default();
+
                 if songs.len() > 1 {
                     // Multiple songs selected - play all starting from activated song
                     let start_index = selection.find_song_index(&song.uri).unwrap_or(0);
-                    PaneAction::PlayAll { songs, start_index }
+                    ctx.queue_store().play(PlayIntent::Context {
+                        tracks: songs,
+                        offset: start_index,
+                        shuffle: false,
+                        source: Some(ContextSource::Playlist { playlist_id }),
+                    });
                 } else {
                     // Single song - play it
-                    PaneAction::Play(song)
+                    ctx.queue_store().play(PlayIntent::Context {
+                        tracks: vec![song],
+                        offset: 0,
+                        shuffle: false,
+                        source: Some(ContextSource::Playlist { playlist_id }),
+                    });
                 }
+                PaneAction::Handled
             }
             DetailItem::Ref(content_ref) => {
                 let entity_type = match content_ref.content_type {
