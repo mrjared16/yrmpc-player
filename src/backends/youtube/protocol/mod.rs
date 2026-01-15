@@ -8,6 +8,7 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 
 use crate::domain::{MediaItem, PlaybackState, Song, Status, status::OnOffOneshot};
+use play_intent::{PlayIntent, RequestId, PlayError};
 
 /// Commands sent from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -22,6 +23,18 @@ pub enum ServerCommand {
     SeekRelative(f64),
     PlayPos(usize),
     PlayId(u32),
+    
+    // Intent-based playback (new architecture)
+    /// Start playback with explicit intent.
+    PlayWithIntent {
+        intent: PlayIntent,
+        request_id: RequestId,
+    },
+    
+    /// Cancel pending preparation work for a request.
+    CancelRequest {
+        request_id: RequestId,
+    },
 
     // Queue management
     Add {
@@ -127,6 +140,8 @@ pub enum ServerResponse {
     AlbumDetails(AlbumDetailsData),
     /// Detailed artist info
     ArtistDetails(ArtistDetailsData),
+    
+    PlayResult(Result<(), PlayError>),
 }
 
 /// Serializable status data
