@@ -433,9 +433,16 @@ impl YouTubeServer {
             // Idle handler
             ServerCommand::Idle { subsystems } => self.handle_idle(subsystems),
             
-            // PlayIntent handlers (stub - implementation in task 1.3)
-            ServerCommand::PlayWithIntent { intent: _, request_id: _ } => {
-                ServerResponse::Error("PlayWithIntent not yet implemented".to_string())
+            // PlayIntent handlers
+            ServerCommand::PlayWithIntent { intent, request_id } => {
+                handlers::handle_play_with_intent(
+                    intent,
+                    request_id,
+                    &self.playback,
+                    &self.queue,
+                    &self.state_tracker,
+                    &self.event_tx,
+                )
             }
             ServerCommand::CancelRequest { request_id: _ } => {
                 ServerResponse::Error("CancelRequest not yet implemented".to_string())

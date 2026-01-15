@@ -141,7 +141,7 @@ pub enum ServerResponse {
     /// Detailed artist info
     ArtistDetails(ArtistDetailsData),
     
-    PlayResult(Result<(), PlayError>),
+    PlayIntentError(PlayError),
 }
 
 /// Serializable status data
