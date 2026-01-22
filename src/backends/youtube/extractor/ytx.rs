@@ -168,6 +168,14 @@ impl Extractor for YtxExtractor {
         log::debug!("ytx extracted URL for {} (len={})", video_id, url.len());
         Ok(url.to_string())
     }
+
+    fn clear_cache(&self) {}
+
+    fn is_cached(&self, _video_id: &str) -> bool {
+        false
+    }
+
+    fn invalidate(&self, _video_id: &str) {}
 }
 
 #[cfg(test)]

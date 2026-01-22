@@ -8,7 +8,7 @@
 //! The YouTube backend has several stateful services that MUST be shared:
 //! - `UrlResolver`: Has an extraction cache (prevents duplicate yt-dlp calls)
 //! - `AudioCache`: Manages downloaded audio files
-//! - `CacheExecutorHandle`: Single work queue for cache operations
+//! - `YouTubeMediaPreparerHandle`: Single work queue for cache operations
 //!
 //! Previously, components created their own instances, causing bugs like
 //! duplicate URL extractions (each resolver had its own empty cache).
@@ -22,12 +22,12 @@
 //! ├─────────────────────────────────────────────────────┤
 //! │  url_resolver: Arc<UrlResolver>     ←── shared      │
 //! │  audio_cache: Arc<AudioCache>       ←── shared      │
-//! │  cache_executor: CacheExecutorHandle ←── shared     │
+//! │  media_preparer: YouTubeMediaPreparerHandle ←── shared     │
 //! └─────────────────────────────────────────────────────┘
 //!           │           │           │
 //!           ▼           ▼           ▼
 //!    ┌──────────┐ ┌──────────┐ ┌──────────┐
-//!    │CacheExec │ │Ffmpeg    │ │Playback  │
+//!    │MediaPrep │ │Ffmpeg    │ │Playback  │
 //!    │          │ │ConcatSrc │ │Service   │
 //!    └──────────┘ └──────────┘ └──────────┘
 //! ```
@@ -50,28 +50,34 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::backends::youtube::{
-    audio::{cache::AudioCache, CacheConfig},
-    config::ExtractorType,
+    audio::{CacheConfig, cache::AudioCache},
+    config::{AudioSourceType, ExtractorType},
+    media::{MediaPreparer, YouTubeMediaPreparer, YouTubeMediaPreparerHandle},
     url_resolver::UrlResolver,
 };
-
-use super::{CacheExecutor, CacheExecutorHandle};
 
 #[derive(Clone)]
 pub struct YouTubeServices {
     url_resolver: Arc<UrlResolver>,
     audio_cache: Arc<AudioCache>,
-    cache_executor: CacheExecutorHandle,
+    media_preparer: YouTubeMediaPreparerHandle,
 }
 
 impl YouTubeServices {
-    pub fn new(extractor_type: ExtractorType, cache_config: CacheConfig) -> Result<Self> {
+    pub fn new(
+        extractor_type: ExtractorType,
+        audio_source_type: AudioSourceType,
+        cache_config: CacheConfig,
+    ) -> Result<Self> {
         let url_resolver = Arc::new(UrlResolver::new(extractor_type));
         let audio_cache = Arc::new(AudioCache::new(cache_config)?);
-        let cache_executor =
-            CacheExecutor::spawn(Arc::clone(&url_resolver), Arc::clone(&audio_cache));
+        let media_preparer = YouTubeMediaPreparer::spawn(
+            Arc::clone(&url_resolver),
+            Arc::clone(&audio_cache),
+            audio_source_type,
+        );
 
-        Ok(Self { url_resolver, audio_cache, cache_executor })
+        Ok(Self { url_resolver, audio_cache, media_preparer })
     }
 
     pub fn url_resolver(&self) -> Arc<UrlResolver> {
@@ -82,12 +88,12 @@ impl YouTubeServices {
         Arc::clone(&self.audio_cache)
     }
 
-    pub fn cache_executor(&self) -> CacheExecutorHandle {
-        self.cache_executor.clone()
+    pub fn media_preparer(&self) -> Arc<dyn MediaPreparer> {
+        Arc::new(self.media_preparer.clone())
     }
 
     pub fn shutdown(&self) {
-        self.cache_executor.shutdown();
+        self.media_preparer.shutdown();
     }
 }
 
@@ -96,7 +102,7 @@ impl std::fmt::Debug for YouTubeServices {
         f.debug_struct("YouTubeServices")
             .field("url_resolver", &self.url_resolver)
             .field("audio_cache", &"Arc<AudioCache>")
-            .field("cache_executor", &"CacheExecutorHandle")
+            .field("media_preparer", &"YouTubeMediaPreparerHandle")
             .finish()
     }
 }

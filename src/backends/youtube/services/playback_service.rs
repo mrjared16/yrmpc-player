@@ -42,7 +42,8 @@ impl PlaybackService {
         url_resolver: Arc<UrlResolver>,
         audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
     ) -> Result<Self> {
-        let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path)?;
+        let passthrough_mode = audio_source.is_none();
+        let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path, passthrough_mode)?;
 
         Ok(Self {
             mpv: Mutex::new(mpv),
@@ -162,7 +163,10 @@ impl PlaybackService {
     }
 
     /// Connect to existing MPV or spawn new process
-    fn connect_or_spawn_mpv(socket_path: &Path) -> Result<(MpvIpc, Option<Child>)> {
+    fn connect_or_spawn_mpv(
+        socket_path: &Path,
+        passthrough_mode: bool,
+    ) -> Result<(MpvIpc, Option<Child>)> {
         // Try connecting to existing MPV first
         log::info!("Checking for existing MPV at socket: {}", socket_path.display());
 
@@ -175,9 +179,8 @@ impl PlaybackService {
                 );
                 log::warn!("⚠ Note: MPV may have old playlist state from previous session");
                 return Ok((mpv, None));
-            } else {
-                log::warn!("Socket exists but connection failed - MPV may have crashed");
             }
+            log::warn!("Socket exists but connection failed - MPV may have crashed");
         } else {
             log::info!("No socket file found at {}", socket_path.display());
         }
@@ -201,6 +204,13 @@ impl PlaybackService {
             "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat".to_string(),
             format!("--input-ipc-server={}", socket_str),
         ];
+
+        if passthrough_mode {
+            args.push("--stream-lavf-o-append=reconnect=1".to_string());
+            args.push("--stream-lavf-o-append=reconnect_streamed=1".to_string());
+            args.push("--stream-lavf-o-append=reconnect_at_eof=1".to_string());
+            args.push("--stream-lavf-o-append=reconnect_delay_max=5".to_string());
+        }
 
         // Add verbose MPV logging only at TRACE level
         if log::log_enabled!(log::Level::Debug) {
@@ -250,10 +260,12 @@ impl PlaybackService {
 
         let mode = if input.url.starts_with("lavf://concat:") { "CONCAT" } else { "PASSTHROUGH" };
         let url_preview = if input.url.len() > 80 { &input.url[..80] } else { &input.url };
-        
+
         log::info!(
             "[PLAYBACK] mode={} title=\"{}\" url_preview=\"{}...\"",
-            mode, media_title, url_preview
+            mode,
+            media_title,
+            url_preview
         );
 
         log::debug!("Setting force-media-title to: {}", media_title);
@@ -370,6 +382,10 @@ impl PlaybackService {
 
     pub fn prefetch_audio_batch(&self, video_ids: Vec<String>) {
         self.prefetch(video_ids);
+    }
+
+    pub fn clear_stream_url_cache(&self) {
+        self.url_resolver.clear_cache();
     }
 
     pub fn has_cached_audio(&self, video_id: &str) -> bool {

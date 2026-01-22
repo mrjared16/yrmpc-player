@@ -8,7 +8,6 @@
 
 pub mod api_service;
 pub mod audio_prefetcher;
-pub mod cache_executor;
 pub mod internal_event;
 pub mod playback_service;
 pub mod playback_state;
@@ -18,11 +17,10 @@ pub mod queue_service;
 pub mod registry;
 
 pub use api_service::ApiService;
-pub use cache_executor::{CacheExecutor, CacheExecutorHandle, CacheRequest, PrepareResult};
 pub use internal_event::InternalEvent;
 pub use playback_service::PlaybackService;
 pub use playback_state::{AdvanceIntent, PlaybackState, PlaybackStateTracker};
 pub use preload_scheduler::{ArtifactKind, PreloadRequest, PreloadScheduler, TrackId};
-pub use preparer::{PlaybackMode, PreparedPlayback, Preparer, PreparerConfig};
+pub use preparer::{PlaybackMode, PlaybackPreparer, PlaybackPreparerConfig, PreparedPlayback};
 pub use queue_service::{QueueItem, QueueService, RepeatMode};
 pub use registry::YouTubeServices;

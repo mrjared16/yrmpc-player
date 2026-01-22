@@ -1,25 +1,36 @@
 use std::{
     collections::{HashMap, VecDeque},
     path::PathBuf,
-    sync::Arc,
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
 use parking_lot::Mutex;
-use tokio::sync::{
-    mpsc,
-    oneshot,
-    Notify,
-    OwnedSemaphorePermit,
-    Semaphore,
+use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+
+use super::{
+    super::{
+        audio::cache::AudioCache,
+        config::AudioSourceType,
+        protocol::play_intent::RequestId,
+        url_resolver::UrlResolver,
+    },
+    MediaPreparer,
+    PreloadTier,
+    PrepareStatus,
+    PreparedMedia,
 };
 
-use super::super::{
-    audio::cache::AudioCache,
-    protocol::play_intent::{PreloadTier, RequestId},
-    url_resolver::UrlResolver,
-};
+static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+fn next_request_id() -> RequestId {
+    REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
+}
 
 #[derive(Debug)]
 pub enum CacheRequest {
@@ -42,30 +53,16 @@ pub enum CacheRequest {
 
 #[derive(Debug, Clone)]
 pub enum PrepareResult {
-    Concat {
-        prefix_path: PathBuf,
-        stream_url: String,
-        content_length: u64,
-    },
-    Passthrough {
-        stream_url: String,
-    },
+    Concat { prefix_path: PathBuf, stream_url: String, content_length: u64 },
+    Passthrough { stream_url: String },
     Failed(String),
 }
 
 #[derive(Debug, Clone)]
 enum JobState {
-    ResolvingUrl {
-        track_id: String,
-    },
-    UrlResolved {
-        track_id: String,
-        stream_url: String,
-    },
-    DownloadingPrefix {
-        track_id: String,
-        stream_url: String,
-    },
+    ResolvingUrl { track_id: String },
+    UrlResolved { track_id: String, stream_url: String },
+    DownloadingPrefix { track_id: String, stream_url: String },
     Completed(PrepareResult),
 }
 
@@ -77,10 +74,7 @@ struct InFlightJob {
 
 impl InFlightJob {
     fn new(track_id: String) -> Self {
-        Self {
-            state: Mutex::new(JobState::ResolvingUrl { track_id }),
-            notify: Notify::new(),
-        }
+        Self { state: Mutex::new(JobState::ResolvingUrl { track_id }), notify: Notify::new() }
     }
 
     fn snapshot(&self) -> JobState {
@@ -120,22 +114,18 @@ impl TierPermits {
 
     async fn acquire(&self, tier: PreloadTier) -> OwnedSemaphorePermit {
         match tier {
-            PreloadTier::Immediate => Arc::clone(&self.immediate)
-                .acquire_owned()
-                .await
-                .expect("semaphore closed"),
-            PreloadTier::Gapless => Arc::clone(&self.gapless)
-                .acquire_owned()
-                .await
-                .expect("semaphore closed"),
-            PreloadTier::Eager => Arc::clone(&self.eager)
-                .acquire_owned()
-                .await
-                .expect("semaphore closed"),
-            PreloadTier::Background => Arc::clone(&self.background)
-                .acquire_owned()
-                .await
-                .expect("semaphore closed"),
+            PreloadTier::Immediate => {
+                Arc::clone(&self.immediate).acquire_owned().await.expect("semaphore closed")
+            }
+            PreloadTier::Gapless => {
+                Arc::clone(&self.gapless).acquire_owned().await.expect("semaphore closed")
+            }
+            PreloadTier::Eager => {
+                Arc::clone(&self.eager).acquire_owned().await.expect("semaphore closed")
+            }
+            PreloadTier::Background => {
+                Arc::clone(&self.background).acquire_owned().await.expect("semaphore closed")
+            }
         }
     }
 }
@@ -145,11 +135,12 @@ enum InternalEvent {
     JobFinished { track_id: String },
 }
 
-pub struct CacheExecutor {
+pub struct YouTubeMediaPreparer {
     rx: mpsc::Receiver<CacheRequest>,
     in_flight: HashMap<String, Arc<InFlightJob>>,
     url_resolver: Arc<UrlResolver>,
     audio_cache: Arc<AudioCache>,
+    audio_source_type: AudioSourceType,
     background_queue: VecDeque<PreloadJob>,
     permits: TierPermits,
     internal_rx: mpsc::UnboundedReceiver<InternalEvent>,
@@ -157,12 +148,16 @@ pub struct CacheExecutor {
 }
 
 #[derive(Clone)]
-pub struct CacheExecutorHandle {
+pub struct YouTubeMediaPreparerHandle {
     tx: mpsc::Sender<CacheRequest>,
 }
 
-impl CacheExecutor {
-    pub fn spawn(url_resolver: Arc<UrlResolver>, audio_cache: Arc<AudioCache>) -> CacheExecutorHandle {
+impl YouTubeMediaPreparer {
+    pub fn spawn(
+        url_resolver: Arc<UrlResolver>,
+        audio_cache: Arc<AudioCache>,
+        audio_source_type: AudioSourceType,
+    ) -> YouTubeMediaPreparerHandle {
         let (tx, rx) = mpsc::channel(256);
         let (internal_tx, internal_rx) = mpsc::unbounded_channel();
 
@@ -171,6 +166,7 @@ impl CacheExecutor {
             in_flight: HashMap::new(),
             url_resolver,
             audio_cache,
+            audio_source_type,
             background_queue: VecDeque::new(),
             permits: TierPermits::new(),
             internal_rx,
@@ -181,11 +177,11 @@ impl CacheExecutor {
             executor.run().await;
         });
 
-        CacheExecutorHandle { tx }
+        YouTubeMediaPreparerHandle { tx }
     }
 
     async fn run(&mut self) {
-        log::info!("CacheExecutor started");
+        log::info!("YouTubeMediaPreparer started");
 
         loop {
             tokio::select! {
@@ -224,7 +220,7 @@ impl CacheExecutor {
             }
         }
 
-        log::info!("CacheExecutor stopped");
+        log::info!("YouTubeMediaPreparer stopped");
     }
 
     fn handle_prepare_request(
@@ -240,10 +236,10 @@ impl CacheExecutor {
             self.spawn_url_resolution(track_id.clone(), Arc::clone(&job));
         }
 
-        let url_resolver = Arc::clone(&self.url_resolver);
         let audio_cache = Arc::clone(&self.audio_cache);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
+        let audio_source_type = self.audio_source_type;
 
         tokio::spawn(async move {
             let result = Self::wait_or_coalesce_impl(
@@ -251,6 +247,7 @@ impl CacheExecutor {
                 permits,
                 internal_tx,
                 Arc::clone(&job),
+                audio_source_type,
                 tier,
                 deadline,
             )
@@ -259,7 +256,12 @@ impl CacheExecutor {
         });
     }
 
-    fn handle_preload_request(&mut self, track_id: String, tier: PreloadTier, request_id: RequestId) {
+    fn handle_preload_request(
+        &mut self,
+        track_id: String,
+        tier: PreloadTier,
+        request_id: RequestId,
+    ) {
         let job = PreloadJob { track_id, tier, request_id };
 
         match job.tier {
@@ -286,10 +288,10 @@ impl CacheExecutor {
             self.spawn_url_resolution(job.track_id.clone(), Arc::clone(&in_flight));
         }
 
-        let url_resolver = Arc::clone(&self.url_resolver);
         let audio_cache = Arc::clone(&self.audio_cache);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
+        let audio_source_type = self.audio_source_type;
         let track_id = job.track_id;
         let tier = job.tier;
 
@@ -299,6 +301,7 @@ impl CacheExecutor {
                 permits,
                 internal_tx,
                 Arc::clone(&in_flight),
+                audio_source_type,
                 tier,
                 None,
             )
@@ -319,6 +322,7 @@ impl CacheExecutor {
     fn spawn_url_resolution(&self, track_id: String, job: Arc<InFlightJob>) {
         let url_resolver = Arc::clone(&self.url_resolver);
         let internal_tx = self.internal_tx.clone();
+        let audio_source_type = self.audio_source_type;
 
         tokio::spawn(async move {
             let track_id_for_blocking = track_id.clone();
@@ -331,7 +335,17 @@ impl CacheExecutor {
 
             match resolved {
                 Ok(info) => {
-                    job.set_state(JobState::UrlResolved { track_id: track_id.clone(), stream_url: info.url });
+                    if audio_source_type == AudioSourceType::Passthrough {
+                        job.set_state(JobState::Completed(PrepareResult::Passthrough {
+                            stream_url: info.url,
+                        }));
+                        let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
+                    } else {
+                        job.set_state(JobState::UrlResolved {
+                            track_id: track_id.clone(),
+                            stream_url: info.url,
+                        });
+                    }
                 }
                 Err(e) => {
                     job.set_state(JobState::Completed(PrepareResult::Failed(e.to_string())));
@@ -366,6 +380,7 @@ impl CacheExecutor {
             self.permits.clone(),
             self.internal_tx.clone(),
             job,
+            self.audio_source_type,
             tier,
             deadline,
         )
@@ -377,6 +392,7 @@ impl CacheExecutor {
         permits: TierPermits,
         internal_tx: mpsc::UnboundedSender<InternalEvent>,
         job: Arc<InFlightJob>,
+        audio_source_type: AudioSourceType,
         tier: PreloadTier,
         deadline: Option<Duration>,
     ) -> PrepareResult {
@@ -389,10 +405,18 @@ impl CacheExecutor {
                     return result;
                 }
                 JobState::UrlResolved { track_id, stream_url } => {
+                    if audio_source_type == AudioSourceType::Passthrough {
+                        return PrepareResult::Passthrough { stream_url };
+                    }
+
                     if audio_cache.has_prefix(&track_id) {
                         if let Some(content_length) = audio_cache.get_content_length(&track_id) {
                             let prefix_path = audio_cache.cache_path(&track_id);
-                            return PrepareResult::Concat { prefix_path, stream_url, content_length };
+                            return PrepareResult::Concat {
+                                prefix_path,
+                                stream_url,
+                                content_length,
+                            };
                         }
                     }
 
@@ -446,9 +470,11 @@ impl CacheExecutor {
             let _permit = permits.acquire(tier).await;
 
             let outcome = match audio_cache.ensure_prefix(&track_id, &stream_url).await {
-                Ok((prefix_path, content_length)) => {
-                    PrepareResult::Concat { prefix_path, stream_url: stream_url.clone(), content_length }
-                }
+                Ok((prefix_path, content_length)) => PrepareResult::Concat {
+                    prefix_path,
+                    stream_url: stream_url.clone(),
+                    content_length,
+                },
                 Err(e) => PrepareResult::Failed(e.to_string()),
             };
 
@@ -475,19 +501,33 @@ impl CacheExecutor {
         if tier == PreloadTier::Immediate {
             if let Some(deadline) = deadline {
                 match tokio::time::timeout(deadline, wait).await {
-                    Ok(PrepareResult::Concat { prefix_path, stream_url: resolved_url, content_length }) => {
-                        PrepareResult::Concat { prefix_path, stream_url: resolved_url, content_length }
-                    }
+                    Ok(PrepareResult::Concat {
+                        prefix_path,
+                        stream_url: resolved_url,
+                        content_length,
+                    }) => PrepareResult::Concat {
+                        prefix_path,
+                        stream_url: resolved_url,
+                        content_length,
+                    },
                     Ok(PrepareResult::Passthrough { stream_url: resolved_url }) => {
                         PrepareResult::Passthrough { stream_url: resolved_url }
                     }
-                    Ok(PrepareResult::Failed(_)) | Err(_) => PrepareResult::Passthrough { stream_url },
+                    Ok(PrepareResult::Failed(_)) | Err(_) => {
+                        PrepareResult::Passthrough { stream_url }
+                    }
                 }
             } else {
                 match wait.await {
-                    PrepareResult::Concat { prefix_path, stream_url: resolved_url, content_length } => {
-                        PrepareResult::Concat { prefix_path, stream_url: resolved_url, content_length }
-                    }
+                    PrepareResult::Concat {
+                        prefix_path,
+                        stream_url: resolved_url,
+                        content_length,
+                    } => PrepareResult::Concat {
+                        prefix_path,
+                        stream_url: resolved_url,
+                        content_length,
+                    },
                     PrepareResult::Passthrough { stream_url: resolved_url } => {
                         PrepareResult::Passthrough { stream_url: resolved_url }
                     }
@@ -500,7 +540,7 @@ impl CacheExecutor {
     }
 }
 
-impl CacheExecutorHandle {
+impl YouTubeMediaPreparerHandle {
     pub async fn prepare(
         &self,
         track_id: String,
@@ -512,24 +552,52 @@ impl CacheExecutorHandle {
             .send(CacheRequest::Prepare { track_id, tier, deadline, response: tx })
             .await
             .context("Failed to send CacheRequest::Prepare")?;
-        rx.await.context("CacheExecutor dropped prepare response")
+        rx.await.context("YouTubeMediaPreparer dropped prepare response")
     }
 
     pub fn preload(&self, track_id: String, tier: PreloadTier, request_id: RequestId) {
         if let Err(e) = self.tx.try_send(CacheRequest::Preload { track_id, tier, request_id }) {
-            log::debug!("CacheExecutor preload dropped: {e}");
+            log::debug!("YouTubeMediaPreparer preload dropped: {e}");
         }
     }
 
     pub fn cancel(&self, request_id: RequestId) {
         if let Err(e) = self.tx.try_send(CacheRequest::Cancel { request_id }) {
-            log::debug!("CacheExecutor cancel dropped: {e}");
+            log::debug!("YouTubeMediaPreparer cancel dropped: {e}");
         }
     }
 
     pub fn shutdown(&self) {
         if let Err(e) = self.tx.try_send(CacheRequest::Shutdown) {
-            log::debug!("CacheExecutor shutdown dropped: {e}");
+            log::debug!("YouTubeMediaPreparer shutdown dropped: {e}");
         }
+    }
+}
+
+#[async_trait]
+impl MediaPreparer for YouTubeMediaPreparerHandle {
+    async fn prepare(&self, track_id: &str, tier: PreloadTier) -> Result<PreparedMedia> {
+        let deadline = match tier {
+            PreloadTier::Immediate => Some(Duration::from_secs(5)),
+            _ => None,
+        };
+
+        let result =
+            YouTubeMediaPreparerHandle::prepare(self, track_id.to_string(), tier, deadline).await?;
+
+        match result {
+            PrepareResult::Concat { prefix_path, .. } => {
+                Ok(PreparedMedia::Concat { concat_path: prefix_path })
+            }
+            PrepareResult::Passthrough { stream_url } => {
+                Ok(PreparedMedia::Direct { url: stream_url })
+            }
+            PrepareResult::Failed(e) => Err(anyhow!("Preparation failed: {}", e)),
+        }
+    }
+
+    fn prefetch(&self, track_id: &str, tier: PreloadTier) {
+        let request_id = next_request_id();
+        self.preload(track_id.to_string(), tier, request_id);
     }
 }

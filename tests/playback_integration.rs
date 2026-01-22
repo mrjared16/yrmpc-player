@@ -3,11 +3,13 @@
 //! Tests the complete flow: URL extraction → prefix download → MPV playback
 //! Run with: cargo nextest run --test playback_integration -- --include-ignored
 
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
-use std::path::PathBuf;
-use std::process::{Command, Stdio};
-use std::time::{Duration, Instant};
+use std::{
+    io::{BufRead, BufReader, Write},
+    os::unix::net::UnixStream,
+    path::PathBuf,
+    process::{Command, Stdio},
+    time::{Duration, Instant},
+};
 
 const TEST_VIDEO_ID: &str = "dQw4w9WgXcQ";
 const CACHE_DIR: &str = ".cache/rmpc/audio";
@@ -27,10 +29,7 @@ fn extract_url_with_ytx(video_id: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to run ytx: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "ytx failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(format!("ytx failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -48,10 +47,7 @@ fn extract_url_with_ytdlp(video_id: &str) -> Result<String, String> {
         .map_err(|e| format!("Failed to run yt-dlp: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "yt-dlp failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(format!("yt-dlp failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
     String::from_utf8_lossy(&output.stdout)
@@ -63,27 +59,15 @@ fn extract_url_with_ytdlp(video_id: &str) -> Result<String, String> {
 
 fn download_prefix(url: &str, dest: &PathBuf, size: u64) -> Result<u64, String> {
     let output = Command::new("curl")
-        .args([
-            "-sL",
-            "--range",
-            &format!("0-{}", size - 1),
-            url,
-            "-o",
-            dest.to_str().unwrap(),
-        ])
+        .args(["-sL", "--range", &format!("0-{}", size - 1), url, "-o", dest.to_str().unwrap()])
         .output()
         .map_err(|e| format!("curl failed: {}", e))?;
 
     if !output.status.success() {
-        return Err(format!(
-            "curl failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        return Err(format!("curl failed: {}", String::from_utf8_lossy(&output.stderr)));
     }
 
-    std::fs::metadata(dest)
-        .map(|m| m.len())
-        .map_err(|e| format!("Failed to get file size: {}", e))
+    std::fs::metadata(dest).map(|m| m.len()).map_err(|e| format!("Failed to get file size: {}", e))
 }
 
 fn build_concat_url(prefix_path: &PathBuf, prefix_size: u64, stream_url: &str) -> String {
@@ -140,9 +124,7 @@ impl MpvTestSession {
 
         let mut reader = BufReader::new(stream);
         let mut line = String::new();
-        reader
-            .read_line(&mut line)
-            .map_err(|e| format!("Read failed: {}", e))?;
+        reader.read_line(&mut line).map_err(|e| format!("Read failed: {}", e))?;
 
         serde_json::from_str(&line).map_err(|e| format!("Parse failed: {}", e))
     }
@@ -160,9 +142,7 @@ impl MpvTestSession {
     fn get_property(&self, name: &str) -> Result<serde_json::Value, String> {
         let cmd = serde_json::json!({"command": ["get_property", name]});
         let resp = self.send_command(&cmd.to_string())?;
-        resp.get("data")
-            .cloned()
-            .ok_or_else(|| format!("No data in response: {:?}", resp))
+        resp.get("data").cloned().ok_or_else(|| format!("No data in response: {:?}", resp))
     }
 
     fn get_playback_time(&self) -> Result<f64, String> {
@@ -207,29 +187,22 @@ fn test_ytx_extracts_valid_url() {
         url.contains("googlevideo.com") || url.contains("youtube.com"),
         "URL should be from Google/YouTube"
     );
-    assert!(
-        url.len() > 100,
-        "URL should be substantial (got {} chars)",
-        url.len()
-    );
+    assert!(url.len() > 100, "URL should be substantial (got {} chars)", url.len());
 }
 
 #[test]
-#[ignore = "requires network"]
+#[ignore]
 fn test_ytdlp_extracts_valid_url() {
     let result = extract_url_with_ytdlp(TEST_VIDEO_ID);
     assert!(result.is_ok(), "yt-dlp extraction failed: {:?}", result);
 
     let url = result.unwrap();
     assert!(url.starts_with("https://"), "URL should start with https://");
-    assert!(
-        url.contains("googlevideo.com"),
-        "URL should be from googlevideo.com"
-    );
+    assert!(url.contains("googlevideo.com"), "URL should be from googlevideo.com");
 }
 
 #[test]
-#[ignore = "requires network"]
+#[ignore]
 fn test_prefix_download() {
     let url = extract_url_with_ytdlp(TEST_VIDEO_ID).expect("URL extraction failed");
 
@@ -251,14 +224,8 @@ fn test_concat_url_format() {
 
     let concat = build_concat_url(&prefix, 204800, stream);
 
-    assert!(
-        concat.starts_with("lavf://concat:"),
-        "Should use lavf:// wrapper"
-    );
-    assert!(
-        concat.contains("|subfile,,start,204800,end,0,,:"),
-        "Should have subfile segment"
-    );
+    assert!(concat.starts_with("lavf://concat:"), "Should use lavf:// wrapper");
+    assert!(concat.contains("|subfile,,start,204800,end,0,,:"), "Should have subfile segment");
     assert!(concat.ends_with(stream), "Should end with stream URL");
 }
 
@@ -273,8 +240,7 @@ fn test_mpv_plays_local_file() {
         return;
     }
 
-    mpv.loadfile(test_file.to_str().unwrap())
-        .expect("loadfile failed");
+    mpv.loadfile(test_file.to_str().unwrap()).expect("loadfile failed");
 
     std::thread::sleep(Duration::from_secs(2));
 
@@ -283,7 +249,7 @@ fn test_mpv_plays_local_file() {
 }
 
 #[test]
-#[ignore = "requires network and mpv"]
+#[ignore]
 fn test_concat_mode_used() {
     let url = extract_url_with_ytdlp(TEST_VIDEO_ID).expect("URL extraction failed");
 
@@ -297,18 +263,12 @@ fn test_concat_mode_used() {
 
     let concat_url = build_concat_url(&prefix, prefix_size, &url);
 
-    assert!(
-        concat_url.starts_with("lavf://concat:"),
-        "URL should use lavf://concat: wrapper"
-    );
+    assert!(concat_url.starts_with("lavf://concat:"), "URL should use lavf://concat: wrapper");
     assert!(
         concat_url.contains(&prefix.to_string_lossy().to_string()),
         "URL should contain local prefix path"
     );
-    assert!(
-        concat_url.contains("|subfile,,start,"),
-        "URL should have subfile segment"
-    );
+    assert!(concat_url.contains("|subfile,,start,"), "URL should have subfile segment");
     assert!(
         concat_url.contains("googlevideo.com") || concat_url.contains("youtube.com"),
         "URL should end with stream URL"
@@ -325,7 +285,7 @@ fn test_concat_mode_used() {
 }
 
 #[test]
-#[ignore = "requires network and mpv"]
+#[ignore]
 fn test_seamless_playback_heuristic() {
     let url = extract_url_with_ytdlp(TEST_VIDEO_ID).expect("URL extraction failed");
 
@@ -351,20 +311,12 @@ fn test_seamless_playback_heuristic() {
         std::thread::sleep(Duration::from_millis(100));
     }
 
-    assert!(
-        !positions.is_empty(),
-        "Should have at least 1 position sample"
-    );
+    assert!(!positions.is_empty(), "Should have at least 1 position sample");
 
     if positions.len() >= 2 {
         let first = positions[0];
         let last = positions[positions.len() - 1];
-        assert!(
-            last > first,
-            "Playback should advance: first={}, last={}",
-            first,
-            last
-        );
+        assert!(last > first, "Playback should advance: first={}, last={}", first, last);
     }
 
     println!("Positions: {:?}", positions);
@@ -372,7 +324,7 @@ fn test_seamless_playback_heuristic() {
 }
 
 #[test]
-#[ignore = "requires network"]
+#[ignore]
 fn test_cache_miss_then_hit() {
     let test_id = "test_cache_miss_id";
     let prefix = prefix_path(test_id);
@@ -417,11 +369,7 @@ fn test_ytx_bulk_mode_timeout_handling() {
         println!("WARNING: ytx took >5s - may be rate limited or using bulk mode");
     }
 
-    assert!(
-        result.is_ok(),
-        "ytx should succeed even if slow: {:?}",
-        result
-    );
+    assert!(result.is_ok(), "ytx should succeed even if slow: {:?}", result);
     assert!(
         elapsed < Duration::from_secs(30),
         "ytx should complete within 30s timeout (took {:?})",
@@ -430,7 +378,7 @@ fn test_ytx_bulk_mode_timeout_handling() {
 }
 
 #[test]
-#[ignore = "requires network and mpv"]
+#[ignore]
 fn test_first_audio_latency() {
     let start = Instant::now();
 

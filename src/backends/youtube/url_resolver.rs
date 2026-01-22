@@ -5,9 +5,13 @@
 //!
 //! For direct access to extractors, use the `extractor` module.
 
-use std::{sync::Arc, time::Duration};
+use std::{
+    sync::Arc,
+    time::{Duration, SystemTime},
+};
 
 use anyhow::{Context, Result};
+use async_trait::async_trait;
 
 use super::{
     config::ExtractorType,
@@ -19,10 +23,11 @@ use super::{
         YtDlpExtractor,
         YtxExtractor,
     },
+    media::{AudioFormat, StreamInfo, StreamResolver},
 };
 
 #[derive(Debug, Clone)]
-pub struct StreamInfo {
+pub struct UrlStreamInfo {
     pub url: String,
     pub content_length: u64,
     pub bitrate: u32,
@@ -70,7 +75,8 @@ impl UrlResolver {
     /// # Visibility
     ///
     /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
-    /// External code should obtain resolvers from `YouTubeServices::url_resolver()`.
+    /// External code should obtain resolvers from
+    /// `YouTubeServices::url_resolver()`.
     pub(crate) fn new(extractor_type: ExtractorType) -> Self {
         Self::with_config(extractor_type, CacheConfig::default(), true)
     }
@@ -138,31 +144,34 @@ impl UrlResolver {
         self.inner.extract_one(video_id)
     }
 
-    pub fn get_stream_info(&self, video_id: &str) -> Result<StreamInfo> {
+    pub fn get_stream_info(&self, video_id: &str) -> Result<UrlStreamInfo> {
         let url = self.get_url(video_id)?;
         let (content_length, mime_type) = Self::probe_stream_headers(&url)?;
-        Ok(StreamInfo { url, content_length, bitrate: 0, mime_type })
+        Ok(UrlStreamInfo { url, content_length, bitrate: 0, mime_type })
     }
 
+    #[allow(dead_code)]
     pub fn get_stream_infos(
         &self,
         video_ids: &[String],
-    ) -> std::collections::HashMap<String, Result<StreamInfo>> {
+    ) -> std::collections::HashMap<String, Result<UrlStreamInfo>> {
         let urls = self.get_urls(video_ids);
         urls.into_iter()
             .map(|(video_id, url_result)| {
                 let info_result = url_result.and_then(|url| {
                     let (content_length, mime_type) = Self::probe_stream_headers(&url)?;
-                    Ok(StreamInfo { url, content_length, bitrate: 0, mime_type })
+                    Ok(UrlStreamInfo { url, content_length, bitrate: 0, mime_type })
                 });
                 (video_id, info_result)
             })
             .collect()
     }
 
+    #[allow(dead_code)]
     fn probe_stream_headers(url: &str) -> Result<(u64, String)> {
         use reqwest::header::{CONTENT_LENGTH, CONTENT_RANGE, CONTENT_TYPE, RANGE};
 
+        log::debug!("[PROBE] starting HEAD request");
         let client = reqwest::blocking::Client::new();
 
         if let Ok(resp) = client.head(url).send() {
@@ -252,6 +261,26 @@ impl UrlResolver {
     }
 }
 
+#[async_trait]
+impl StreamResolver for UrlResolver {
+    async fn resolve(&self, track_id: &str) -> Result<StreamInfo> {
+        let url = self.get_url(track_id)?;
+        Ok(StreamInfo {
+            url,
+            expires_at: Some(SystemTime::now() + Duration::from_secs(3600)),
+            format: AudioFormat::default(),
+        })
+    }
+
+    fn is_cached(&self, track_id: &str) -> bool {
+        self.inner.is_cached(track_id)
+    }
+
+    fn invalidate(&self, track_id: &str) {
+        self.inner.invalidate(track_id)
+    }
+}
+
 impl Default for UrlResolver {
     fn default() -> Self {
         Self::new_default()
@@ -280,6 +309,14 @@ impl Extractor for UrlResolver {
 
     fn clear_cache(&self) {
         self.inner.clear_cache();
+    }
+
+    fn is_cached(&self, video_id: &str) -> bool {
+        self.inner.is_cached(video_id)
+    }
+
+    fn invalidate(&self, video_id: &str) {
+        self.inner.invalidate(video_id);
     }
 }
 

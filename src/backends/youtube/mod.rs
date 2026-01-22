@@ -63,6 +63,7 @@ pub mod details;
 pub mod error;
 pub mod extract;
 pub mod extractor;
+pub mod media;
 pub mod mpv; // MPV IPC module - internal to YouTube backend
 pub mod protocol;
 pub mod range_set;

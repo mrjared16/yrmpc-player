@@ -25,7 +25,7 @@ pub fn handle_play(
     if matches!(state, PlaybackState::Idle | PlaybackState::Stopped) && queue.len() > 0 {
         let pos = queue.current_index().unwrap_or(0);
         log::info!("[STATE] play state={:?} pos={}", state, pos);
-        return orchestrator::play_position(playback, queue, pos, state_tracker);
+        return orchestrator::play_position_sync(playback, queue, pos, state_tracker);
     }
 
     log::info!("[STATE] unpause");

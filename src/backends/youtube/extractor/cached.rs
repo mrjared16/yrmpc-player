@@ -6,44 +6,30 @@
 
 use std::{
     collections::HashMap,
-    num::NonZeroUsize,
     sync::{
         Arc,
-        OnceLock,
         atomic::{AtomicU64, Ordering},
     },
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use anyhow::{Result, anyhow};
-use lru::LruCache;
 use parking_lot::Mutex;
 
 use super::Extractor;
+use crate::shared::{
+    cache::{Cache, CacheConfig as SharedCacheConfig},
+    dedup::Dedup,
+};
 
 #[derive(Clone)]
 struct CacheEntry {
     url: String,
     version: u64,
     immediate: bool,
-    inserted_at: Instant,
 }
 
-impl CacheEntry {
-    fn is_expired(&self, ttl: Duration) -> bool {
-        self.inserted_at.elapsed() >= ttl
-    }
-}
-
-fn should_replace(
-    existing: &CacheEntry,
-    new_version: u64,
-    new_immediate: bool,
-    ttl: Duration,
-) -> bool {
-    if existing.is_expired(ttl) {
-        return true;
-    }
+fn should_replace(existing: &CacheEntry, new_version: u64, new_immediate: bool) -> bool {
     if new_immediate && !existing.immediate {
         return true;
     }
@@ -92,8 +78,8 @@ impl CacheConfig {
 /// For batch extraction, only uncached IDs are passed to the inner extractor.
 pub struct CachedExtractor<E: Extractor> {
     inner: E,
-    cache: Arc<Mutex<LruCache<String, CacheEntry>>>,
-    in_flight: Arc<Mutex<HashMap<String, Arc<OnceLock<Result<String, String>>>>>>,
+    cache: Arc<Mutex<Cache<String, CacheEntry>>>,
+    dedup: Dedup<String, Result<String, String>>,
     next_version: Arc<AtomicU64>,
     config: CacheConfig,
 }
@@ -106,11 +92,11 @@ impl<E: Extractor> CachedExtractor<E> {
 
     /// Create a new cached extractor with custom config.
     pub fn with_config(inner: E, config: CacheConfig) -> Self {
-        let max = NonZeroUsize::new(config.max_entries).unwrap_or(NonZeroUsize::new(100).unwrap());
+        let shared_config = SharedCacheConfig::new(config.max_entries.max(1)).with_ttl(config.ttl);
         Self {
             inner,
-            cache: Arc::new(Mutex::new(LruCache::new(max))),
-            in_flight: Arc::new(Mutex::new(HashMap::new())),
+            cache: Arc::new(Mutex::new(Cache::new(shared_config))),
+            dedup: Dedup::new(),
             next_version: Arc::new(AtomicU64::new(1)),
             config,
         }
@@ -133,28 +119,18 @@ impl<E: Extractor> CachedExtractor<E> {
 
     fn get_cached(&self, video_id: &str) -> Option<String> {
         let mut cache = self.cache.lock();
-        if let Some(entry) = cache.get(video_id) {
-            if !entry.is_expired(self.config.ttl) {
-                return Some(entry.url.clone());
-            }
-        }
-        None
+        cache.get(video_id).map(|entry| entry.url)
     }
 
     fn try_cache(&self, video_id: &str, url: String, version: u64, immediate: bool) -> bool {
         let mut cache = self.cache.lock();
         let should_write = match cache.get(video_id) {
-            Some(existing) => should_replace(existing, version, immediate, self.config.ttl),
+            Some(existing) => should_replace(&existing, version, immediate),
             None => true,
         };
 
         if should_write {
-            cache.put(video_id.to_string(), CacheEntry {
-                url,
-                version,
-                immediate,
-                inserted_at: Instant::now(),
-            });
+            cache.insert(video_id.to_string(), CacheEntry { url, version, immediate });
         }
         should_write
     }
@@ -172,7 +148,7 @@ impl<E: Extractor + Clone> Clone for CachedExtractor<E> {
         Self {
             inner: self.inner.clone(),
             cache: Arc::clone(&self.cache),
-            in_flight: Arc::clone(&self.in_flight),
+            dedup: self.dedup.clone(),
             next_version: Arc::clone(&self.next_version),
             config: self.config.clone(),
         }
@@ -182,34 +158,30 @@ impl<E: Extractor + Clone> Clone for CachedExtractor<E> {
 impl<E: Extractor> Extractor for CachedExtractor<E> {
     fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
         let mut results = HashMap::new();
-        let mut uncached = Vec::new();
-
         let version = self.next_version.fetch_add(1, Ordering::Relaxed);
 
         for id in video_ids {
             if let Some(url) = self.get_cached(id) {
                 log::debug!("Cache hit for {}", id);
                 results.insert(id.clone(), Ok(url));
-            } else if self.in_flight.lock().contains_key(id) {
-                log::debug!("Skipping {} - already being extracted by fast path", id);
             } else {
-                uncached.push(id.clone());
-            }
-        }
+                let id_owned = id.clone();
+                let result = self.dedup.get_or_init_sync(id_owned.clone(), || {
+                    if let Some(url) = self.get_cached(&id_owned) {
+                        return Ok(url);
+                    }
+                    self.inner.extract_one(&id_owned).map_err(|e| e.to_string())
+                });
 
-        if !uncached.is_empty() {
-            log::debug!(
-                "Cache miss for {} IDs, extracting with {}...",
-                uncached.len(),
-                self.inner.name()
-            );
-            let extracted = self.inner.extract_batch(&uncached);
-
-            for (id, result) in extracted {
-                if let Ok(ref url) = result {
-                    self.try_cache(&id, url.clone(), version, false);
+                match result {
+                    Ok(url) => {
+                        self.try_cache(&id_owned, url.clone(), version, false);
+                        results.insert(id_owned, Ok(url));
+                    }
+                    Err(error) => {
+                        results.insert(id_owned, Err(anyhow!(error)));
+                    }
                 }
-                results.insert(id, result);
             }
         }
 
@@ -222,25 +194,13 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
 
     fn extract_one(&self, video_id: &str) -> Result<String> {
         let start = std::time::Instant::now();
-        
+
         if let Some(url) = self.get_cached(video_id) {
             log::info!("[EXTRACT] cache_hit video_id={} elapsed={:?}", video_id, start.elapsed());
             return Ok(url);
         }
 
-        let cell = {
-            let mut in_flight = self.in_flight.lock();
-            if let Some(existing) = in_flight.get(video_id) {
-                log::debug!("[EXTRACT] coalescing video_id={}", video_id);
-                Arc::clone(existing)
-            } else {
-                let cell = Arc::new(OnceLock::new());
-                in_flight.insert(video_id.to_string(), Arc::clone(&cell));
-                cell
-            }
-        };
-
-        let result = cell.get_or_init(|| {
+        let result = self.dedup.get_or_init_sync(video_id.to_string(), || {
             let version = self.next_version.fetch_add(1, Ordering::Relaxed);
             log::info!("[EXTRACT] cache_miss video_id={} version={}", video_id, version);
 
@@ -249,24 +209,25 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
                     self.try_cache(video_id, url.clone(), version, true);
                     log::info!(
                         "[EXTRACT] complete video_id={} elapsed={:?}",
-                        video_id, start.elapsed()
+                        video_id,
+                        start.elapsed()
                     );
                     Ok(url)
                 }
                 Err(e) => {
                     log::warn!(
                         "[EXTRACT] failed video_id={} elapsed={:?} error={}",
-                        video_id, start.elapsed(), e
+                        video_id,
+                        start.elapsed(),
+                        e
                     );
                     Err(e.to_string())
                 }
             }
         });
 
-        self.in_flight.lock().remove(video_id);
-
         match result {
-            Ok(url) => Ok(url.clone()),
+            Ok(url) => Ok(url),
             Err(e) => Err(anyhow!("{}", e)),
         }
     }
@@ -274,6 +235,16 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
     fn clear_cache(&self) {
         self.cache.lock().clear();
         self.inner.clear_cache();
+    }
+
+    fn is_cached(&self, video_id: &str) -> bool {
+        self.get_cached(video_id).is_some() || self.inner.is_cached(video_id)
+    }
+
+    fn invalidate(&self, video_id: &str) {
+        self.cache.lock().invalidate(video_id);
+        self.dedup.invalidate(video_id);
+        self.inner.invalidate(video_id);
     }
 }
 
@@ -300,6 +271,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "mock"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     /// Mock extractor that tracks call counts and returns unique URLs per call.
@@ -355,6 +334,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "counting"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     #[test]
@@ -441,6 +428,36 @@ mod tests {
     }
 
     #[test]
+    fn test_extract_batch_and_extract_one_share_dedup_gate() {
+        let extractor = CountingExtractor::new(Duration::from_millis(100));
+        let cached = Arc::new(CachedExtractor::new(extractor));
+
+        let batch_cached = Arc::clone(&cached);
+        let batch_handle = thread::spawn(move || {
+            let ids = vec!["shared_id".to_string()];
+            batch_cached.extract_batch(&ids)
+        });
+
+        thread::sleep(Duration::from_millis(10));
+
+        let one_cached = Arc::clone(&cached);
+        let one_handle = thread::spawn(move || one_cached.extract_one("shared_id"));
+
+        let batch_results = batch_handle.join().unwrap();
+        let one_result = one_handle.join().unwrap().unwrap();
+        let batch_result = batch_results
+            .get("shared_id")
+            .expect("shared_id should be present")
+            .as_ref()
+            .expect("batch should resolve shared_id")
+            .clone();
+
+        assert_eq!(batch_result, one_result);
+        assert_eq!(cached.inner().extract_one_count(), 1);
+        assert_eq!(cached.inner().extract_batch_count(), 0);
+    }
+
+    #[test]
     fn test_extract_one_does_not_wait_for_prefetch() {
         // Given: A slow extractor where batch takes much longer than single
         let extractor = CountingExtractor::new(Duration::from_millis(50));
@@ -506,6 +523,14 @@ mod tests {
             fn name(&self) -> &'static str {
                 "delayed"
             }
+
+            fn clear_cache(&self) {}
+
+            fn is_cached(&self, _video_id: &str) -> bool {
+                false
+            }
+
+            fn invalidate(&self, _video_id: &str) {}
         }
 
         let extractor = DelayedExtractor {

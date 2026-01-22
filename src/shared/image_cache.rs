@@ -50,15 +50,13 @@ struct CacheInner {
     raw: LruCache<String, Arc<DynamicImage>>,
     /// Protocols by (url, size) - derived artifacts
     protocols: LruCache<ProtocolKey, Arc<Mutex<Protocol>>>,
-    /// URLs currently being fetched
-    pending_fetch: HashSet<String>,
-    /// Protocols currently being created
-    pending_protocol: HashSet<ProtocolKey>,
 }
 
 #[derive(Clone, Debug)]
 pub struct ImageCache {
     inner: Arc<Mutex<CacheInner>>,
+    pending_fetch: Arc<Mutex<HashSet<String>>>,
+    pending_protocol: Arc<Mutex<HashSet<ProtocolKey>>>,
     picker: Picker,
     app_event_sender: Sender<AppEvent>,
 }
@@ -70,11 +68,15 @@ impl ImageCache {
         let inner = CacheInner {
             raw: LruCache::new(NonZeroUsize::new(50).unwrap()),
             protocols: LruCache::new(NonZeroUsize::new(100).unwrap()),
-            pending_fetch: HashSet::new(),
-            pending_protocol: HashSet::new(),
         };
 
-        Self { inner: Arc::new(Mutex::new(inner)), picker, app_event_sender }
+        Self {
+            inner: Arc::new(Mutex::new(inner)),
+            pending_fetch: Arc::new(Mutex::new(HashSet::new())),
+            pending_protocol: Arc::new(Mutex::new(HashSet::new())),
+            picker,
+            app_event_sender,
+        }
     }
 
     /// Get a Protocol for the given URL and size.
@@ -84,34 +86,26 @@ impl ImageCache {
     pub fn get_protocol(&self, url: &str, size: ThumbnailSize) -> Option<Arc<Mutex<Protocol>>> {
         let key = (url.to_string(), size);
 
-        let mut inner = self.inner.lock().unwrap();
+        {
+            let mut inner = self.inner.lock().unwrap();
 
-        // 1. Check Protocol cache (fast path)
-        if let Some(protocol) = inner.protocols.get(&key) {
-            log::trace!("[DIAG-IMG] get_protocol: HIT url={} size={:?}", url, size);
-            return Some(protocol.clone());
-        }
-
-        // 2. If raw image exists, spawn async Protocol creation
-        if inner.raw.contains(&url.to_string()) {
-            log::trace!("[DIAG-IMG] get_protocol: raw exists, creating protocol url={}", url);
-            if !inner.pending_protocol.contains(&key) {
-                inner.pending_protocol.insert(key.clone());
-                drop(inner); // Release lock before spawning
-                self.spawn_protocol_creation(url.to_string(), size);
+            // 1. Check Protocol cache (fast path)
+            if let Some(protocol) = inner.protocols.get(&key) {
+                log::trace!("[DIAG-IMG] get_protocol: HIT url={url} size={size:?}");
+                return Some(protocol.clone());
             }
-            return None;
+
+            // 2. If raw image exists, spawn async Protocol creation
+            if inner.raw.contains(&url.to_string()) {
+                log::trace!("[DIAG-IMG] get_protocol: raw exists, creating protocol url={url}");
+                drop(inner); // Release lock
+                self.spawn_protocol_creation(url.to_string(), size);
+                return None;
+            }
         }
 
         // 3. No raw image - start fetch if not already pending
-        if !inner.pending_fetch.contains(url) {
-            log::trace!("[DIAG-IMG] get_protocol: MISS, starting fetch url={}", url);
-            inner.pending_fetch.insert(url.to_string());
-            drop(inner); // Release lock before spawning
-            self.spawn_fetch(url.to_string());
-        } else {
-            log::trace!("[DIAG-IMG] get_protocol: MISS, fetch already pending url={}", url);
-        }
+        self.spawn_fetch(url.to_string());
 
         None
     }
@@ -123,17 +117,27 @@ impl ImageCache {
 
     /// Spawn async image fetch
     fn spawn_fetch(&self, url: String) {
+        {
+            let mut pending = self.pending_fetch.lock().unwrap();
+            if pending.contains(&url) {
+                log::trace!("[DIAG-IMG] spawn_fetch: fetch already pending url={url}");
+                return;
+            }
+            pending.insert(url.clone());
+        }
+
         let sender = self.app_event_sender.clone();
         let inner = self.inner.clone();
         let picker = self.picker.clone();
+        let pending_fetch = self.pending_fetch.clone();
 
         std::thread::spawn(move || {
-            log::trace!("[DIAG-IMG] spawn_fetch: fetching url={}", url);
+            log::trace!("[DIAG-IMG] spawn_fetch: fetching url={url}");
             let result = fetch_image_sync(&url);
 
             match result {
                 Ok(img) => {
-                    log::trace!("[DIAG-IMG] spawn_fetch: SUCCESS url={}", url);
+                    log::trace!("[DIAG-IMG] spawn_fetch: SUCCESS url={url}");
                     let img = Arc::new(img);
 
                     // Pre-create Protocol for ListItem (most common size)
@@ -145,8 +149,7 @@ impl ImageCache {
 
                     {
                         let mut inner = inner.lock().unwrap();
-                        inner.pending_fetch.remove(&url);
-                        inner.raw.put(url.clone(), img);
+                        inner.raw.put(url.clone(), img.clone());
 
                         // Store pre-created ListItem Protocol
                         if let Ok(protocol) = list_protocol {
@@ -159,24 +162,33 @@ impl ImageCache {
                     let _ = sender.send(AppEvent::UiEvent(crate::ui::UiAppEvent::Redraw));
                 }
                 Err(e) => {
-                    log::warn!("[DIAG-IMG] spawn_fetch: FAILED url={} error={}", url, e);
-                    log::warn!("Failed to fetch image {}: {}", url, e);
-                    let mut inner = inner.lock().unwrap();
-                    inner.pending_fetch.remove(&url);
+                    log::warn!("[DIAG-IMG] spawn_fetch: FAILED url={url} error={e}");
+                    log::warn!("Failed to fetch image {url}: {e}");
                 }
             }
+
+            let mut pending = pending_fetch.lock().unwrap();
+            pending.remove(&url);
         });
     }
 
     /// Spawn async Protocol creation for a size other than ListItem
     fn spawn_protocol_creation(&self, url: String, size: ThumbnailSize) {
+        let key = (url.clone(), size);
+        {
+            let mut pending = self.pending_protocol.lock().unwrap();
+            if pending.contains(&key) {
+                return;
+            }
+            pending.insert(key.clone());
+        }
+
         let sender = self.app_event_sender.clone();
         let inner = self.inner.clone();
         let picker = self.picker.clone();
+        let pending_protocol = self.pending_protocol.clone();
 
         std::thread::spawn(move || {
-            let key = (url.clone(), size);
-
             // Get raw image from cache
             let img = {
                 let inner = inner.lock().unwrap();
@@ -187,20 +199,18 @@ impl ImageCache {
                 let protocol_result =
                     picker.new_protocol(img.as_ref().clone(), size.to_rect(), Resize::Fit(None));
 
-                {
-                    let mut inner = inner.lock().unwrap();
-                    inner.pending_protocol.remove(&key);
-
-                    if let Ok(protocol) = protocol_result {
-                        inner.protocols.put(key, Arc::new(Mutex::new(protocol)));
+                if let Ok(protocol) = protocol_result {
+                    let p = Arc::new(Mutex::new(protocol));
+                    {
+                        let mut inner = inner.lock().unwrap();
+                        inner.protocols.put(key.clone(), p);
                     }
+                    let _ = sender.send(AppEvent::UiEvent(crate::ui::UiAppEvent::Redraw));
                 }
-
-                let _ = sender.send(AppEvent::UiEvent(crate::ui::UiAppEvent::Redraw));
-            } else {
-                let mut inner = inner.lock().unwrap();
-                inner.pending_protocol.remove(&key);
             }
+
+            let mut pending = pending_protocol.lock().unwrap();
+            pending.remove(&key);
         });
     }
 }

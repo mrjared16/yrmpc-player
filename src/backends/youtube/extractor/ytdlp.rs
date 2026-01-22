@@ -75,6 +75,14 @@ impl Extractor for YtDlpExtractor {
     fn extract_one(&self, video_id: &str) -> Result<String> {
         Self::extract_single(video_id)
     }
+
+    fn clear_cache(&self) {}
+
+    fn is_cached(&self, _video_id: &str) -> bool {
+        false
+    }
+
+    fn invalidate(&self, _video_id: &str) {}
 }
 
 #[cfg(test)]

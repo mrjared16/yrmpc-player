@@ -158,6 +158,9 @@ fn test_audio_cache_lru_eviction() {
     assert!(!cache.has_prefix("video1"));
     assert!(cache.has_prefix("video2"));
     assert!(cache.has_prefix("video3"));
+    assert!(!path1.exists());
+    assert!(path2.exists());
+    assert!(path3.exists());
     assert_eq!(cache.total_size(), 200);
 }
 
@@ -251,7 +254,7 @@ fn test_ffmpeg_concat_source_build_url() {
     );
     assert_eq!(
         url,
-        "concat:/cache/video.webm|subfile,,start,200000,end,0,,:https://youtube.com/stream"
+        "lavf://concat:/cache/video.webm|subfile,,start,200000,end,0,,:https://youtube.com/stream"
     );
 }
 
@@ -264,7 +267,7 @@ fn test_ffmpeg_concat_source_build_url_with_spaces() {
     );
     assert_eq!(
         url,
-        "concat:/cache/my video.webm|subfile,,start,204800,end,0,,:https://example.com/stream?id=123"
+        "lavf://concat:/cache/my video.webm|subfile,,start,204800,end,0,,:https://example.com/stream?id=123"
     );
 }
 

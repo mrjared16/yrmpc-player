@@ -217,10 +217,12 @@ fn test_request_id_preservation() {
     }
 }
 
-/// Integration test: PlayIntent::Context should result in playback starting within 500ms
-/// 
+/// Integration test: PlayIntent::Context should result in playback starting
+/// within 500ms
+///
 /// This test requires a running YouTube backend daemon.
-/// Run with: cargo test --test play_intent_integration_tests test_play_album_latency -- --ignored --nocapture
+/// Run with: cargo test --test play_intent_integration_tests
+/// test_play_album_latency -- --ignored --nocapture
 #[test]
 #[ignore = "Requires running daemon - manual verification"]
 fn test_play_album_latency_under_500ms() {

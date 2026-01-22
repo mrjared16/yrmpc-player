@@ -412,14 +412,22 @@ pub fn convert_search_results(results: ytmapi_rs::parse::SearchResults) -> Searc
         });
     }
 
-    // Community playlists
+    // Community playlists - filter out empty IDs (from #[non_exhaustive] wildcard
+    // arm)
     if !results.community_playlists.is_empty() {
-        let items: Vec<Item> = results.community_playlists.into_iter().map(Item::from).collect();
-        sections.push(SearchSection {
-            key: "playlists".to_string(),
-            title: "Playlists".to_string(),
-            items,
-        });
+        let items: Vec<Item> = results
+            .community_playlists
+            .into_iter()
+            .map(Item::from)
+            .filter(|item| !item.id.is_empty())
+            .collect();
+        if !items.is_empty() {
+            sections.push(SearchSection {
+                key: "playlists".to_string(),
+                title: "Playlists".to_string(),
+                items,
+            });
+        }
     }
 
     SearchResults { sections }
@@ -513,5 +521,45 @@ mod tests {
 
         assert_eq!(item.id, "PLabc123");
         assert_eq!(item.content_type, ContentType::Playlist);
+    }
+
+    #[test]
+    fn test_empty_id_community_playlist_filtered_out() {
+        let empty_playlist_json = r#"{"Playlist": {
+            "title": "Test",
+            "author": "Author",
+            "views": "100",
+            "playlist_id": "",
+            "thumbnails": []
+        }}"#;
+
+        let empty_playlist: BasicSearchResultCommunityPlaylist =
+            serde_json::from_str(empty_playlist_json).expect("parse playlist");
+
+        let yt_results_json = format!(
+            r#"{{
+                "top_results": [],
+                "artists": [],
+                "albums": [],
+                "featured_playlists": [],
+                "community_playlists": [{}],
+                "songs": [],
+                "videos": [],
+                "podcasts": [],
+                "episodes": [],
+                "profiles": []
+            }}"#,
+            empty_playlist_json
+        );
+
+        let yt_results: ytmapi_rs::parse::SearchResults =
+            serde_json::from_str(&yt_results_json).expect("parse results");
+
+        let result = convert_search_results(yt_results);
+
+        assert!(
+            !result.sections.iter().any(|s| s.key == "playlists"),
+            "Section with empty-id playlists should be omitted"
+        );
     }
 }

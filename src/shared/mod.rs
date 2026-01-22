@@ -1,4 +1,6 @@
+pub mod cache;
 pub mod cmp;
+pub mod dedup;
 pub mod dependencies;
 pub mod env;
 pub mod events;

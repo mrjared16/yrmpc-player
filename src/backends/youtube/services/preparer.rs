@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 
 use super::preload_scheduler::TrackId;
 use crate::backends::youtube::{
-    audio::{cache::AudioCache, sources::concat::FfmpegConcatSource, MpvInput},
+    audio::{MpvInput, cache::AudioCache, sources::concat::FfmpegConcatSource},
     protocol::play_intent::PreloadTier,
     url_resolver::UrlResolver,
 };
@@ -31,55 +31,64 @@ pub enum PlaybackMode {
 }
 
 #[derive(Debug, Clone)]
-pub struct PreparerConfig {
+pub struct PlaybackPreparerConfig {
     /// Max wait time for Immediate tier before falling back to passthrough.
     pub passthrough_deadline_ms: u64,
 }
 
-impl Default for PreparerConfig {
+impl Default for PlaybackPreparerConfig {
     fn default() -> Self {
         Self { passthrough_deadline_ms: 200 }
     }
 }
 
-pub struct Preparer {
+pub struct PlaybackPreparer {
     url_resolver: Arc<UrlResolver>,
     cache: Arc<AudioCache>,
-    config: PreparerConfig,
+    config: PlaybackPreparerConfig,
 }
 
-impl Preparer {
-    pub fn new(url_resolver: Arc<UrlResolver>, cache: Arc<AudioCache>, config: PreparerConfig) -> Self {
+impl PlaybackPreparer {
+    pub fn new(
+        url_resolver: Arc<UrlResolver>,
+        cache: Arc<AudioCache>,
+        config: PlaybackPreparerConfig,
+    ) -> Self {
         Self { url_resolver, cache, config }
     }
 
     /// Prepare a track for playback according to its tier.
     ///
-    /// - Immediate: wait up to `passthrough_deadline_ms`, then passthrough fallback
+    /// - Immediate: wait up to `passthrough_deadline_ms`, then passthrough
+    ///   fallback
     /// - Gapless/Eager/Background: wait for prefix completion
     pub async fn prepare(&self, track_id: &str, tier: PreloadTier) -> Result<PreparedPlayback> {
         let start = std::time::Instant::now();
         log::info!("[PREPARE] start track_id={} tier={:?}", track_id, tier);
-        
+
         let stream_url =
             self.url_resolver.get_url(track_id).context("Failed to resolve stream URL")?;
         let url_time = start.elapsed();
         log::info!("[PREPARE] url_resolved track_id={} elapsed={:?}", track_id, url_time);
-        
+
         let result = self.prepare_with_stream_url(track_id, tier, &stream_url).await;
         let total_time = start.elapsed();
-        
+
         match &result {
             Ok(prepared) => log::info!(
                 "[PREPARE] complete track_id={} mode={:?} elapsed={:?}",
-                track_id, prepared.mode, total_time
+                track_id,
+                prepared.mode,
+                total_time
             ),
             Err(e) => log::warn!(
                 "[PREPARE] failed track_id={} elapsed={:?} error={}",
-                track_id, total_time, e
+                track_id,
+                total_time,
+                e
             ),
         }
-        
+
         result
     }
 
@@ -97,10 +106,16 @@ impl Preparer {
         }
     }
 
-    async fn prepare_with_deadline(&self, track_id: &str, stream_url: &str) -> Result<PreparedPlayback> {
+    async fn prepare_with_deadline(
+        &self,
+        track_id: &str,
+        stream_url: &str,
+    ) -> Result<PreparedPlayback> {
         let deadline = Duration::from_millis(self.config.passthrough_deadline_ms);
 
-        match race_prefix_with_deadline(deadline, self.cache.ensure_prefix(track_id, stream_url)).await {
+        match race_prefix_with_deadline(deadline, self.cache.ensure_prefix(track_id, stream_url))
+            .await
+        {
             PrefixRace::Ready((prefix_path, content_length)) => {
                 self.cache.touch(track_id);
 
@@ -112,11 +127,7 @@ impl Preparer {
                 })
             }
             PrefixRace::Failed(e) => {
-                log::warn!(
-                    "Prefix download failed for {}, using passthrough: {}",
-                    track_id,
-                    e
-                );
+                log::warn!("Prefix download failed for {}, using passthrough: {}", track_id, e);
                 self.build_passthrough(track_id, stream_url)
             }
             PrefixRace::TimedOut => {
@@ -130,7 +141,11 @@ impl Preparer {
         }
     }
 
-    async fn prepare_with_prefix(&self, track_id: &str, stream_url: &str) -> Result<PreparedPlayback> {
+    async fn prepare_with_prefix(
+        &self,
+        track_id: &str,
+        stream_url: &str,
+    ) -> Result<PreparedPlayback> {
         let (prefix_path, content_length) = self.cache.ensure_prefix(track_id, stream_url).await?;
         self.cache.touch(track_id);
 
@@ -138,7 +153,12 @@ impl Preparer {
         Ok(PreparedPlayback { track_id: track_id.to_string(), input, mode: PlaybackMode::Concat })
     }
 
-    fn build_concat_input(&self, prefix_path: &Path, content_length: u64, stream_url: &str) -> MpvInput {
+    fn build_concat_input(
+        &self,
+        prefix_path: &Path,
+        content_length: u64,
+        stream_url: &str,
+    ) -> MpvInput {
         Self::build_concat_input_with_prefix_size(
             self.cache.prefix_size(),
             prefix_path,
@@ -190,14 +210,17 @@ where
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use tempfile::TempDir;
 
+    use super::*;
     use crate::backends::youtube::audio::cache::CacheConfig;
 
-    fn build_test_preparer(cache: Arc<AudioCache>) -> Preparer {
-        Preparer::new(Arc::new(UrlResolver::default()), cache, PreparerConfig::default())
+    fn build_test_preparer(cache: Arc<AudioCache>) -> PlaybackPreparer {
+        PlaybackPreparer::new(
+            Arc::new(UrlResolver::default()),
+            cache,
+            PlaybackPreparerConfig::default(),
+        )
     }
 
     #[tokio::test(start_paused = true)]
@@ -246,7 +269,8 @@ mod tests {
         assert_eq!(prepared.mode, PlaybackMode::Concat);
         assert_eq!(prepared.track_id, track_id);
 
-        let expected_url = FfmpegConcatSource::build_concat_url(&prefix_path, prefix_size, stream_url);
+        let expected_url =
+            FfmpegConcatSource::build_concat_url(&prefix_path, prefix_size, stream_url);
         assert_eq!(prepared.input.url, expected_url);
         assert_eq!(prepared.input.mpv_args, FfmpegConcatSource::protocol_whitelist_args());
     }

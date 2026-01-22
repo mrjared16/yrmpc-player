@@ -9,7 +9,7 @@
 //! processor.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     sync::{Arc, LazyLock},
     thread,
     time::{Duration, Instant},
@@ -19,6 +19,7 @@ use anyhow::Result;
 use parking_lot::Mutex;
 
 use crate::backends::youtube::{
+    media::{MediaPreparer, PreloadTier, PreparedMedia},
     protocol::{ServerResponse, SongData},
     services::{
         AdvanceIntent,
@@ -36,19 +37,31 @@ pub const PREFETCH_WINDOW_SIZE: usize = 3;
 /// Threshold for triggering prefetch (seconds remaining)
 const PREFETCH_TRIGGER_THRESHOLD: f64 = 30.0;
 
+const EARLY_EOF_MIN_DURATION_SECS: f64 = 90.0;
+const EARLY_EOF_MIN_POSITION_SECS: f64 = 30.0;
+const EARLY_EOF_MIN_REMAINING_SECS: f64 = 20.0;
+const EARLY_EOF_MAX_RECOVERY_ATTEMPTS: u8 = 1;
+
 /// Track which videos have had T-30s prefetch triggered
 static PREFETCH_TRIGGERED: LazyLock<Mutex<HashSet<String>>> =
     LazyLock::new(|| Mutex::new(HashSet::new()));
+
+static EARLY_EOF_RECOVERY_COUNTS: LazyLock<Mutex<HashMap<String, u8>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Play a track at the given queue position.
 ///
 /// This rebuilds MPV's buffer with current + next tracks,
 /// enabling gapless auto-advance when a song ends.
-pub fn play_position(
+///
+/// Uses MediaPreparer.prepare() to resolve URLs through the proper abstraction
+/// layer.
+pub async fn play_position(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     pos: usize,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     log::info!("play_position called for pos={} (queue len={})", pos, queue.len());
 
@@ -93,12 +106,21 @@ pub fn play_position(
             Ok(song) => {
                 let video_id = &song.uri;
 
-                match playback.build_playback_url(video_id) {
-                    Ok(url) => {
+                // Determine tier based on position in prefetch window
+                let tier = if first_track { PreloadTier::Immediate } else { PreloadTier::Gapless };
+
+                // Use MediaPreparer.prepare() instead of bypassing to build_playback_url
+                match media_preparer.prepare(video_id, tier).await {
+                    Ok(prepared) => {
+                        let url = prepared.to_mpv_url();
                         if let Err(e) = playback.playlist_append(&url) {
                             log::error!("Failed to append to playlist: {}", e);
                         } else {
-                            log::debug!("Prefetched track {} (queue pos {})", i, idx);
+                            log::debug!(
+                                "Prepared track {} (queue pos {}) via MediaPreparer",
+                                i,
+                                idx
+                            );
 
                             // Save metadata for MPRIS (first track only)
                             if first_track {
@@ -120,7 +142,7 @@ pub fn play_position(
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to resolve stream URL for {}: {}", video_id, e);
+                        log::error!("Failed to prepare media for {}: {}", video_id, e);
                         if first_track {
                             return ServerResponse::Error(format!(
                                 "Failed to resolve stream: {}",
@@ -159,13 +181,132 @@ pub fn play_position(
 }
 
 /// Internal version of play_position that returns Result
-pub fn play_position_internal(
+pub async fn play_position_internal(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    pos: usize,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
+) -> Result<()> {
+    match play_position(playback, queue, pos, state_tracker, media_preparer).await {
+        ServerResponse::Ok => Ok(()),
+        ServerResponse::Error(e) => Err(anyhow::anyhow!("{}", e)),
+        _ => Ok(()),
+    }
+}
+
+/// Sync version for internal callers (repeat-one, auto-advance fallback).
+///
+/// Uses cached/prefetched URLs via PlaybackService.build_playback_url().
+/// For initial user-initiated play, use the async play_position() instead.
+pub fn play_position_sync(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    pos: usize,
+    state_tracker: &Arc<PlaybackStateTracker>,
+) -> ServerResponse {
+    log::info!("play_position_sync for pos={} (uses cached URLs)", pos);
+
+    if let Err(e) = playback.stop() {
+        log::debug!("stop() returned error (may be idle): {}", e);
+    }
+    state_tracker.force_set(PlaybackState::Idle);
+
+    if let Err(e) = playback.playlist_clear() {
+        log::warn!("Failed to clear MPV buffer: {}", e);
+    }
+
+    let queue_len = queue.len();
+    if pos >= queue_len {
+        return ServerResponse::Error("Position out of bounds".to_string());
+    }
+
+    queue.set_current(Some(pos));
+    queue.set_playback_base_index(pos);
+
+    let prefetch_indices = queue.build_prefetch_window(pos, PREFETCH_WINDOW_SIZE);
+    let prefetch_count = prefetch_indices.len();
+
+    let mut first_url_metadata: Option<(String, String)> = None;
+    let mut first_track = true;
+
+    for (i, &idx) in prefetch_indices.iter().enumerate() {
+        match queue.get_by_index(idx) {
+            Ok(song) => {
+                let video_id = &song.uri;
+                match playback.build_playback_url(video_id) {
+                    Ok(url) => {
+                        if let Err(e) = playback.playlist_append(&url) {
+                            log::error!("Failed to append to playlist: {}", e);
+                        } else {
+                            log::debug!(
+                                "Prefetched track {} (queue pos {}) via cached URL",
+                                i,
+                                idx
+                            );
+                            if first_track {
+                                first_track = false;
+                                let title = song
+                                    .metadata
+                                    .get("title")
+                                    .and_then(|v| v.first())
+                                    .cloned()
+                                    .unwrap_or_else(|| video_id.clone());
+                                let artist = song
+                                    .metadata
+                                    .get("artist")
+                                    .and_then(|v| v.first())
+                                    .cloned()
+                                    .unwrap_or_default();
+                                first_url_metadata = Some((title, artist));
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        log::error!("Failed to resolve stream URL for {}: {}", video_id, e);
+                        if first_track {
+                            return ServerResponse::Error(format!(
+                                "Failed to resolve stream: {}",
+                                e
+                            ));
+                        }
+                    }
+                }
+            }
+            Err(e) => {
+                log::error!("Failed to get song at index {}: {}", idx, e);
+            }
+        }
+    }
+
+    if let Some((title, artist)) = first_url_metadata {
+        if let Err(e) = playback.set_media_title(&title, &artist) {
+            log::warn!("Failed to set media title: {}", e);
+        }
+    }
+
+    match playback.playlist_play_index(0) {
+        Ok(_) => {
+            log::info!("Playing position {} (prefetched {} tracks)", pos, prefetch_count);
+            state_tracker.force_set(PlaybackState::Playing);
+            ServerResponse::Ok
+        }
+        Err(e) => {
+            log::error!("Failed to play playlist index 0: {}", e);
+            state_tracker.force_set(PlaybackState::Idle);
+            ServerResponse::Error(e.to_string())
+        }
+    }
+}
+
+/// Internal sync version that returns Result
+pub fn play_position_internal_sync(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     pos: usize,
     state_tracker: &Arc<PlaybackStateTracker>,
 ) -> Result<()> {
-    match play_position(playback, queue, pos, state_tracker) {
+    match play_position_sync(playback, queue, pos, state_tracker) {
         ServerResponse::Ok => Ok(()),
         ServerResponse::Error(e) => Err(anyhow::anyhow!("{}", e)),
         _ => Ok(()),
@@ -218,6 +359,10 @@ fn handle_eof(
         queue_len
     );
 
+    if try_recover_from_early_eof(playback, queue, state_tracker, current_idx) {
+        return;
+    }
+
     // Determine intent based on repeat mode at EOF time
     let intent = determine_advance_intent(queue, repeat_mode);
     log::info!("[DIAG-EOF] Captured intent: {:?}", intent);
@@ -226,7 +371,7 @@ fn handle_eof(
     if intent == AdvanceIntent::Repeat {
         log::info!("[DIAG-EOF] Repeat One: replaying current track");
         if let Some(current_idx) = queue.current_index() {
-            let _ = play_position_internal(playback, queue, current_idx, state_tracker);
+            let _ = play_position_internal_sync(playback, queue, current_idx, state_tracker);
             return;
         }
         if let Err(e) = playback.seek(0.0, "absolute") {
@@ -253,6 +398,97 @@ fn handle_eof(
     );
 
     spawn_pending_advance_timeout(playback, queue, state_tracker);
+}
+
+fn try_recover_from_early_eof(
+    playback: &Arc<PlaybackService>,
+    queue: &Arc<QueueService>,
+    state_tracker: &Arc<PlaybackStateTracker>,
+    current_idx: Option<usize>,
+) -> bool {
+    let Some(idx) = current_idx else {
+        return false;
+    };
+
+    let Ok(song) = queue.get_by_index(idx) else {
+        return false;
+    };
+    let video_id = song.uri.clone();
+
+    let position_secs = match playback.get_position() {
+        Ok(pos) => pos,
+        Err(err) => {
+            log::debug!("[DIAG-EOF] Could not read time-pos for {}: {}", video_id, err);
+            return false;
+        }
+    };
+    let duration_secs = match playback.get_duration() {
+        Ok(dur) => dur,
+        Err(err) => {
+            log::debug!("[DIAG-EOF] Could not read duration for {}: {}", video_id, err);
+            return false;
+        }
+    };
+
+    if !is_suspicious_eof(position_secs, duration_secs) {
+        EARLY_EOF_RECOVERY_COUNTS.lock().remove(&video_id);
+        return false;
+    }
+
+    let remaining_secs = duration_secs - position_secs;
+    let mut attempts = EARLY_EOF_RECOVERY_COUNTS.lock();
+    let attempt = attempts.entry(video_id.clone()).or_insert(0);
+
+    if *attempt >= EARLY_EOF_MAX_RECOVERY_ATTEMPTS {
+        log::warn!(
+            "[DIAG-EOF] Suspicious EOF for {} at {:.2}/{:.2}s (remaining {:.2}s), recovery limit reached",
+            video_id,
+            position_secs,
+            duration_secs,
+            remaining_secs
+        );
+        return false;
+    }
+
+    *attempt += 1;
+    let attempt_no = *attempt;
+    drop(attempts);
+
+    log::warn!(
+        "[DIAG-EOF] Suspicious EOF for {} at {:.2}/{:.2}s (remaining {:.2}s), retrying current track with fresh URL cache (attempt {}/{})",
+        video_id,
+        position_secs,
+        duration_secs,
+        remaining_secs,
+        attempt_no,
+        EARLY_EOF_MAX_RECOVERY_ATTEMPTS
+    );
+
+    playback.clear_stream_url_cache();
+
+    match play_position_internal_sync(playback, queue, idx, state_tracker) {
+        Ok(()) => true,
+        Err(err) => {
+            log::warn!("[DIAG-EOF] Early-EOF recovery replay failed for {}: {}", video_id, err);
+            false
+        }
+    }
+}
+
+fn is_suspicious_eof(position_secs: f64, duration_secs: f64) -> bool {
+    if !position_secs.is_finite() || !duration_secs.is_finite() {
+        return false;
+    }
+
+    if duration_secs < EARLY_EOF_MIN_DURATION_SECS || position_secs < EARLY_EOF_MIN_POSITION_SECS {
+        return false;
+    }
+
+    if position_secs >= duration_secs {
+        return false;
+    }
+
+    (duration_secs - position_secs) >= EARLY_EOF_MIN_REMAINING_SECS
 }
 
 fn determine_advance_intent(queue: &Arc<QueueService>, repeat_mode: RepeatMode) -> AdvanceIntent {
@@ -353,7 +589,7 @@ fn execute_intent(
     match intent {
         AdvanceIntent::Repeat => {
             if let Some(current_idx) = queue.current_index() {
-                let _ = play_position_internal(playback, queue, current_idx, state_tracker);
+                let _ = play_position_internal_sync(playback, queue, current_idx, state_tracker);
             } else {
                 let _ = playback.seek(0.0, "absolute");
                 let _ = playback.unpause();
@@ -397,12 +633,12 @@ fn handle_end_of_window(
     match next_pos {
         Some(pos) => {
             log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", pos);
-            let _ = play_position_internal(playback, queue, pos, state_tracker);
+            let _ = play_position_internal_sync(playback, queue, pos, state_tracker);
         }
         None => {
             if repeat_mode == RepeatMode::All && queue.len() > 0 {
                 log::info!("[DIAG-EOF] Repeat All: looping back to start");
-                let _ = play_position_internal(playback, queue, 0, state_tracker);
+                let _ = play_position_internal_sync(playback, queue, 0, state_tracker);
             } else {
                 log::info!("[DIAG-EOF] Reached end of queue, going idle");
                 queue.set_current(None);
@@ -487,7 +723,7 @@ fn handle_playback_error(
     if let Some(current) = queue.current_index() {
         let next_pos = current + 1;
         if next_pos < queue.len() {
-            let _ = play_position_internal(playback, queue, next_pos, state_tracker);
+            let _ = play_position_internal_sync(playback, queue, next_pos, state_tracker);
         } else {
             state_tracker.force_set(PlaybackState::Idle);
         }
@@ -538,7 +774,7 @@ pub fn next_track(
     state_tracker: &Arc<PlaybackStateTracker>,
 ) -> ServerResponse {
     match queue.next_index() {
-        Some(idx) => play_position(playback, queue, idx, state_tracker),
+        Some(idx) => play_position_sync(playback, queue, idx, state_tracker),
         None => ServerResponse::Error("No next track".into()),
     }
 }
@@ -560,7 +796,7 @@ pub fn previous_track(
                 Err(e) => ServerResponse::Error(e.to_string()),
             }
         }
-        Some(idx) => play_position(playback, queue, idx, state_tracker),
+        Some(idx) => play_position_sync(playback, queue, idx, state_tracker),
         None => ServerResponse::Error("No previous track".into()),
     }
 }
@@ -573,7 +809,7 @@ pub fn play_id(
     state_tracker: &Arc<PlaybackStateTracker>,
 ) -> ServerResponse {
     match queue.find_index_by_id(id) {
-        Some(pos) => play_position(playback, queue, pos, state_tracker),
+        Some(pos) => play_position_sync(playback, queue, pos, state_tracker),
         None => ServerResponse::Error("Song not found".into()),
     }
 }
@@ -666,15 +902,18 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
-    use crate::{backends::youtube::config::ExtractorType, domain::Song};
+    use crate::{
+        backends::youtube::{config::ExtractorType, url_resolver::UrlResolver},
+        domain::Song,
+    };
 
     fn setup_test_services() -> (Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>)
     {
         // Mock socket path
         let socket = PathBuf::from("/tmp/test-mpv.sock");
 
-        let playback =
-            Arc::new(PlaybackService::new(&socket, ExtractorType::default(), None).unwrap());
+        let url_resolver = Arc::new(UrlResolver::new(ExtractorType::default()));
+        let playback = Arc::new(PlaybackService::new(&socket, url_resolver, None).unwrap());
         let queue = Arc::new(QueueService::new());
         let state_tracker = Arc::new(PlaybackStateTracker::new());
 
@@ -686,6 +925,21 @@ mod tests {
         song.uri = id.to_string();
         song.metadata.insert("title".to_string(), vec![id.to_string()]);
         song
+    }
+
+    #[test]
+    fn suspicious_eof_detects_early_cutoff() {
+        assert!(is_suspicious_eof(210.6, 236.98));
+    }
+
+    #[test]
+    fn suspicious_eof_ignores_near_end() {
+        assert!(!is_suspicious_eof(228.0, 236.98));
+    }
+
+    #[test]
+    fn suspicious_eof_ignores_short_tracks() {
+        assert!(!is_suspicious_eof(20.0, 45.0));
     }
 
     #[test]
@@ -817,7 +1071,7 @@ mod tests {
         // Start from position 0
         // play_position will build prefetch window [0, 1, 2] SEQUENTIALLY
         // but with shuffle enabled, it SHOULD build [0, shuffle[1], shuffle[2]]
-        let _ = play_position(&playback, &queue, 0, &state_tracker);
+        let _ = play_position_sync(&playback, &queue, 0, &state_tracker);
 
         // After play_position, check what base_index was set to
         let base = queue.playback_base_index();

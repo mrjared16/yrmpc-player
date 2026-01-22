@@ -59,9 +59,13 @@ pub trait Extractor: Send + Sync {
     }
 
     /// Clear any cached data.
-    ///
-    /// Default is a no-op. Caching extractors should override this.
-    fn clear_cache(&self) {}
+    fn clear_cache(&self);
+
+    /// Check if a video ID is in the cache.
+    fn is_cached(&self, video_id: &str) -> bool;
+
+    /// Invalidate (remove) a specific video ID from the cache.
+    fn invalidate(&self, video_id: &str);
 }
 
 #[cfg(test)]
@@ -94,6 +98,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "mock"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     #[test]

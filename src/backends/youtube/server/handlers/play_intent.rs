@@ -3,24 +3,21 @@
 //! This handler processes PlayWithIntent commands, which express user intent
 //! declaratively rather than imperatively.
 //!
-//! Uses the unified CacheExecutor for all cache work (preload + prepare).
+//! Uses the unified YouTubeMediaPreparer for all cache work (preload +
+//! prepare).
 
 use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 
 use crate::backends::youtube::{
+    media::{MediaPreparer, PreloadTier},
     protocol::{
         ServerResponse,
-        play_intent::{PlayError, PlayIntent, PreloadTier, RequestId, derive_priorities},
-    },
-    services::{
-        CacheExecutorHandle,
-        PlaybackService,
-        PlaybackStateTracker,
-        QueueService,
+        play_intent::{PlayError, PlayIntent, RequestId, derive_priorities},
     },
     server::orchestrator,
+    services::{PlaybackService, PlaybackStateTracker, QueueService},
 };
 
 pub fn handle_play_with_intent(
@@ -30,7 +27,7 @@ pub fn handle_play_with_intent(
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
     event_tx: &Sender<String>,
-    cache_executor: &CacheExecutorHandle,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     if let Err(e) = validate_intent(&intent) {
         log::warn!("[INTENT] validation_failed request_id={} error={:?}", request_id, e);
@@ -44,14 +41,17 @@ pub fn handle_play_with_intent(
             continue;
         };
 
-        cache_executor.preload(track_id, *tier, request_id);
+        media_preparer.prefetch(&track_id, *tier);
     }
 
     match &intent {
         PlayIntent::Context { tracks, shuffle, offset, .. } => {
             log::info!(
                 "[INTENT] context request_id={} count={} shuffle={} offset={}",
-                request_id, tracks.len(), shuffle, offset
+                request_id,
+                tracks.len(),
+                shuffle,
+                offset
             );
 
             queue.clear();
@@ -64,8 +64,8 @@ pub fn handle_play_with_intent(
             }
 
             let _ = event_tx.send("queue".to_string());
-            
-            return orchestrator::play_position(playback, queue, *offset, state_tracker);
+
+            return orchestrator::play_position_sync(playback, queue, *offset, state_tracker);
         }
 
         PlayIntent::Next { tracks } => {
@@ -93,15 +93,17 @@ pub fn handle_play_with_intent(
         PlayIntent::Radio { seed, mix_type } => {
             log::info!(
                 "[INTENT] radio request_id={} seed={} mix_type={:?}",
-                request_id, &seed.uri, mix_type
+                request_id,
+                &seed.uri,
+                mix_type
             );
 
             queue.clear();
             queue.add(seed.clone(), None);
 
             let _ = event_tx.send("queue".to_string());
-            
-            return orchestrator::play_position(playback, queue, 0, state_tracker);
+
+            return orchestrator::play_position_sync(playback, queue, 0, state_tracker);
         }
     }
 

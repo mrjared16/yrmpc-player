@@ -109,6 +109,20 @@ impl<P: Extractor, F: Extractor> Extractor for FallbackExtractor<P, F> {
             }
         }
     }
+
+    fn clear_cache(&self) {
+        self.primary.clear_cache();
+        self.fallback.clear_cache();
+    }
+
+    fn is_cached(&self, video_id: &str) -> bool {
+        self.primary.is_cached(video_id) || self.fallback.is_cached(video_id)
+    }
+
+    fn invalidate(&self, video_id: &str) {
+        self.primary.invalidate(video_id);
+        self.fallback.invalidate(video_id);
+    }
 }
 
 // Send + Sync are automatically derived if P and F are Send + Sync
@@ -133,6 +147,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "success"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     impl Extractor for FailingExtractor {
@@ -143,6 +165,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "failing"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     impl Extractor for PartialExtractor {
@@ -162,6 +192,14 @@ mod tests {
         fn name(&self) -> &'static str {
             "partial"
         }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     #[test]

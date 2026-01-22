@@ -48,10 +48,10 @@ use parking_lot::Mutex;
 use super::{
     audio::{CacheConfig, FfmpegConcatSource, MpvAudioSource},
     config::{AudioSourceType, ExtractorType},
+    media::MediaPreparer,
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
         ApiService,
-        CacheExecutorHandle,
         InternalEvent,
         PlaybackService,
         PlaybackStateTracker,
@@ -71,7 +71,7 @@ pub struct YouTubeServer {
     play_queue: Arc<Mutex<PlayQueue>>,
     state_tracker: Arc<PlaybackStateTracker>,
     preload_scheduler: Arc<Mutex<PreloadScheduler>>,
-    cache_executor: CacheExecutorHandle,
+    media_preparer: Arc<dyn MediaPreparer>,
     queue_event_handler: Mutex<QueueEventHandler>,
     running: Arc<AtomicBool>,
     socket_path: PathBuf,
@@ -102,8 +102,9 @@ impl YouTubeServer {
 
         // Create shared services registry (single source of truth)
         let cache_config = CacheConfig::default();
-        let services = YouTubeServices::new(extractor_type, cache_config.clone())?;
-        let cache_executor = services.cache_executor();
+        let services =
+            YouTubeServices::new(extractor_type, audio_source_type, cache_config.clone())?;
+        let media_preparer = services.media_preparer();
 
         // Create audio source using shared services
         let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = match audio_source_type {
@@ -112,10 +113,7 @@ impl YouTubeServer {
                 let url_fn: Box<dyn Fn(&str) -> Result<String> + Send + Sync> =
                     Box::new(move |video_id| resolver.get_url(video_id));
                 let source = FfmpegConcatSource::new(services.audio_cache(), url_fn);
-                log::info!(
-                    "Audio source: FfmpegConcat (cache: {:?})",
-                    cache_config.cache_dir
-                );
+                log::info!("Audio source: FfmpegConcat (cache: {:?})", cache_config.cache_dir);
                 Some(Arc::new(Mutex::new(source)))
             }
             AudioSourceType::Passthrough => {
@@ -125,7 +123,8 @@ impl YouTubeServer {
         };
 
         // Create playback service with shared resolver (spawns MPV)
-        let playback = Arc::new(PlaybackService::new(&mpv_socket, services.url_resolver(), audio_source)?);
+        let playback =
+            Arc::new(PlaybackService::new(&mpv_socket, services.url_resolver(), audio_source)?);
 
         // Create queue service
         let queue = Arc::new(QueueService::new());
@@ -146,7 +145,7 @@ impl YouTubeServer {
             Arc::clone(&queue),
             Arc::clone(&play_queue),
         )
-        .with_cache_executor(cache_executor.clone());
+        .with_media_preparer(Arc::clone(&media_preparer));
 
         Ok(Self {
             api,
@@ -155,7 +154,7 @@ impl YouTubeServer {
             play_queue,
             state_tracker,
             preload_scheduler,
-            cache_executor,
+            media_preparer,
             queue_event_handler: Mutex::new(queue_event_handler),
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
@@ -332,9 +331,12 @@ impl YouTubeServer {
             ServerCommand::Previous => {
                 orchestrator::previous_track(&self.playback, &self.queue, &self.state_tracker)
             }
-            ServerCommand::PlayPos(pos) => {
-                orchestrator::play_position(&self.playback, &self.queue, pos, &self.state_tracker)
-            }
+            ServerCommand::PlayPos(pos) => orchestrator::play_position_sync(
+                &self.playback,
+                &self.queue,
+                pos,
+                &self.state_tracker,
+            ),
             ServerCommand::PlayId(id) => {
                 orchestrator::play_id(&self.playback, &self.queue, id, &self.state_tracker)
             }
@@ -439,11 +441,13 @@ impl YouTubeServer {
                     &self.queue,
                     &self.state_tracker,
                     &self.event_tx,
-                    &self.cache_executor,
+                    &self.media_preparer,
                 )
             }
-            ServerCommand::CancelRequest { request_id } => {
-                self.cache_executor.cancel(request_id);
+            ServerCommand::CancelRequest { request_id: _ } => {
+                log::debug!(
+                    "CancelRequest is no longer supported (cancel method removed from MediaPreparer)"
+                );
                 ServerResponse::Ok
             }
         }
@@ -506,6 +510,8 @@ mod tests {
 
     #[test]
     fn test_server_creation() {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
         let socket = std::path::Path::new("/tmp/test-yt.sock");
         let result =
             YouTubeServer::new(socket, None, ExtractorType::default(), AudioSourceType::default());

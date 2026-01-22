@@ -1,31 +1,19 @@
-use std::{
-    num::NonZeroUsize,
-    time::{Duration, Instant},
-};
-
-use lru::LruCache;
+use std::time::Duration;
 
 use super::library_category::LibraryCategory;
-use crate::mpd::commands::LsInfoEntry;
-
-/// Cache entry with timestamp for TTL checking
-#[derive(Debug, Clone)]
-struct CacheEntry {
-    data: Vec<LsInfoEntry>,
-    timestamp: Instant,
-}
+use crate::{
+    mpd::commands::LsInfoEntry,
+    shared::cache::{Cache, CacheConfig},
+};
 
 /// Library data cache with LRU eviction and TTL
 #[derive(Debug)]
 pub struct LibraryCache {
     /// Per-category caches
-    playlists: LruCache<(), CacheEntry>,
-    albums: LruCache<(), CacheEntry>,
-    artists: LruCache<(), CacheEntry>,
-    songs: LruCache<(), CacheEntry>,
-
-    /// Time-to-live for cache entries (default: 24 hours)
-    ttl: Duration,
+    playlists: Cache<(), Vec<LsInfoEntry>>,
+    albums: Cache<(), Vec<LsInfoEntry>>,
+    artists: Cache<(), Vec<LsInfoEntry>>,
+    songs: Cache<(), Vec<LsInfoEntry>>,
 
     /// Statistics for debugging
     hits: u64,
@@ -40,44 +28,24 @@ impl LibraryCache {
 
     /// Create library cache with custom TTL
     pub fn with_ttl(ttl: Duration) -> Self {
+        let config = CacheConfig::new(1).with_ttl(ttl);
         Self {
             // Single entry per category (key is unit type)
-            playlists: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            albums: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            artists: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            songs: LruCache::new(NonZeroUsize::new(1).unwrap()),
-            ttl,
+            playlists: Cache::new(config),
+            albums: Cache::new(config),
+            artists: Cache::new(config),
+            songs: Cache::new(config),
             hits: 0,
             misses: 0,
         }
     }
 
     /// Get cached data for a category if valid (not expired)
-    /// Get cached data for a category if valid (not expired)
     pub fn get(&mut self, category: LibraryCategory) -> Option<Vec<LsInfoEntry>> {
-        let ttl = self.ttl; // Copy TTL first to avoid borrow issues
-
-        // Check if entry exists and is not expired
-        let (is_expired, has_entry, data) = {
-            let cache = self.get_cache_mut(category);
-            if let Some(entry) = cache.get(&()) {
-                let expired = entry.timestamp.elapsed() >= ttl;
-                let data = if !expired { Some(entry.data.clone()) } else { None };
-                (expired, true, data)
-            } else {
-                (false, false, None)
-            }
-        }; // cache borrow ends here
-
-        if has_entry {
-            if let Some(data) = data {
-                self.hits += 1;
-                log::debug!("Library cache HIT for {:?}", category);
-                return Some(data);
-            } else if is_expired {
-                log::debug!("Library cache EXPIRED for {:?}", category);
-                self.get_cache_mut(category).pop(&());
-            }
+        if let Some(data) = self.get_cache_mut(category).get(&()) {
+            self.hits += 1;
+            log::debug!("Library cache HIT for {:?}", category);
+            return Some(data);
         }
 
         self.misses += 1;
@@ -88,13 +56,9 @@ impl LibraryCache {
     /// Store data in cache for a category
     pub fn put(&mut self, category: LibraryCategory, data: Vec<LsInfoEntry>) {
         let cache = self.get_cache_mut(category);
-        let entry = CacheEntry { data, timestamp: Instant::now() };
-        cache.put((), entry);
-        log::debug!(
-            "Library cache STORED for {:?} ({} items)",
-            category,
-            cache.peek(&()).map(|e| e.data.len()).unwrap_or(0)
-        );
+        let count = data.len();
+        cache.insert((), data);
+        log::debug!("Library cache STORED for {:?} ({} items)", category, count);
     }
 
     /// Clear cache for a specific category
@@ -122,7 +86,7 @@ impl LibraryCache {
     }
 
     /// Get mutable reference to the appropriate cache
-    fn get_cache_mut(&mut self, category: LibraryCategory) -> &mut LruCache<(), CacheEntry> {
+    fn get_cache_mut(&mut self, category: LibraryCategory) -> &mut Cache<(), Vec<LsInfoEntry>> {
         match category {
             LibraryCategory::Playlists => &mut self.playlists,
             LibraryCategory::Albums => &mut self.albums,
@@ -144,4 +108,32 @@ pub struct CacheStats {
     pub hits: u64,
     pub misses: u64,
     pub hit_rate: f64,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn category_cache_hit_and_miss_stats() {
+        let mut cache = LibraryCache::with_ttl(Duration::from_secs(60));
+
+        assert!(cache.get(LibraryCategory::Albums).is_none());
+        cache.put(LibraryCategory::Albums, Vec::new());
+        assert_eq!(cache.get(LibraryCategory::Albums), Some(Vec::new()));
+
+        let stats = cache.stats();
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+    }
+
+    #[test]
+    fn ttl_expiration_is_enforced() {
+        let mut cache = LibraryCache::with_ttl(Duration::from_millis(1));
+        cache.put(LibraryCategory::Playlists, Vec::new());
+
+        std::thread::sleep(Duration::from_millis(10));
+
+        assert!(cache.get(LibraryCategory::Playlists).is_none());
+    }
 }

@@ -1,11 +1,19 @@
 use std::{
-    collections::HashMap,
     path::{Path, PathBuf},
-    sync::RwLock,
-    time::Instant,
+    sync::{Arc, RwLock},
+    time::Duration,
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
+use async_trait::async_trait;
+
+use crate::{
+    backends::youtube::media::AudioLoader,
+    shared::{
+        cache::{CacheConfig as SharedCacheConfig, DiskCache, DiskCacheValue, Weigher},
+        dedup::Dedup,
+    },
+};
 
 const DEFAULT_PREFIX_SIZE: u64 = 204_800; // 200KB
 const DEFAULT_MAX_CACHE_SIZE: u64 = 209_715_200; // 200MB
@@ -25,18 +33,33 @@ impl Default for CacheConfig {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct CacheEntry {
     path: PathBuf,
     size: u64,
     content_length: u64,
-    last_accessed: Instant,
 }
 
-#[derive(Debug)]
+impl DiskCacheValue for CacheEntry {
+    fn disk_path(&self) -> &Path {
+        &self.path
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct CacheEntryWeigher;
+
+impl Weigher<String, CacheEntry> for CacheEntryWeigher {
+    fn weight(&self, _key: &String, value: &CacheEntry) -> u64 {
+        value.size
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct AudioCache {
     config: CacheConfig,
-    entries: RwLock<HashMap<String, CacheEntry>>,
+    entries: Arc<RwLock<DiskCache<String, CacheEntry, CacheEntryWeigher>>>,
+    dedup: Dedup<String, Result<(PathBuf, u64), String>>,
 }
 
 impl AudioCache {
@@ -44,7 +67,14 @@ impl AudioCache {
         std::fs::create_dir_all(&config.cache_dir)
             .context("Failed to create audio cache directory")?;
 
-        Ok(Self { config, entries: RwLock::new(HashMap::new()) })
+        let estimated_entries =
+            (config.max_cache_size / config.prefix_size.max(1)).saturating_add(1);
+        let max_entries = usize::try_from(estimated_entries).unwrap_or(usize::MAX / 2);
+        let cache_policy =
+            SharedCacheConfig::new(max_entries.max(1)).with_max_weight(config.max_cache_size);
+        let entries = DiskCache::with_weigher(cache_policy, CacheEntryWeigher);
+
+        Ok(Self { config, entries: Arc::new(RwLock::new(entries)), dedup: Dedup::new() })
     }
 
     pub fn with_defaults() -> Result<Self> {
@@ -56,58 +86,32 @@ impl AudioCache {
     }
 
     pub fn has_prefix(&self, video_id: &str) -> bool {
-        let entries = self.entries.read().unwrap();
-        entries.contains_key(video_id)
+        self.get_content_length(video_id).is_some()
     }
 
     pub fn get_content_length(&self, video_id: &str) -> Option<u64> {
-        let entries = self.entries.read().unwrap();
-        entries.get(video_id).map(|e| e.content_length)
+        let mut entries = self.entries.write().unwrap();
+        entries.get(video_id).map(|entry| entry.content_length)
     }
 
     pub fn total_size(&self) -> u64 {
         let entries = self.entries.read().unwrap();
-        entries.values().map(|e| e.size).sum()
+        entries.total_weight()
     }
 
     pub fn register_prefix(&self, video_id: &str, path: PathBuf, size: u64, content_length: u64) {
         let mut entries = self.entries.write().unwrap();
-        entries.insert(video_id.to_string(), CacheEntry {
-            path,
-            size,
-            content_length,
-            last_accessed: Instant::now(),
-        });
+        entries.insert(video_id.to_string(), CacheEntry { path, size, content_length });
     }
 
     pub fn touch(&self, video_id: &str) {
         let mut entries = self.entries.write().unwrap();
-        if let Some(entry) = entries.get_mut(video_id) {
-            entry.last_accessed = Instant::now();
-        }
+        let _ = entries.touch(video_id);
     }
 
     pub fn evict_lru(&self) -> Result<()> {
-        while self.total_size() > self.config.max_cache_size {
-            let oldest = {
-                let entries = self.entries.read().unwrap();
-                entries
-                    .iter()
-                    .min_by_key(|(_, e)| e.last_accessed)
-                    .map(|(k, e)| (k.clone(), e.path.clone()))
-            };
-
-            if let Some((video_id, path)) = oldest {
-                if path.exists() {
-                    std::fs::remove_file(&path)
-                        .with_context(|| format!("Failed to remove cache file: {:?}", path))?;
-                }
-                let mut entries = self.entries.write().unwrap();
-                entries.remove(&video_id);
-            } else {
-                break;
-            }
-        }
+        let mut entries = self.entries.write().unwrap();
+        entries.evict_excess();
         Ok(())
     }
 
@@ -121,41 +125,101 @@ impl AudioCache {
     /// - path: Path to the cached prefix file
     /// - content_length: Total file size (for byte offset calculation)
     pub async fn ensure_prefix(&self, video_id: &str, stream_url: &str) -> Result<(PathBuf, u64)> {
+        let video_id_owned = video_id.to_string();
+        let stream_url_owned = stream_url.to_string();
+
+        self.dedup
+            .get_or_init_with_timeout(video_id_owned.clone(), Duration::from_secs(30), || {
+                let this = self.clone();
+                async move {
+                    this.ensure_prefix_inner(&video_id_owned, &stream_url_owned)
+                        .await
+                        .map_err(|e| e.to_string())
+                }
+            })
+            .await
+            .map_err(|e| anyhow::anyhow!(e))?
+            .map_err(|e| anyhow::anyhow!(e))
+    }
+
+    async fn ensure_prefix_inner(
+        &self,
+        video_id: &str,
+        stream_url: &str,
+    ) -> Result<(PathBuf, u64)> {
         let start = std::time::Instant::now();
-        
+
         if let Some(content_length) = self.get_content_length(video_id) {
             let path = self.cache_path(video_id);
             if path.exists() {
                 self.touch(video_id);
                 log::info!(
                     "[CACHE] hit video_id={} path={} elapsed={:?}",
-                    video_id, path.display(), start.elapsed()
+                    video_id,
+                    path.display(),
+                    start.elapsed()
                 );
                 return Ok((path, content_length));
             }
         }
 
         log::info!("[CACHE] miss video_id={} downloading prefix...", video_id);
-        
+
         let path = self.cache_path(video_id);
-        let client = reqwest::Client::new();
+        let client = reqwest::Client::builder()
+            .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)) // Force IPv4
+            .build()
+            .context("Failed to build HTTP client")?;
 
         let range_header = format!("bytes=0-{}", self.config.prefix_size - 1);
+        log::debug!("[CACHE] HTTP_START video_id={}", video_id);
         let response = client
             .get(stream_url)
             .header("Range", &range_header)
             .send()
             .await
             .context("Failed to request audio prefix")?;
+        log::debug!("[CACHE] HTTP_DONE video_id={}", video_id);
+
+        let status = response.status();
+        if !status.is_success() {
+            return Err(anyhow!("Prefix request failed with status {}", status));
+        }
 
         // Content-Range header format: "bytes 0-204799/12345678"
-        let content_length = response
+        let content_range_total = response
             .headers()
             .get("content-range")
             .and_then(|v| v.to_str().ok())
             .and_then(|s| s.split('/').last())
-            .and_then(|s| s.parse::<u64>().ok())
-            .context("Missing or invalid Content-Range header")?;
+            .and_then(|s| s.parse::<u64>().ok());
+
+        let content_length = if let Some(total) = content_range_total {
+            total
+        } else if status == reqwest::StatusCode::OK {
+            response
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| response.content_length())
+                .filter(|len| *len > 0)
+                .context("Missing content length for HTTP 200 response")?
+        } else if status == reqwest::StatusCode::PARTIAL_CONTENT {
+            response
+                .headers()
+                .get("content-length")
+                .and_then(|v| v.to_str().ok())
+                .and_then(|s| s.parse::<u64>().ok())
+                .or_else(|| response.content_length())
+                .filter(|len| *len > 0 && *len < self.config.prefix_size)
+                .context("Missing or invalid Content-Range header")?
+        } else {
+            return Err(anyhow!(
+                "Unsupported status {} for prefix request without Content-Range",
+                status
+            ));
+        };
 
         let bytes = response.bytes().await.context("Failed to download prefix")?;
         let size = bytes.len() as u64;
@@ -170,9 +234,37 @@ impl AudioCache {
 
         log::info!(
             "[CACHE] downloaded video_id={} size={} content_length={} elapsed={:?}",
-            video_id, size, content_length, start.elapsed()
+            video_id,
+            size,
+            content_length,
+            start.elapsed()
         );
 
         Ok((path, content_length))
+    }
+}
+
+#[async_trait]
+impl AudioLoader for AudioCache {
+    async fn ensure_prefix(
+        &self,
+        track_id: &str,
+        url: &str,
+        _prefix_bytes: u64,
+    ) -> Result<PathBuf> {
+        // Delegate to existing method, ignore content_length in return
+        // Note: We use config.prefix_size instead of prefix_bytes parameter
+        // to maintain consistency with existing cache behavior
+        let (path, _content_length) = self.ensure_prefix(track_id, url).await?;
+        Ok(path)
+    }
+
+    fn is_cached(&self, track_id: &str) -> bool {
+        self.cache_path(track_id).exists()
+    }
+
+    fn cached_path(&self, track_id: &str) -> Option<PathBuf> {
+        let path = self.cache_path(track_id);
+        path.exists().then_some(path)
     }
 }

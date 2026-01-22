@@ -10,20 +10,19 @@ use parking_lot::Mutex;
 
 use crate::{
     backends::youtube::{
-        protocol::play_intent::{PreloadTier, RequestId},
-        services::{CacheExecutorHandle, PlaybackService, QueueService},
+        media::{MediaPreparer, PreloadTier},
+        services::{PlaybackService, QueueService},
     },
     shared::play_queue::{PlayQueue, QueueEvent, QueueId, RepeatMode},
 };
 
 const PREFETCH_WINDOW_SIZE: usize = 3;
-const QUEUE_EVENT_REQUEST_ID: RequestId = 0;
 
 pub struct QueueEventHandler {
     playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
     play_queue: Arc<Mutex<PlayQueue>>,
-    cache_executor: Option<CacheExecutorHandle>,
+    media_preparer: Option<Arc<dyn MediaPreparer>>,
 }
 
 impl QueueEventHandler {
@@ -33,11 +32,11 @@ impl QueueEventHandler {
         queue: Arc<QueueService>,
         play_queue: Arc<Mutex<PlayQueue>>,
     ) -> Self {
-        Self { playback, queue, play_queue, cache_executor: None }
+        Self { playback, queue, play_queue, media_preparer: None }
     }
 
-    pub fn with_cache_executor(mut self, executor: CacheExecutorHandle) -> Self {
-        self.cache_executor = Some(executor);
+    pub fn with_media_preparer(mut self, preparer: Arc<dyn MediaPreparer>) -> Self {
+        self.media_preparer = Some(preparer);
         self
     }
 
@@ -72,12 +71,12 @@ impl QueueEventHandler {
             return;
         }
 
-        if let Some(ref executor) = self.cache_executor {
+        if let Some(ref preparer) = self.media_preparer {
             for uri in &video_ids {
                 let Some(track_id) = extract_video_id(uri) else {
                     continue;
                 };
-                executor.preload(track_id, PreloadTier::Background, QUEUE_EVENT_REQUEST_ID);
+                preparer.prefetch(&track_id, PreloadTier::Background);
             }
         } else {
             self.playback.prefetch_audio_batch(video_ids);
@@ -175,7 +174,7 @@ impl QueueEventHandler {
 
         self.playback.prefetch(video_ids.clone());
 
-        if let Some(ref executor) = self.cache_executor {
+        if let Some(ref preparer) = self.media_preparer {
             for (index, uri) in video_ids.iter().enumerate() {
                 let Some(track_id) = extract_video_id(uri) else {
                     continue;
@@ -187,7 +186,7 @@ impl QueueEventHandler {
                     _ => PreloadTier::Eager,
                 };
 
-                executor.preload(track_id, tier, QUEUE_EVENT_REQUEST_ID);
+                preparer.prefetch(&track_id, tier);
             }
         } else {
             self.playback.prefetch_audio_batch(video_ids);
