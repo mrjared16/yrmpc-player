@@ -159,28 +159,39 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
     fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
         let mut results = HashMap::new();
         let version = self.next_version.fetch_add(1, Ordering::Relaxed);
+        let mut uncached = Vec::new();
 
         for id in video_ids {
             if let Some(url) = self.get_cached(id) {
                 log::debug!("Cache hit for {}", id);
                 results.insert(id.clone(), Ok(url));
             } else {
-                let id_owned = id.clone();
-                let result = self.dedup.get_or_init_sync(id_owned.clone(), || {
-                    if let Some(url) = self.get_cached(&id_owned) {
-                        return Ok(url);
-                    }
-                    self.inner.extract_one(&id_owned).map_err(|e| e.to_string())
-                });
+                uncached.push(id.clone());
+            }
+        }
 
-                match result {
-                    Ok(url) => {
-                        self.try_cache(&id_owned, url.clone(), version, false);
-                        results.insert(id_owned, Ok(url));
-                    }
-                    Err(error) => {
-                        results.insert(id_owned, Err(anyhow!(error)));
-                    }
+        if uncached.is_empty() {
+            return results;
+        }
+
+        let mut batch_results = self.inner.extract_batch(&uncached);
+
+        for id in uncached {
+            let prefetch_result: Result<String, String> = match batch_results.remove(&id) {
+                Some(Ok(url)) => Ok(url),
+                Some(Err(err)) => Err(err.to_string()),
+                None => Err(format!("Inner extractor omitted batch result for {id}")),
+            };
+
+            let result = self.dedup.get_or_init_sync(id.clone(), || prefetch_result.clone());
+
+            match result {
+                Ok(url) => {
+                    self.try_cache(&id, url.clone(), version, false);
+                    results.insert(id, Ok(url));
+                }
+                Err(error) => {
+                    results.insert(id, Err(anyhow!(error)));
                 }
             }
         }
@@ -453,8 +464,8 @@ mod tests {
             .clone();
 
         assert_eq!(batch_result, one_result);
-        assert_eq!(cached.inner().extract_one_count(), 1);
-        assert_eq!(cached.inner().extract_batch_count(), 0);
+        assert!(cached.inner().extract_one_count() <= 1);
+        assert_eq!(cached.inner().extract_batch_count(), 1);
     }
 
     #[test]
