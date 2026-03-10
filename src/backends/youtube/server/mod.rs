@@ -46,8 +46,14 @@ use handlers::queue_events::QueueEventHandler;
 use parking_lot::Mutex;
 
 use super::{
-    audio::{CacheConfig, FfmpegConcatSource, MpvAudioSource},
-    config::{AudioSourceType, ExtractorType},
+    audio::{
+        AudioSourcePlanner,
+        AudioTransportTarget,
+        CacheConfig,
+        FfmpegConcatSource,
+        MpvAudioSource,
+    },
+    config::{AudioDeliveryMode, ExtractorType},
     media::MediaPreparer,
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
@@ -88,7 +94,7 @@ impl YouTubeServer {
         socket_path: &Path,
         cookie_file: Option<&str>,
         extractor_type: ExtractorType,
-        audio_source_type: AudioSourceType,
+        audio_delivery_mode: AudioDeliveryMode,
     ) -> Result<Self> {
         let mpv_socket = socket_path.with_extension("mpv.sock");
 
@@ -102,29 +108,43 @@ impl YouTubeServer {
 
         // Create shared services registry (single source of truth)
         let cache_config = CacheConfig::default();
+        let audio_source_plan = AudioSourcePlanner.plan(audio_delivery_mode);
         let services =
-            YouTubeServices::new(extractor_type, audio_source_type, cache_config.clone())?;
+            YouTubeServices::new(extractor_type, audio_source_plan, cache_config.clone())?;
         let media_preparer = services.media_preparer();
 
         // Create audio source using shared services
-        let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = match audio_source_type {
-            AudioSourceType::FfmpegConcat => {
-                let resolver = services.url_resolver();
-                let url_fn: Box<dyn Fn(&str) -> Result<String> + Send + Sync> =
-                    Box::new(move |video_id| resolver.get_url(video_id));
-                let source = FfmpegConcatSource::new(services.audio_cache(), url_fn);
-                log::info!("Audio source: FfmpegConcat (cache: {:?})", cache_config.cache_dir);
-                Some(Arc::new(Mutex::new(source)))
+        let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = if audio_source_plan
+            .needs_source_adapter()
+        {
+            let resolver = services.url_resolver();
+            let url_fn: Box<dyn Fn(&str) -> Result<String> + Send + Sync> =
+                Box::new(move |video_id| resolver.get_url(video_id));
+            let source = FfmpegConcatSource::new(services.audio_cache(), url_fn);
+            log::info!("Audio mode: Combined (cache: {:?})", cache_config.cache_dir);
+            Some(Arc::new(Mutex::new(source)))
+        } else {
+            match audio_source_plan.transport {
+                AudioTransportTarget::DirectUrl => {
+                    log::info!("Audio mode: Direct (no local staging)");
+                }
+                AudioTransportTarget::LocalRelay => {
+                    log::info!("Audio mode: Relay (fallback to Direct until transport is wired)");
+                }
+                AudioTransportTarget::CombinedConcat => {
+                    log::warn!("Planner selected Combined transport without source adapter");
+                }
             }
-            AudioSourceType::Passthrough => {
-                log::info!("Audio source: Passthrough (no caching)");
-                None
-            }
+            None
         };
 
         // Create playback service with shared resolver (spawns MPV)
-        let playback =
-            Arc::new(PlaybackService::new(&mpv_socket, services.url_resolver(), audio_source)?);
+        let playback = Arc::new(PlaybackService::new(
+            &mpv_socket,
+            services.url_resolver(),
+            audio_source,
+            audio_source_plan,
+        )?);
 
         // Create queue service
         let queue = Arc::new(QueueService::new());
@@ -513,8 +533,12 @@ mod tests {
         let rt = tokio::runtime::Runtime::new().unwrap();
         let _guard = rt.enter();
         let socket = std::path::Path::new("/tmp/test-yt.sock");
-        let result =
-            YouTubeServer::new(socket, None, ExtractorType::default(), AudioSourceType::default());
+        let result = YouTubeServer::new(
+            socket,
+            None,
+            ExtractorType::default(),
+            AudioDeliveryMode::default(),
+        );
         assert!(result.is_ok() || result.is_err());
     }
 }
