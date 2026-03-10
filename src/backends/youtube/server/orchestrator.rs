@@ -903,7 +903,11 @@ mod tests {
 
     use super::*;
     use crate::{
-        backends::youtube::{config::ExtractorType, url_resolver::UrlResolver},
+        backends::youtube::{
+            audio::AudioSourcePlanner,
+            config::{AudioDeliveryMode, ExtractorType},
+            url_resolver::UrlResolver,
+        },
         domain::Song,
     };
 
@@ -913,7 +917,15 @@ mod tests {
         let socket = PathBuf::from("/tmp/test-mpv.sock");
 
         let url_resolver = Arc::new(UrlResolver::new(ExtractorType::default()));
-        let playback = Arc::new(PlaybackService::new(&socket, url_resolver, None).unwrap());
+        let playback = Arc::new(
+            PlaybackService::new(
+                &socket,
+                url_resolver,
+                None,
+                AudioSourcePlanner.plan(AudioDeliveryMode::Direct),
+            )
+            .unwrap(),
+        );
         let queue = Arc::new(QueueService::new());
         let state_tracker = Arc::new(PlaybackStateTracker::new());
 

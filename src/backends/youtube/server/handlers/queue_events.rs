@@ -79,7 +79,7 @@ impl QueueEventHandler {
                 preparer.prefetch(&track_id, PreloadTier::Background);
             }
         } else {
-            self.playback.prefetch_audio_batch(video_ids);
+            self.playback.prefetch(video_ids);
         }
     }
 
@@ -172,8 +172,6 @@ impl QueueEventHandler {
             return;
         }
 
-        self.playback.prefetch(video_ids.clone());
-
         if let Some(ref preparer) = self.media_preparer {
             for (index, uri) in video_ids.iter().enumerate() {
                 let Some(track_id) = extract_video_id(uri) else {
@@ -189,7 +187,7 @@ impl QueueEventHandler {
                 preparer.prefetch(&track_id, tier);
             }
         } else {
-            self.playback.prefetch_audio_batch(video_ids);
+            self.playback.prefetch(video_ids);
         }
     }
 

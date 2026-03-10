@@ -15,8 +15,7 @@ use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use super::{
     super::{
-        audio::cache::AudioCache,
-        config::AudioSourceType,
+        audio::{AudioSourcePlan, cache::AudioCache},
         protocol::play_intent::RequestId,
         url_resolver::UrlResolver,
     },
@@ -140,7 +139,7 @@ pub struct YouTubeMediaPreparer {
     in_flight: HashMap<String, Arc<InFlightJob>>,
     url_resolver: Arc<UrlResolver>,
     audio_cache: Arc<AudioCache>,
-    audio_source_type: AudioSourceType,
+    audio_source_plan: AudioSourcePlan,
     background_queue: VecDeque<PreloadJob>,
     permits: TierPermits,
     internal_rx: mpsc::UnboundedReceiver<InternalEvent>,
@@ -156,7 +155,7 @@ impl YouTubeMediaPreparer {
     pub fn spawn(
         url_resolver: Arc<UrlResolver>,
         audio_cache: Arc<AudioCache>,
-        audio_source_type: AudioSourceType,
+        audio_source_plan: AudioSourcePlan,
     ) -> YouTubeMediaPreparerHandle {
         let (tx, rx) = mpsc::channel(256);
         let (internal_tx, internal_rx) = mpsc::unbounded_channel();
@@ -166,7 +165,7 @@ impl YouTubeMediaPreparer {
             in_flight: HashMap::new(),
             url_resolver,
             audio_cache,
-            audio_source_type,
+            audio_source_plan,
             background_queue: VecDeque::new(),
             permits: TierPermits::new(),
             internal_rx,
@@ -239,7 +238,6 @@ impl YouTubeMediaPreparer {
         let audio_cache = Arc::clone(&self.audio_cache);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
-        let audio_source_type = self.audio_source_type;
 
         tokio::spawn(async move {
             let result = Self::wait_or_coalesce_impl(
@@ -247,7 +245,6 @@ impl YouTubeMediaPreparer {
                 permits,
                 internal_tx,
                 Arc::clone(&job),
-                audio_source_type,
                 tier,
                 deadline,
             )
@@ -291,7 +288,6 @@ impl YouTubeMediaPreparer {
         let audio_cache = Arc::clone(&self.audio_cache);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
-        let audio_source_type = self.audio_source_type;
         let track_id = job.track_id;
         let tier = job.tier;
 
@@ -301,7 +297,6 @@ impl YouTubeMediaPreparer {
                 permits,
                 internal_tx,
                 Arc::clone(&in_flight),
-                audio_source_type,
                 tier,
                 None,
             )
@@ -322,28 +317,27 @@ impl YouTubeMediaPreparer {
     fn spawn_url_resolution(&self, track_id: String, job: Arc<InFlightJob>) {
         let url_resolver = Arc::clone(&self.url_resolver);
         let internal_tx = self.internal_tx.clone();
-        let audio_source_type = self.audio_source_type;
+        let uses_local_staging = self.audio_source_plan.uses_local_staging();
 
         tokio::spawn(async move {
             let track_id_for_blocking = track_id.clone();
-            let resolved = tokio::task::spawn_blocking(move || {
-                url_resolver.get_stream_info(&track_id_for_blocking)
-            })
-            .await
-            .context("spawn_blocking failed")
-            .and_then(|r| r.context("Failed to resolve stream info"));
+            let resolved =
+                tokio::task::spawn_blocking(move || url_resolver.get_url(&track_id_for_blocking))
+                    .await
+                    .context("spawn_blocking failed")
+                    .and_then(|r| r.context("Failed to resolve stream URL"));
 
             match resolved {
-                Ok(info) => {
-                    if audio_source_type == AudioSourceType::Passthrough {
+                Ok(stream_url) => {
+                    if !uses_local_staging {
                         job.set_state(JobState::Completed(PrepareResult::Passthrough {
-                            stream_url: info.url,
+                            stream_url,
                         }));
                         let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
                     } else {
                         job.set_state(JobState::UrlResolved {
                             track_id: track_id.clone(),
-                            stream_url: info.url,
+                            stream_url,
                         });
                     }
                 }
@@ -380,7 +374,6 @@ impl YouTubeMediaPreparer {
             self.permits.clone(),
             self.internal_tx.clone(),
             job,
-            self.audio_source_type,
             tier,
             deadline,
         )
@@ -392,7 +385,6 @@ impl YouTubeMediaPreparer {
         permits: TierPermits,
         internal_tx: mpsc::UnboundedSender<InternalEvent>,
         job: Arc<InFlightJob>,
-        audio_source_type: AudioSourceType,
         tier: PreloadTier,
         deadline: Option<Duration>,
     ) -> PrepareResult {
@@ -405,10 +397,6 @@ impl YouTubeMediaPreparer {
                     return result;
                 }
                 JobState::UrlResolved { track_id, stream_url } => {
-                    if audio_source_type == AudioSourceType::Passthrough {
-                        return PrepareResult::Passthrough { stream_url };
-                    }
-
                     if audio_cache.has_prefix(&track_id) {
                         if let Some(content_length) = audio_cache.get_content_length(&track_id) {
                             let prefix_path = audio_cache.cache_path(&track_id);

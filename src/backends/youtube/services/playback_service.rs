@@ -1,6 +1,7 @@
 //! Playback service - manages MPV process and playback control
 
 use std::{
+    fs,
     path::{Path, PathBuf},
     process::{Child, Command},
     sync::{
@@ -17,7 +18,7 @@ use parking_lot::Mutex;
 
 use super::{super::url_resolver::UrlResolver, InternalEvent};
 use crate::backends::youtube::{
-    audio::{MpvAudioSource, MpvInput},
+    audio::{AudioSourcePlan, AudioTransportTarget, MpvAudioSource, MpvInput},
     mpv::{MpvEvent, MpvIpc},
 };
 
@@ -25,6 +26,8 @@ use crate::backends::youtube::{
 const OBSERVER_PLAYLIST_POS: u64 = 1;
 const OBSERVER_PAUSE: u64 = 2;
 const OBSERVER_IDLE: u64 = 3;
+const MPV_SOCKET_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
+const MPV_SOCKET_CONNECT_POLL_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Playback service manages MPV process and URL resolution
 pub struct PlaybackService {
@@ -33,6 +36,7 @@ pub struct PlaybackService {
     url_resolver: Arc<UrlResolver>,
     event_loop_running: Arc<AtomicBool>,
     audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
+    audio_source_plan: AudioSourcePlan,
 }
 
 impl PlaybackService {
@@ -41,9 +45,10 @@ impl PlaybackService {
         socket_path: &Path,
         url_resolver: Arc<UrlResolver>,
         audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
+        audio_source_plan: AudioSourcePlan,
     ) -> Result<Self> {
-        let passthrough_mode = audio_source.is_none();
-        let (mpv, mpv_process) = Self::connect_or_spawn_mpv(socket_path, passthrough_mode)?;
+        let (mpv, mpv_process) =
+            Self::connect_or_spawn_mpv(socket_path, audio_source_plan.enable_mpv_reconnect)?;
 
         Ok(Self {
             mpv: Mutex::new(mpv),
@@ -51,6 +56,7 @@ impl PlaybackService {
             url_resolver,
             event_loop_running: Arc::new(AtomicBool::new(false)),
             audio_source,
+            audio_source_plan,
         })
     }
 
@@ -165,74 +171,115 @@ impl PlaybackService {
     /// Connect to existing MPV or spawn new process
     fn connect_or_spawn_mpv(
         socket_path: &Path,
-        passthrough_mode: bool,
+        enable_reconnect: bool,
     ) -> Result<(MpvIpc, Option<Child>)> {
-        // Try connecting to existing MPV first
         log::info!("Checking for existing MPV at socket: {}", socket_path.display());
 
-        if socket_path.exists() {
-            log::info!("Socket file exists, attempting connection...");
-            if let Ok(mpv) = MpvIpc::connect(socket_path) {
-                log::info!(
-                    "✓ Connected to EXISTING MPV at {} (reusing process)",
-                    socket_path.display()
-                );
-                log::warn!("⚠ Note: MPV may have old playlist state from previous session");
-                return Ok((mpv, None));
-            }
-            log::warn!("Socket exists but connection failed - MPV may have crashed");
-        } else {
-            log::info!("No socket file found at {}", socket_path.display());
+        if let Some(mpv) = Self::try_connect_existing_mpv(socket_path)? {
+            log::info!(
+                "✓ Connected to EXISTING MPV at {} (reusing process)",
+                socket_path.display()
+            );
+            log::warn!("⚠ Note: MPV may have old playlist state from previous session");
+            return Ok((mpv, None));
         }
 
-        // Spawn new MPV process
-        log::info!("Spawning NEW MPV process with socket: {}", socket_path.display());
-        let socket_str = socket_path.to_string_lossy();
+        Self::cleanup_stale_socket(socket_path)?;
 
+        log::info!("Spawning NEW MPV process with socket: {}", socket_path.display());
+        let args = Self::build_mpv_args(socket_path, enable_reconnect);
+        let mut child = Command::new("mpv").args(&args).spawn().context("Failed to spawn MPV")?;
+        let mpv = Self::wait_for_spawned_mpv(socket_path, &mut child)?;
+
+        log::info!("✓ NEW MPV ready (PID: {}) - fresh playlist state", child.id());
+        Ok((mpv, Some(child)))
+    }
+
+    fn try_connect_existing_mpv(socket_path: &Path) -> Result<Option<MpvIpc>> {
+        if !socket_path.exists() {
+            log::info!("No socket file found at {}", socket_path.display());
+            return Ok(None);
+        }
+
+        log::info!("Socket file exists, attempting connection...");
+        match MpvIpc::connect(socket_path) {
+            Ok(mpv) => Ok(Some(mpv)),
+            Err(error) => {
+                log::warn!("Socket exists but connection failed ({}) - treating as stale", error);
+                Ok(None)
+            }
+        }
+    }
+
+    fn cleanup_stale_socket(socket_path: &Path) -> Result<()> {
+        if !socket_path.exists() {
+            return Ok(());
+        }
+
+        fs::remove_file(socket_path).with_context(|| {
+            format!("Failed to remove stale MPV socket {}", socket_path.display())
+        })?;
+
+        log::info!("Removed stale MPV socket: {}", socket_path.display());
+        Ok(())
+    }
+
+    fn build_mpv_args(socket_path: &Path, enable_reconnect: bool) -> Vec<String> {
+        let socket_str = socket_path.to_string_lossy();
         let mut args = vec![
+            "--no-config".to_string(),
+            "--ytdl=no".to_string(),
             "--idle=yes".to_string(),
             "--vo=null".to_string(),
             "--no-terminal".to_string(),
             "--gapless-audio=yes".to_string(),
             "--prefetch-playlist=yes".to_string(),
             "--cache=yes".to_string(),
+            "--cache-secs=60".to_string(),
+            "--cache-pause=yes".to_string(),
+            "--cache-pause-initial=yes".to_string(),
             "--demuxer-max-bytes=50M".to_string(),
             "--demuxer-readahead-secs=30".to_string(),
             "--audio-buffer=1".to_string(),
-            // Enable FFmpeg concat protocol for prefix+streaming playback
-            // MUST use --stream-lavf-o-append (not --demuxer-lavf-o) to affect stream layer
-            "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat".to_string(),
+            "--audio-client-name=music-daemon".to_string(),
+            "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat"
+                .to_string(),
             format!("--input-ipc-server={}", socket_str),
         ];
 
-        if passthrough_mode {
+        if enable_reconnect {
             args.push("--stream-lavf-o-append=reconnect=1".to_string());
             args.push("--stream-lavf-o-append=reconnect_streamed=1".to_string());
             args.push("--stream-lavf-o-append=reconnect_at_eof=1".to_string());
             args.push("--stream-lavf-o-append=reconnect_delay_max=5".to_string());
         }
 
-        // Add verbose MPV logging only at TRACE level
         if log::log_enabled!(log::Level::Debug) {
             args.push("--log-file=/tmp/mpv-debug.log".to_string());
             args.push("--msg-level=all=v".to_string());
             log::trace!("MPV verbose logging enabled: /tmp/mpv-debug.log");
         }
 
-        let mut child = Command::new("mpv").args(&args).spawn().context("Failed to spawn MPV")?;
+        args
+    }
 
-        // Wait for socket to become available
+    fn wait_for_spawned_mpv(socket_path: &Path, child: &mut Child) -> Result<MpvIpc> {
         let start = std::time::Instant::now();
         loop {
-            if start.elapsed() > Duration::from_secs(5) {
+            if let Some(status) = child.try_wait().context("Failed to poll MPV process")? {
+                bail!("MPV exited before socket was ready (status: {})", status);
+            }
+
+            if let Ok(mpv) = MpvIpc::connect(socket_path) {
+                return Ok(mpv);
+            }
+
+            if start.elapsed() > MPV_SOCKET_CONNECT_TIMEOUT {
                 let _ = child.kill();
                 bail!("Timeout waiting for MPV socket");
             }
-            if let Ok(mpv) = MpvIpc::connect(socket_path) {
-                log::info!("✓ NEW MPV ready (PID: {}) - fresh playlist state", child.id());
-                return Ok((mpv, Some(child)));
-            }
-            thread::sleep(Duration::from_millis(100));
+
+            thread::sleep(MPV_SOCKET_CONNECT_POLL_INTERVAL);
         }
     }
 
@@ -258,7 +305,7 @@ impl PlaybackService {
         let media_title =
             if artist.is_empty() { title.to_string() } else { format!("{} - {}", artist, title) };
 
-        let mode = if input.url.starts_with("lavf://concat:") { "CONCAT" } else { "PASSTHROUGH" };
+        let mode = Self::mode_label(self.audio_source_plan.transport);
         let url_preview = if input.url.len() > 80 { &input.url[..80] } else { &input.url };
 
         log::info!(
@@ -370,9 +417,17 @@ impl PlaybackService {
     /// Keep old method for backward compatibility
     pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
         let input = self.build_mpv_input(video_id)?;
-        let mode = if input.url.starts_with("lavf://concat:") { "CONCAT" } else { "PASSTHROUGH" };
+        let mode = Self::mode_label(self.audio_source_plan.transport);
         log::info!("[PLAYBACK] build_url video_id={} mode={}", video_id, mode);
         Ok(input.url)
+    }
+
+    fn mode_label(transport: AudioTransportTarget) -> &'static str {
+        match transport {
+            AudioTransportTarget::DirectUrl => "DIRECT",
+            AudioTransportTarget::CombinedConcat => "COMBINED",
+            AudioTransportTarget::LocalRelay => "RELAY",
+        }
     }
 
     /// Prefetch stream URLs for upcoming videos
