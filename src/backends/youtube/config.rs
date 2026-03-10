@@ -15,24 +15,30 @@ pub enum ExtractorType {
     Ytx,
 }
 
-/// Audio source type for playback
+/// Audio delivery mode for playback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
-#[serde(rename_all = "lowercase")]
-pub enum AudioSourceType {
-    /// FfmpegConcatSource: Uses ffmpeg concat+subfile for byte-perfect playback
-    /// (default)
+pub enum AudioDeliveryMode {
+    #[serde(rename = "combined", alias = "ffmpegconcat", alias = "concat")]
     #[default]
-    FfmpegConcat,
-    /// Passthrough: Streams URL directly to MPV (no caching)
-    Passthrough,
+    Combined,
+    #[serde(rename = "direct", alias = "passthrough")]
+    Direct,
+    #[serde(rename = "relay", alias = "proxy")]
+    Relay,
+}
+
+impl AudioDeliveryMode {
+    pub fn is_direct_like(self) -> bool {
+        matches!(self, Self::Direct | Self::Relay)
+    }
 }
 
 /// Audio streaming configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct AudioConfig {
-    /// Audio source type
-    pub source: AudioSourceType,
+    /// Audio delivery mode
+    pub source: AudioDeliveryMode,
     /// Cache directory for audio prefixes
     pub cache_dir: Option<PathBuf>,
     /// Prefix size in bytes (default: 200KB)
@@ -44,7 +50,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            source: AudioSourceType::default(),
+            source: AudioDeliveryMode::default(),
             cache_dir: None,
             prefix_size: 204_800,
             max_cache_size: 209_715_200,
@@ -185,5 +191,35 @@ impl YouTubeConfig {
         let path = config_dir.join("yrmpc/youtube.toml");
 
         if path.exists() { Self::from_file(&path) } else { Ok(Self::default()) }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{AudioConfig, AudioDeliveryMode};
+
+    #[test]
+    fn audio_delivery_mode_accepts_current_values() {
+        let direct: AudioConfig = toml::from_str("source = \"direct\"").expect("parse direct");
+        let combined: AudioConfig =
+            toml::from_str("source = \"combined\"").expect("parse combined");
+        let relay: AudioConfig = toml::from_str("source = \"relay\"").expect("parse relay");
+
+        assert_eq!(direct.source, AudioDeliveryMode::Direct);
+        assert_eq!(combined.source, AudioDeliveryMode::Combined);
+        assert_eq!(relay.source, AudioDeliveryMode::Relay);
+    }
+
+    #[test]
+    fn audio_delivery_mode_accepts_legacy_aliases() {
+        let passthrough: AudioConfig =
+            toml::from_str("source = \"passthrough\"").expect("parse passthrough alias");
+        let ffmpegconcat: AudioConfig =
+            toml::from_str("source = \"ffmpegconcat\"").expect("parse ffmpegconcat alias");
+        let concat: AudioConfig = toml::from_str("source = \"concat\"").expect("parse concat");
+
+        assert_eq!(passthrough.source, AudioDeliveryMode::Direct);
+        assert_eq!(ffmpegconcat.source, AudioDeliveryMode::Combined);
+        assert_eq!(concat.source, AudioDeliveryMode::Combined);
     }
 }

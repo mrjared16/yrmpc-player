@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use rmpc::backends::youtube::{
     YouTubeServer,
-    config::{AudioSourceType, ExtractorType},
+    config::{AudioDeliveryMode, ExtractorType},
 };
 
 #[derive(Parser, Debug)]
@@ -23,8 +23,8 @@ struct Args {
     #[arg(short, long, default_value = "ytdlp")]
     extractor: String,
 
-    /// Audio source: ffmpegconcat (default, cached) or passthrough (no cache)
-    #[arg(short, long, default_value = "ffmpegconcat")]
+    /// Audio mode: combined (default), direct, or relay
+    #[arg(short, long, default_value = "combined")]
     audio_source: String,
 }
 
@@ -67,11 +67,16 @@ fn main() -> Result<()> {
     };
     log::info!("Using stream extractor: {:?}", extractor_type);
 
-    let audio_source_type = match args.audio_source.to_lowercase().as_str() {
-        "passthrough" => AudioSourceType::Passthrough,
-        _ => AudioSourceType::FfmpegConcat,
+    let audio_delivery_mode = match args.audio_source.to_lowercase().as_str() {
+        "direct" | "passthrough" => AudioDeliveryMode::Direct,
+        "relay" | "proxy" => AudioDeliveryMode::Relay,
+        "combined" | "concat" | "ffmpegconcat" => AudioDeliveryMode::Combined,
+        other => {
+            log::warn!("Unknown --audio-source='{other}', falling back to 'combined'");
+            AudioDeliveryMode::Combined
+        }
     };
-    log::info!("Using audio source: {:?}", audio_source_type);
+    log::info!("Using audio mode: {:?}", audio_delivery_mode);
 
     let rt = tokio::runtime::Runtime::new()?;
     let _guard = rt.enter();
@@ -80,7 +85,7 @@ fn main() -> Result<()> {
         &args.socket,
         cookie_path.as_deref().and_then(|p| p.to_str()),
         extractor_type,
-        audio_source_type,
+        audio_delivery_mode,
     )?;
 
     log::info!("YouTube daemon ready, entering event loop...");
