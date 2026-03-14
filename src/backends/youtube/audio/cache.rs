@@ -94,6 +94,13 @@ impl AudioCache {
         entries.get(video_id).map(|entry| entry.content_length)
     }
 
+    pub fn get_prefix_metadata(&self, video_id: &str) -> Option<(PathBuf, u64, u64)> {
+        let mut entries = self.entries.write().unwrap();
+        entries
+            .get(video_id)
+            .map(|entry| (entry.path.clone(), entry.size, entry.content_length))
+    }
+
     pub fn total_size(&self) -> u64 {
         let entries = self.entries.read().unwrap();
         entries.total_weight()

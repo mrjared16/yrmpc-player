@@ -15,10 +15,12 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use parking_lot::Mutex;
+use tokio::runtime::{Builder, Handle};
 
 use crate::backends::youtube::{
+    audio::MpvInput,
     media::{MediaPreparer, PreloadTier, PreparedMedia},
     protocol::{ServerResponse, SongData},
     services::{
@@ -48,6 +50,53 @@ static PREFETCH_TRIGGERED: LazyLock<Mutex<HashSet<String>>> =
 
 static EARLY_EOF_RECOVERY_COUNTS: LazyLock<Mutex<HashMap<String, u8>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
+
+fn tier_for_window_offset(offset: usize) -> PreloadTier {
+    match offset {
+        0 => PreloadTier::Immediate,
+        1 => PreloadTier::Gapless,
+        _ => PreloadTier::Eager,
+    }
+}
+
+fn prepare_media_blocking(
+    media_preparer: &Arc<dyn MediaPreparer>,
+    track_id: &str,
+    tier: PreloadTier,
+) -> Result<PreparedMedia> {
+    if let Ok(handle) = Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(media_preparer.prepare(track_id, tier)))
+    } else {
+        let runtime = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .context("Failed to build Tokio runtime for media preparation")?;
+        runtime.block_on(media_preparer.prepare(track_id, tier))
+    }
+}
+
+fn build_runtime_mpv_input(
+    playback: &Arc<PlaybackService>,
+    track_id: &str,
+    prepared: &PreparedMedia,
+) -> Result<MpvInput> {
+    playback.build_runtime_input(track_id, prepared)
+}
+
+fn activate_playback_window(
+    media_preparer: &Arc<dyn MediaPreparer>,
+    queue: &Arc<QueueService>,
+    indices: &[usize],
+) {
+    let track_ids: Vec<String> = indices
+        .iter()
+        .filter_map(|&idx| queue.get_by_index(idx).ok())
+        .map(|song| song.uri)
+        .filter(|uri| !uri.is_empty())
+        .collect();
+
+    media_preparer.activate_playback_window(&track_ids);
+}
 
 /// Play a track at the given queue position.
 ///
@@ -98,6 +147,8 @@ pub async fn play_position(
         queue.shuffle_enabled()
     );
 
+    activate_playback_window(media_preparer, queue, &prefetch_indices);
+
     let mut first_url_metadata: Option<(String, String)> = None;
     let mut first_track = true;
 
@@ -107,37 +158,48 @@ pub async fn play_position(
                 let video_id = &song.uri;
 
                 // Determine tier based on position in prefetch window
-                let tier = if first_track { PreloadTier::Immediate } else { PreloadTier::Gapless };
+                let tier = tier_for_window_offset(i);
 
                 // Use MediaPreparer.prepare() instead of bypassing to build_playback_url
                 match media_preparer.prepare(video_id, tier).await {
                     Ok(prepared) => {
-                        let url = prepared.to_mpv_url();
-                        if let Err(e) = playback.playlist_append(&url) {
-                            log::error!("Failed to append to playlist: {}", e);
-                        } else {
-                            log::debug!(
-                                "Prepared track {} (queue pos {}) via MediaPreparer",
-                                i,
-                                idx
-                            );
+                        match build_runtime_mpv_input(playback, video_id, &prepared) {
+                            Ok(input) => {
+                                if let Err(e) = playback.playlist_append_input(&input) {
+                                    log::error!("Failed to append to playlist: {}", e);
+                                } else {
+                                    log::debug!(
+                                        "Prepared track {} (queue pos {}) via MediaPreparer",
+                                        i,
+                                        idx
+                                    );
 
-                            // Save metadata for MPRIS (first track only)
-                            if first_track {
-                                first_track = false;
-                                let title = song
-                                    .metadata
-                                    .get("title")
-                                    .and_then(|v| v.first())
-                                    .cloned()
-                                    .unwrap_or_else(|| video_id.clone());
-                                let artist = song
-                                    .metadata
-                                    .get("artist")
-                                    .and_then(|v| v.first())
-                                    .cloned()
-                                    .unwrap_or_default();
-                                first_url_metadata = Some((title, artist));
+                                    if first_track {
+                                        first_track = false;
+                                        let title = song
+                                            .metadata
+                                            .get("title")
+                                            .and_then(|v| v.first())
+                                            .cloned()
+                                            .unwrap_or_else(|| video_id.clone());
+                                        let artist = song
+                                            .metadata
+                                            .get("artist")
+                                            .and_then(|v| v.first())
+                                            .cloned()
+                                            .unwrap_or_default();
+                                        first_url_metadata = Some((title, artist));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                log::error!("Failed to build MPV input for {}: {}", video_id, e);
+                                if first_track {
+                                    return ServerResponse::Error(format!(
+                                        "Failed to prepare stream: {}",
+                                        e
+                                    ));
+                                }
                             }
                         }
                     }
@@ -196,16 +258,14 @@ pub async fn play_position_internal(
 }
 
 /// Sync version for internal callers (repeat-one, auto-advance fallback).
-///
-/// Uses cached/prefetched URLs via PlaybackService.build_playback_url().
-/// For initial user-initiated play, use the async play_position() instead.
 pub fn play_position_sync(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     pos: usize,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
-    log::info!("play_position_sync for pos={} (uses cached URLs)", pos);
+    log::info!("play_position_sync for pos={} (uses MediaPreparer)", pos);
 
     if let Err(e) = playback.stop() {
         log::debug!("stop() returned error (may be idle): {}", e);
@@ -227,6 +287,8 @@ pub fn play_position_sync(
     let prefetch_indices = queue.build_prefetch_window(pos, PREFETCH_WINDOW_SIZE);
     let prefetch_count = prefetch_indices.len();
 
+    activate_playback_window(media_preparer, queue, &prefetch_indices);
+
     let mut first_url_metadata: Option<(String, String)> = None;
     let mut first_track = true;
 
@@ -234,13 +296,16 @@ pub fn play_position_sync(
         match queue.get_by_index(idx) {
             Ok(song) => {
                 let video_id = &song.uri;
-                match playback.build_playback_url(video_id) {
-                    Ok(url) => {
-                        if let Err(e) = playback.playlist_append(&url) {
+                let tier = tier_for_window_offset(i);
+                match prepare_media_blocking(media_preparer, video_id, tier)
+            .and_then(|prepared| build_runtime_mpv_input(playback, &video_id, &prepared))
+                {
+                    Ok(input) => {
+                        if let Err(e) = playback.playlist_append_input(&input) {
                             log::error!("Failed to append to playlist: {}", e);
                         } else {
                             log::debug!(
-                                "Prefetched track {} (queue pos {}) via cached URL",
+                                "Prepared track {} (queue pos {}) via MediaPreparer",
                                 i,
                                 idx
                             );
@@ -263,10 +328,10 @@ pub fn play_position_sync(
                         }
                     }
                     Err(e) => {
-                        log::error!("Failed to resolve stream URL for {}: {}", video_id, e);
+                        log::error!("Failed to prepare media for {}: {}", video_id, e);
                         if first_track {
                             return ServerResponse::Error(format!(
-                                "Failed to resolve stream: {}",
+                                "Failed to prepare stream: {}",
                                 e
                             ));
                         }
@@ -305,8 +370,9 @@ pub fn play_position_internal_sync(
     queue: &Arc<QueueService>,
     pos: usize,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> Result<()> {
-    match play_position_sync(playback, queue, pos, state_tracker) {
+    match play_position_sync(playback, queue, pos, state_tracker, media_preparer) {
         ServerResponse::Ok => Ok(()),
         ServerResponse::Error(e) => Err(anyhow::anyhow!("{}", e)),
         _ => Ok(()),
@@ -324,13 +390,14 @@ pub fn handle_track_ended(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     reason: &str,
 ) {
     log::info!("Track ended with reason: {}", reason);
 
     match reason {
-        "eof" => handle_eof(playback, queue, state_tracker),
-        "error" => handle_playback_error(playback, queue, state_tracker),
+        "eof" => handle_eof(playback, queue, state_tracker, media_preparer),
+        "error" => handle_playback_error(playback, queue, state_tracker, media_preparer),
         "stop" => {
             log::debug!("Playback stopped by user");
             state_tracker.force_set(PlaybackState::Stopped);
@@ -346,6 +413,7 @@ fn handle_eof(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) {
     log::trace!("[DIAG-EOF] EOF");
 
@@ -359,7 +427,7 @@ fn handle_eof(
         queue_len
     );
 
-    if try_recover_from_early_eof(playback, queue, state_tracker, current_idx) {
+    if try_recover_from_early_eof(playback, queue, state_tracker, media_preparer, current_idx) {
         return;
     }
 
@@ -371,7 +439,8 @@ fn handle_eof(
     if intent == AdvanceIntent::Repeat {
         log::info!("[DIAG-EOF] Repeat One: replaying current track");
         if let Some(current_idx) = queue.current_index() {
-            let _ = play_position_internal_sync(playback, queue, current_idx, state_tracker);
+            let _ =
+                play_position_internal_sync(playback, queue, current_idx, state_tracker, media_preparer);
             return;
         }
         if let Err(e) = playback.seek(0.0, "absolute") {
@@ -397,13 +466,14 @@ fn handle_eof(
         intent
     );
 
-    spawn_pending_advance_timeout(playback, queue, state_tracker);
+    spawn_pending_advance_timeout(playback, queue, state_tracker, Arc::clone(media_preparer));
 }
 
 fn try_recover_from_early_eof(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     current_idx: Option<usize>,
 ) -> bool {
     let Some(idx) = current_idx else {
@@ -466,7 +536,7 @@ fn try_recover_from_early_eof(
 
     playback.clear_stream_url_cache();
 
-    match play_position_internal_sync(playback, queue, idx, state_tracker) {
+    match play_position_internal_sync(playback, queue, idx, state_tracker, media_preparer) {
         Ok(()) => true,
         Err(err) => {
             log::warn!("[DIAG-EOF] Early-EOF recovery replay failed for {}: {}", video_id, err);
@@ -509,10 +579,12 @@ fn spawn_pending_advance_timeout(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: Arc<dyn MediaPreparer>,
 ) {
-    let playback = Arc::clone(playback);
-    let queue = Arc::clone(queue);
-    let state_tracker = Arc::clone(state_tracker);
+        let playback = Arc::clone(playback);
+        let queue = Arc::clone(queue);
+        let state_tracker = Arc::clone(state_tracker);
+        let media_preparer = Arc::clone(&media_preparer);
 
     thread::spawn(move || {
         let timeout = Duration::from_secs(2);
@@ -543,7 +615,7 @@ fn spawn_pending_advance_timeout(
         );
 
         let position = mpv_pos.clamp(i64::from(i32::MIN), i64::from(i32::MAX)) as i32;
-        handle_track_changed(&playback, &queue, &state_tracker, position);
+        handle_track_changed(&playback, &queue, &state_tracker, &media_preparer, position);
     });
 }
 
@@ -551,6 +623,7 @@ pub fn handle_track_changed(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     position: i32,
 ) {
     let state = state_tracker.get();
@@ -566,7 +639,7 @@ pub fn handle_track_changed(
         intent
     );
 
-    let sync_ok = execute_intent(playback, queue, state_tracker, position, intent);
+    let sync_ok = execute_intent(playback, queue, state_tracker, media_preparer, position, intent);
 
     if !sync_ok || matches!(state_tracker.get(), PlaybackState::PendingAdvance { .. }) {
         log::warn!("[DIAG-EOF] Queue sync failed (position={}), forcing recovery", position);
@@ -583,13 +656,20 @@ fn execute_intent(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     position: i32,
     intent: AdvanceIntent,
 ) -> bool {
     match intent {
         AdvanceIntent::Repeat => {
             if let Some(current_idx) = queue.current_index() {
-                let _ = play_position_internal_sync(playback, queue, current_idx, state_tracker);
+                let _ = play_position_internal_sync(
+                    playback,
+                    queue,
+                    current_idx,
+                    state_tracker,
+                    media_preparer,
+                );
             } else {
                 let _ = playback.seek(0.0, "absolute");
                 let _ = playback.unpause();
@@ -605,10 +685,22 @@ fn execute_intent(
         }
         AdvanceIntent::Advance => {
             if position < 0 {
-                handle_end_of_window(playback, queue, state_tracker, queue.repeat_mode());
+                handle_end_of_window(
+                    playback,
+                    queue,
+                    state_tracker,
+                    media_preparer,
+                    queue.repeat_mode(),
+                );
                 true
             } else {
-                handle_within_window_advance(playback, queue, state_tracker, position as usize)
+                handle_within_window_advance(
+                    playback,
+                    queue,
+                    state_tracker,
+                    media_preparer,
+                    position as usize,
+                )
             }
         }
     }
@@ -619,6 +711,7 @@ fn handle_end_of_window(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     repeat_mode: RepeatMode,
 ) {
     log::info!("[DIAG-EOF] handle_end_of_window: start");
@@ -633,12 +726,12 @@ fn handle_end_of_window(
     match next_pos {
         Some(pos) => {
             log::info!("[DIAG-EOF] End of prefetch window, loading next batch at {}", pos);
-            let _ = play_position_internal_sync(playback, queue, pos, state_tracker);
+            let _ = play_position_internal_sync(playback, queue, pos, state_tracker, media_preparer);
         }
         None => {
             if repeat_mode == RepeatMode::All && queue.len() > 0 {
                 log::info!("[DIAG-EOF] Repeat All: looping back to start");
-                let _ = play_position_internal_sync(playback, queue, 0, state_tracker);
+                let _ = play_position_internal_sync(playback, queue, 0, state_tracker, media_preparer);
             } else {
                 log::info!("[DIAG-EOF] Reached end of queue, going idle");
                 queue.set_current(None);
@@ -654,6 +747,7 @@ fn handle_within_window_advance(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     mpv_pos: usize,
 ) -> bool {
     let new_queue_pos = match queue.get_prefetched_at(mpv_pos) {
@@ -702,9 +796,14 @@ fn handle_within_window_advance(
     }
 
     if let Some(next_idx) = queue.extend_prefetch_window() {
+        let active_indices = queue.build_prefetch_window(new_queue_pos, PREFETCH_WINDOW_SIZE);
+        activate_playback_window(media_preparer, queue, &active_indices);
+
         if let Ok(song) = queue.get_by_index(next_idx) {
-            if let Ok(url) = playback.build_playback_url(&song.uri) {
-                let _ = playback.playlist_append(&url);
+            if let Ok(url) = prepare_media_blocking(media_preparer, &song.uri, PreloadTier::Eager)
+                .and_then(|prepared| build_runtime_mpv_input(playback, &song.uri, &prepared))
+            {
+                let _ = playback.playlist_append_input(&url);
                 log::debug!("Extended prefetch window with queue index {}", next_idx);
             }
         }
@@ -718,12 +817,14 @@ fn handle_playback_error(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) {
     log::warn!("Playback error, attempting to skip to next");
     if let Some(current) = queue.current_index() {
         let next_pos = current + 1;
         if next_pos < queue.len() {
-            let _ = play_position_internal_sync(playback, queue, next_pos, state_tracker);
+            let _ =
+                play_position_internal_sync(playback, queue, next_pos, state_tracker, media_preparer);
         } else {
             state_tracker.force_set(PlaybackState::Idle);
         }
@@ -731,14 +832,18 @@ fn handle_playback_error(
 }
 
 /// Prefetch upcoming tracks in background
-pub fn prefetch_upcoming(playback: &Arc<PlaybackService>, queue: &Arc<QueueService>) {
+pub fn prefetch_upcoming(media_preparer: &Arc<dyn MediaPreparer>, queue: &Arc<QueueService>) {
     if let Some(current) = queue.current_index() {
         let all_songs = queue.get_all();
-        let video_ids: Vec<String> =
-            all_songs.iter().skip(current + 1).take(5).map(|s| s.uri.clone()).collect();
+        let track_ids: Vec<String> = all_songs
+            .iter()
+            .skip(current + 1)
+            .take(5)
+            .filter_map(|s| extract_video_id(&s.uri))
+            .collect();
 
-        if !video_ids.is_empty() {
-            playback.prefetch(video_ids);
+        for track_id in track_ids {
+            media_preparer.prefetch(&track_id, PreloadTier::Background);
         }
     }
 }
@@ -772,9 +877,10 @@ pub fn next_track(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     match queue.next_index() {
-        Some(idx) => play_position_sync(playback, queue, idx, state_tracker),
+        Some(idx) => play_position_sync(playback, queue, idx, state_tracker, media_preparer),
         None => ServerResponse::Error("No next track".into()),
     }
 }
@@ -784,6 +890,7 @@ pub fn previous_track(
     playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     match queue.previous_index() {
         Some(0) => {
@@ -796,7 +903,7 @@ pub fn previous_track(
                 Err(e) => ServerResponse::Error(e.to_string()),
             }
         }
-        Some(idx) => play_position_sync(playback, queue, idx, state_tracker),
+        Some(idx) => play_position_sync(playback, queue, idx, state_tracker, media_preparer),
         None => ServerResponse::Error("No previous track".into()),
     }
 }
@@ -807,9 +914,10 @@ pub fn play_id(
     queue: &Arc<QueueService>,
     id: u32,
     state_tracker: &Arc<PlaybackStateTracker>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     match queue.find_index_by_id(id) {
-        Some(pos) => play_position_sync(playback, queue, pos, state_tracker),
+        Some(pos) => play_position_sync(playback, queue, pos, state_tracker, media_preparer),
         None => ServerResponse::Error("Song not found".into()),
     }
 }
@@ -819,8 +927,8 @@ pub fn play_id(
 /// Triggers prefetch of next track when playback position reaches T-30s.
 /// Uses debouncing to ensure each track only triggers once.
 pub fn handle_time_remaining(
-    playback: &Arc<PlaybackService>,
     queue: &Arc<QueueService>,
+    media_preparer: &Arc<dyn MediaPreparer>,
     time_remaining_secs: f64,
 ) {
     if time_remaining_secs > PREFETCH_TRIGGER_THRESHOLD || time_remaining_secs <= 0.0 {
@@ -860,14 +968,30 @@ pub fn handle_time_remaining(
         }
     };
 
-    let next_video_id = &next_song.uri;
+    let next_track_id = match extract_video_id(&next_song.uri) {
+        Some(track_id) => track_id,
+        None => return,
+    };
+
     log::info!(
         "T-30s prefetch trigger: {}s remaining, prefetching next track: {}",
         time_remaining_secs,
-        next_video_id
+        next_track_id
     );
 
-    playback.prefetch_audio_batch(vec![next_video_id.clone()]);
+    media_preparer.prefetch(&next_track_id, PreloadTier::Gapless);
+}
+
+fn extract_video_id(uri: &str) -> Option<String> {
+    if let Some(id) = uri.strip_prefix("youtube://") {
+        return Some(id.to_string());
+    }
+
+    if !uri.is_empty() && !uri.contains("://") {
+        return Some(uri.to_string());
+    }
+
+    None
 }
 
 fn clear_prefetch_triggered(queue: &Arc<QueueService>) {
@@ -899,22 +1023,26 @@ fn clear_prefetch_triggered(queue: &Arc<QueueService>) {
 
 #[cfg(test)]
 mod tests {
-    use std::path::PathBuf;
+    use std::{path::PathBuf, sync::Arc};
+
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use tempfile::TempDir;
 
     use super::*;
     use crate::{
         backends::youtube::{
-            audio::AudioSourcePlanner,
+            audio::{AudioSourcePlanner, FfmpegConcatSource},
             config::{AudioDeliveryMode, ExtractorType},
             url_resolver::UrlResolver,
         },
         domain::Song,
     };
 
-    fn setup_test_services() -> (Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>)
-    {
-        // Mock socket path
-        let socket = PathBuf::from("/tmp/test-mpv.sock");
+    fn setup_test_services(
+    ) -> (TempDir, Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>) {
+        let temp_dir = TempDir::new().unwrap();
+        let socket = temp_dir.path().join("test-mpv.sock");
 
         let url_resolver = Arc::new(UrlResolver::new(ExtractorType::default()));
         let playback = Arc::new(
@@ -923,13 +1051,14 @@ mod tests {
                 url_resolver,
                 None,
                 AudioSourcePlanner.plan(AudioDeliveryMode::Direct),
+                None,
             )
             .unwrap(),
         );
         let queue = Arc::new(QueueService::new());
         let state_tracker = Arc::new(PlaybackStateTracker::new());
 
-        (playback, queue, state_tracker)
+        (temp_dir, playback, queue, state_tracker)
     }
 
     fn test_song(id: &str) -> Song {
@@ -937,6 +1066,98 @@ mod tests {
         song.uri = id.to_string();
         song.metadata.insert("title".to_string(), vec![id.to_string()]);
         song
+    }
+
+    struct StubMediaPreparer;
+
+    #[async_trait]
+    impl MediaPreparer for StubMediaPreparer {
+        async fn prepare(&self, track_id: &str, _tier: PreloadTier) -> Result<PreparedMedia> {
+            Ok(PreparedMedia::Direct { url: format!("https://example.invalid/{track_id}") })
+        }
+
+        fn prefetch(&self, _track_id: &str, _tier: PreloadTier) {}
+    }
+
+    fn stub_media_preparer() -> Arc<dyn MediaPreparer> {
+        Arc::new(StubMediaPreparer)
+    }
+
+    #[derive(Default)]
+    struct RecordingMediaPreparer {
+        prepared: Arc<Mutex<Vec<(String, PreloadTier)>>>,
+        prefetched: Arc<Mutex<Vec<(String, PreloadTier)>>>,
+        activated_windows: Arc<Mutex<Vec<Vec<String>>>>,
+    }
+
+    #[async_trait]
+    impl MediaPreparer for RecordingMediaPreparer {
+        async fn prepare(&self, track_id: &str, tier: PreloadTier) -> Result<PreparedMedia> {
+            self.prepared.lock().push((track_id.to_string(), tier));
+            Ok(PreparedMedia::Direct { url: format!("https://example.invalid/{track_id}") })
+        }
+
+        fn prefetch(&self, track_id: &str, tier: PreloadTier) {
+            self.prefetched.lock().push((track_id.to_string(), tier));
+        }
+
+        fn activate_playback_window(&self, track_ids: &[String]) {
+            self.activated_windows.lock().push(track_ids.to_vec());
+        }
+    }
+
+    #[test]
+    fn sync_and_async_window_tier_mapping_matches() {
+        assert_eq!(tier_for_window_offset(0), PreloadTier::Immediate);
+        assert_eq!(tier_for_window_offset(1), PreloadTier::Gapless);
+        assert_eq!(tier_for_window_offset(2), PreloadTier::Eager);
+        assert_eq!(tier_for_window_offset(5), PreloadTier::Eager);
+    }
+
+    #[test]
+    fn sync_prepare_path_uses_media_preparer_contract() {
+        let media_preparer = stub_media_preparer();
+        let prepared =
+            prepare_media_blocking(&media_preparer, "video123", PreloadTier::Immediate).unwrap();
+
+        match prepared {
+            PreparedMedia::Direct { url } => {
+                assert_eq!(url, "https://example.invalid/video123");
+            }
+            other => panic!("unexpected prepared media variant: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn runtime_builder_uses_concat_source_for_staged_prefix() {
+        let (_temp_dir, playback, _queue, _state_tracker) = setup_test_services();
+
+        let prepared = PreparedMedia::StagedPrefix {
+            path: PathBuf::from("/tmp/prefix.webm"),
+            bytes: 1024,
+            url: "https://example.invalid/stream".to_string(),
+            content_length: 4096,
+        };
+
+        let input = build_runtime_mpv_input(&playback, "v1", &prepared).unwrap();
+
+        assert_eq!(
+            input.url,
+            "lavf://concat:/tmp/prefix.webm|subfile,,start,1024,end,0,,:https://example.invalid/stream"
+        );
+        assert_eq!(input.mpv_args, FfmpegConcatSource::protocol_whitelist_args());
+    }
+
+    #[test]
+    fn runtime_builder_preserves_direct_fallback_input() {
+        let (_temp_dir, playback, _queue, _state_tracker) = setup_test_services();
+
+        let prepared = PreparedMedia::Direct { url: "https://example.invalid/direct".to_string() };
+
+        let input = build_runtime_mpv_input(&playback, "v1", &prepared).unwrap();
+
+        assert_eq!(input.url, "https://example.invalid/direct");
+        assert!(input.mpv_args.is_empty());
     }
 
     #[test]
@@ -956,55 +1177,84 @@ mod tests {
 
     #[test]
     fn eof_advances_to_next_track() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
         queue.add(test_song("Song 1"), None);
         queue.add(test_song("Song 2"), None);
         queue.set_current(Some(0));
 
-        handle_eof(&playback, &queue, &state_tracker);
-        handle_track_changed(&playback, &queue, &state_tracker, 1);
+        handle_eof(&playback, &queue, &state_tracker, &media_preparer);
+        handle_track_changed(&playback, &queue, &state_tracker, &media_preparer, 1);
 
         assert_eq!(queue.current_index(), Some(1));
+        std::thread::sleep(Duration::from_millis(2100));
+    }
+
+    #[test]
+    fn eof_enters_pending_advance_before_track_changed_confirmation() {
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
+        queue.add(test_song("Song 1"), None);
+        queue.add(test_song("Song 2"), None);
+        queue.set_current(Some(0));
+
+        handle_eof(&playback, &queue, &state_tracker, &media_preparer);
+
+        match state_tracker.get() {
+            PlaybackState::PendingAdvance { from_position, intent, .. } => {
+                assert_eq!(from_position, 0);
+                assert_eq!(intent, AdvanceIntent::Advance);
+            }
+            other => panic!("expected pending advance, got {other:?}"),
+        }
+
+        handle_track_changed(&playback, &queue, &state_tracker, &media_preparer, 1);
+        std::thread::sleep(Duration::from_millis(2100));
     }
 
     #[test]
     fn eof_with_repeat_one_replays_current() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
         queue.add(test_song("Song 1"), None);
         queue.set_current(Some(0));
         queue.set_repeat_mode(RepeatMode::One);
 
-        handle_eof(&playback, &queue, &state_tracker);
+        handle_eof(&playback, &queue, &state_tracker, &media_preparer);
 
         assert_eq!(queue.current_index(), Some(0));
     }
 
     #[test]
     fn eof_at_end_with_repeat_all_loops() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
         queue.add(test_song("Song 1"), None);
         queue.add(test_song("Song 2"), None);
         queue.set_current(Some(1)); // Last song
         queue.set_repeat_mode(RepeatMode::All);
 
-        handle_eof(&playback, &queue, &state_tracker);
-        handle_track_changed(&playback, &queue, &state_tracker, -1);
+        handle_eof(&playback, &queue, &state_tracker, &media_preparer);
+        handle_track_changed(&playback, &queue, &state_tracker, &media_preparer, -1);
 
         assert_eq!(queue.current_index(), Some(0)); // Looped
+        std::thread::sleep(Duration::from_millis(2100));
     }
 
     #[test]
     fn eof_at_end_without_repeat_goes_idle() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
         queue.add(test_song("Song 1"), None);
         queue.set_current(Some(0));
         queue.set_repeat_mode(RepeatMode::Off);
 
-        handle_eof(&playback, &queue, &state_tracker);
-        handle_track_changed(&playback, &queue, &state_tracker, -1);
+        handle_eof(&playback, &queue, &state_tracker, &media_preparer);
+        handle_track_changed(&playback, &queue, &state_tracker, &media_preparer, -1);
 
         assert_eq!(queue.current_index(), None);
         assert_eq!(state_tracker.get(), PlaybackState::Idle);
+        std::thread::sleep(Duration::from_millis(2100));
     }
 
     // =========================================================================
@@ -1020,7 +1270,8 @@ mod tests {
     #[test]
     #[ignore]
     fn shuffle_is_respected_during_auto_advance() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
 
         // Add 5 songs
         for i in 0..5 {
@@ -1046,7 +1297,7 @@ mod tests {
         // the prefetch lookup works correctly instead of asserting randomness
 
         // Simulate: MPV auto-advanced within window (mpv_pos=1)
-        handle_within_window_advance(&playback, &queue, &state_tracker, 1);
+        handle_within_window_advance(&playback, &queue, &state_tracker, &media_preparer, 1);
 
         // After advance, current should match what was at prefetch_indices[1]
         let current = queue.current_index().expect("Should have current");
@@ -1070,7 +1321,8 @@ mod tests {
     #[test]
     #[ignore]
     fn prefetch_window_respects_shuffle_order() {
-        let (playback, queue, state_tracker) = setup_test_services();
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
 
         // Add 5 songs
         for i in 0..5 {
@@ -1083,7 +1335,7 @@ mod tests {
         // Start from position 0
         // play_position will build prefetch window [0, 1, 2] SEQUENTIALLY
         // but with shuffle enabled, it SHOULD build [0, shuffle[1], shuffle[2]]
-        let _ = play_position_sync(&playback, &queue, 0, &state_tracker);
+        let _ = play_position_sync(&playback, &queue, 0, &state_tracker, &media_preparer);
 
         // After play_position, check what base_index was set to
         let base = queue.playback_base_index();
@@ -1119,8 +1371,9 @@ mod tests {
     /// When RepeatAll is enabled and we reach the end of the queue,
     /// the next advance should wrap to queue[0].
     #[test]
-    fn within_window_advance_respects_repeat_all() {
-        let (playback, queue, state_tracker) = setup_test_services();
+    fn within_window_advance_does_not_extend_beyond_queue_end_before_repeat_reload() {
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+        let media_preparer = stub_media_preparer();
 
         // Add 3 songs (exactly PREFETCH_WINDOW_SIZE)
         queue.add(test_song("Song 0"), None);
@@ -1140,25 +1393,76 @@ mod tests {
 
         // Simulate: MPV at last track in window (mpv_pos=2)
         // This is Song 2, which is also the last in queue
-        handle_within_window_advance(&playback, &queue, &state_tracker, 2);
+        handle_within_window_advance(&playback, &queue, &state_tracker, &media_preparer, 2);
 
         // Current should be 2
         assert_eq!(queue.current_index(), Some(2));
 
-        // After advance to pos 2, extend_prefetch_window was called
-        // With RepeatAll, it should have added 0 (wrapped)
-        // So prefetch_indices is now [0, 1, 2, 0]
+        assert_eq!(queue.get_prefetched_at(3), None);
+    }
+
+    #[test]
+    fn time_remaining_prefetch_uses_media_preparer_gapless_tier() {
+        let (_temp_dir, _playback, queue, _state_tracker) = setup_test_services();
+        queue.add(test_song("song-0"), None);
+        queue.add(test_song("youtube://song-1"), None);
+        queue.set_current(Some(0));
+
+        let recording = Arc::new(RecordingMediaPreparer::default());
+        let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
+
+        handle_time_remaining(&queue, &media_preparer, 20.0);
+
+        let prefetched = recording.prefetched.lock().clone();
+        assert_eq!(prefetched.len(), 1);
+        assert_eq!(prefetched[0], ("song-1".to_string(), PreloadTier::Gapless));
+        assert_eq!(PreloadTier::Gapless, tier_for_window_offset(1));
+    }
+
+    #[test]
+    fn time_remaining_prefetch_debounces_repeated_trigger_for_same_track() {
+        let (_temp_dir, _playback, queue, _state_tracker) = setup_test_services();
+        queue.add(test_song("song-0"), None);
+        queue.add(test_song("song-1"), None);
+        queue.set_current(Some(0));
+
+        let recording = Arc::new(RecordingMediaPreparer::default());
+        let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
+
+        handle_time_remaining(&queue, &media_preparer, 20.0);
+        handle_time_remaining(&queue, &media_preparer, 10.0);
+
+        let prefetched = recording.prefetched.lock().clone();
+        assert_eq!(prefetched, vec![("song-1".to_string(), PreloadTier::Gapless)]);
+    }
+
+    #[test]
+    fn within_window_advance_refreshes_active_playback_window() {
+        let (_temp_dir, playback, queue, state_tracker) = setup_test_services();
+
+        queue.add(test_song("song-0"), None);
+        queue.add(test_song("song-1"), None);
+        queue.add(test_song("song-2"), None);
+        queue.add(test_song("song-3"), None);
+        queue.set_current(Some(0));
+        queue.set_playback_base_index(0);
+        let prefetch_indices = queue.build_prefetch_window(0, 3);
+        assert_eq!(prefetch_indices, vec![0, 1, 2]);
+
+        let recording = Arc::new(RecordingMediaPreparer::default());
+        let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
+
+        handle_within_window_advance(&playback, &queue, &state_tracker, &media_preparer, 1);
+
+        assert_eq!(queue.current_index(), Some(1));
+        assert_eq!(recording.activated_windows.lock().clone(), vec![vec![
+            "song-1".to_string(),
+            "song-2".to_string(),
+            "song-3".to_string(),
+        ]]);
         assert_eq!(
-            queue.get_prefetched_at(3),
-            Some(0),
-            "After extending, pos 3 should wrap to queue index 0"
+            recording.prepared.lock().clone(),
+            vec![("song-3".to_string(), PreloadTier::Eager)]
         );
-
-        // Now simulate: MPV tries to go to mpv_pos=3
-        // With the extended window, this should work!
-        handle_within_window_advance(&playback, &queue, &state_tracker, 3);
-
-        // With Repeat All, we should wrap to 0
-        assert_eq!(queue.current_index(), Some(0), "Repeat All should wrap to queue[0]");
     }
 }

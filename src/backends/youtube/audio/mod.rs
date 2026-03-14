@@ -17,7 +17,7 @@ pub use planner::{
     PrefetchPolicy,
     PrepareAction,
 };
-pub use sources::{FfmpegConcatSource, PassthroughSource};
+pub use sources::{DirectSource, FfmpegConcatSource};
 
 #[cfg(test)]
 mod tests;

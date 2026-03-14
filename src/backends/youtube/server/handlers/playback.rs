@@ -5,6 +5,7 @@ use std::sync::Arc;
 use crossbeam::channel::Sender;
 
 use crate::backends::youtube::{
+    media::MediaPreparer,
     protocol::ServerResponse,
     server::orchestrator,
     services::{PlaybackService, PlaybackState, PlaybackStateTracker, QueueService},
@@ -19,13 +20,20 @@ pub fn handle_play(
     queue: &Arc<QueueService>,
     state_tracker: &Arc<PlaybackStateTracker>,
     event_tx: &Sender<String>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     let state = state_tracker.get();
 
     if matches!(state, PlaybackState::Idle | PlaybackState::Stopped) && queue.len() > 0 {
         let pos = queue.current_index().unwrap_or(0);
         log::info!("[STATE] play state={:?} pos={}", state, pos);
-        return orchestrator::play_position_sync(playback, queue, pos, state_tracker);
+        return orchestrator::play_position_sync(
+            playback,
+            queue,
+            pos,
+            state_tracker,
+            media_preparer,
+        );
     }
 
     log::info!("[STATE] unpause");

@@ -65,7 +65,13 @@ pub fn handle_play_with_intent(
 
             let _ = event_tx.send("queue".to_string());
 
-            return orchestrator::play_position_sync(playback, queue, *offset, state_tracker);
+            return orchestrator::play_position_sync(
+                playback,
+                queue,
+                *offset,
+                state_tracker,
+                media_preparer,
+            );
         }
 
         PlayIntent::Next { tracks } => {
@@ -103,7 +109,13 @@ pub fn handle_play_with_intent(
 
             let _ = event_tx.send("queue".to_string());
 
-            return orchestrator::play_position_sync(playback, queue, 0, state_tracker);
+            return orchestrator::play_position_sync(
+                playback,
+                queue,
+                0,
+                state_tracker,
+                media_preparer,
+            );
         }
     }
 

@@ -3,7 +3,7 @@ use crate::backends::youtube::config::AudioDeliveryMode;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AudioTransportTarget {
     DirectUrl,
-    CombinedConcat,
+    Combined,
     LocalRelay,
 }
 
@@ -34,7 +34,7 @@ impl AudioSourcePlan {
     }
 
     pub fn needs_source_adapter(self) -> bool {
-        matches!(self.transport, AudioTransportTarget::CombinedConcat)
+        false
     }
 }
 
@@ -46,7 +46,7 @@ impl AudioSourcePlanner {
         match mode {
             AudioDeliveryMode::Combined => AudioSourcePlan {
                 mode,
-                transport: AudioTransportTarget::CombinedConcat,
+                transport: AudioTransportTarget::Combined,
                 prepare_action: PrepareAction::StagePrefix,
                 prefetch_policy: PrefetchPolicy::StagePrefix,
                 enable_mpv_reconnect: false,
@@ -75,10 +75,11 @@ mod tests {
     use crate::backends::youtube::config::AudioDeliveryMode;
 
     #[test]
-    fn planner_maps_combined_to_concat_transport() {
+    fn planner_maps_combined_to_combined_transport() {
         let plan = AudioSourcePlanner.plan(AudioDeliveryMode::Combined);
-        assert_eq!(plan.transport, AudioTransportTarget::CombinedConcat);
+        assert_eq!(plan.transport, AudioTransportTarget::Combined);
         assert_eq!(plan.prepare_action, PrepareAction::StagePrefix);
+        assert!(!plan.needs_source_adapter());
         assert!(!plan.enable_mpv_reconnect);
     }
 

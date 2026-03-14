@@ -4,12 +4,33 @@
 //! Run with: cargo nextest run --test playback_integration -- --include-ignored
 
 use std::{
+    fs,
     io::{BufRead, BufReader, Write},
+    net::{Shutdown, SocketAddr, TcpListener, TcpStream},
     os::unix::net::UnixStream,
     path::PathBuf,
     process::{Command, Stdio},
+    sync::{
+        Arc,
+        Once,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+    },
+    thread,
     time::{Duration, Instant},
 };
+
+use async_trait::async_trait;
+use crossbeam::channel::{self, Receiver};
+use rmpc::backends::youtube::{
+    audio::{AudioSourcePlanner, sources::concat::FfmpegConcatSource},
+    config::AudioDeliveryMode,
+    media::{MediaPreparer, PreparedMedia, PreloadTier},
+    server::orchestrator,
+    services::{InternalEvent, PlaybackService, PlaybackState, PlaybackStateTracker, QueueService},
+    url_resolver::UrlResolver,
+};
+use rmpc::domain::Song;
+use tempfile::TempDir;
 
 const TEST_VIDEO_ID: &str = "dQw4w9WgXcQ";
 const CACHE_DIR: &str = ".cache/rmpc/audio";
@@ -77,6 +98,307 @@ fn build_concat_url(prefix_path: &PathBuf, prefix_size: u64, stream_url: &str) -
         prefix_size,
         stream_url
     )
+}
+
+fn fixture_mp3_path() -> PathBuf {
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("../ytmapi-yrmpc/test_json/test_upload.mp3")
+}
+
+fn fixture_mp3_bytes() -> Vec<u8> {
+    fs::read(fixture_mp3_path()).expect("fixture mp3 should be readable")
+}
+
+fn build_playback_service(
+    mode: AudioDeliveryMode,
+) -> Result<(TempDir, PlaybackService), String> {
+    let temp_dir = TempDir::new().map_err(|e| format!("tempdir failed: {e}"))?;
+    let socket_path = temp_dir.path().join("mpv.sock");
+    let service = PlaybackService::new(
+        &socket_path,
+        Arc::new(UrlResolver::default()),
+        None,
+        AudioSourcePlanner.plan(mode),
+        None,
+    )
+    .map_err(|e| format!("playback service failed: {e}"))?;
+
+    Ok((temp_dir, service))
+}
+
+fn wait_for_first_audio(
+    playback: &PlaybackService,
+    timeout: Duration,
+) -> Result<Duration, String> {
+    let start = Instant::now();
+    loop {
+        if let Ok(position) = playback.get_position() {
+            if position > 0.0 {
+                return Ok(start.elapsed());
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(format!("timed out waiting for playback start after {timeout:?}"));
+        }
+
+        thread::sleep(Duration::from_millis(20));
+    }
+}
+
+fn wait_for_position_at_least(
+    playback: &PlaybackService,
+    min_position: f64,
+    timeout: Duration,
+) -> Result<f64, String> {
+    let start = Instant::now();
+    loop {
+        if let Ok(position) = playback.get_position() {
+            if position >= min_position {
+                return Ok(position);
+            }
+        }
+
+        if start.elapsed() >= timeout {
+            return Err(format!(
+                "timed out waiting for playback position >= {min_position:.2}s"
+            ));
+        }
+
+        thread::sleep(Duration::from_millis(50));
+    }
+}
+
+struct StaticAudioServer {
+    addr: SocketAddr,
+    stop: Arc<AtomicBool>,
+    handle: Option<thread::JoinHandle<()>>,
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct FixtureServerOptions {
+    truncate_after_absolute: Option<usize>,
+}
+
+impl StaticAudioServer {
+    fn start(bytes: Vec<u8>) -> Result<Self, String> {
+        Self::start_with_options(bytes, FixtureServerOptions::default())
+    }
+
+    fn start_with_truncation(bytes: Vec<u8>, truncate_after_absolute: usize) -> Result<Self, String> {
+        Self::start_with_options(
+            bytes,
+            FixtureServerOptions { truncate_after_absolute: Some(truncate_after_absolute) },
+        )
+    }
+
+    fn start_with_options(bytes: Vec<u8>, options: FixtureServerOptions) -> Result<Self, String> {
+        let listener = TcpListener::bind("127.0.0.1:0")
+            .map_err(|e| format!("failed to bind fixture server: {e}"))?;
+        listener
+            .set_nonblocking(true)
+            .map_err(|e| format!("failed to set nonblocking listener: {e}"))?;
+        let addr = listener
+            .local_addr()
+            .map_err(|e| format!("failed to read fixture server addr: {e}"))?;
+        let stop = Arc::new(AtomicBool::new(false));
+        let stop_flag = Arc::clone(&stop);
+        let bytes = Arc::new(bytes);
+        let server_bytes = Arc::clone(&bytes);
+        let options = Arc::new(options);
+        let server_options = Arc::clone(&options);
+
+        let handle = thread::spawn(move || {
+            while !stop_flag.load(Ordering::SeqCst) {
+                match listener.accept() {
+                    Ok((stream, _)) => {
+                        let _ = handle_fixture_connection(stream, &server_bytes, *server_options);
+                    }
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(_) => break,
+                }
+            }
+        });
+
+        Ok(Self { addr, stop, handle: Some(handle) })
+    }
+
+    fn url(&self) -> String {
+        format!("http://{}/fixture.mp3", self.addr)
+    }
+}
+
+impl Drop for StaticAudioServer {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::SeqCst);
+        let _ = TcpStream::connect(self.addr).and_then(|stream| stream.shutdown(Shutdown::Both));
+        if let Some(handle) = self.handle.take() {
+            let _ = handle.join();
+        }
+    }
+}
+
+fn handle_fixture_connection(
+    mut stream: TcpStream,
+    bytes: &[u8],
+    options: FixtureServerOptions,
+) -> Result<(), String> {
+    stream
+        .set_read_timeout(Some(Duration::from_secs(2)))
+        .map_err(|e| format!("set_read_timeout failed: {e}"))?;
+
+    let mut reader = BufReader::new(
+        stream.try_clone().map_err(|e| format!("clone stream failed: {e}"))?,
+    );
+    let mut request_line = String::new();
+    reader
+        .read_line(&mut request_line)
+        .map_err(|e| format!("read request line failed: {e}"))?;
+
+    if request_line.trim().is_empty() {
+        return Ok(());
+    }
+
+    let mut parts = request_line.split_whitespace();
+    let method = parts.next().ok_or_else(|| "missing request method".to_string())?;
+    let path = parts.next().ok_or_else(|| "missing request path".to_string())?;
+
+    let mut range_header = None;
+    loop {
+        let mut line = String::new();
+        reader
+            .read_line(&mut line)
+            .map_err(|e| format!("read header line failed: {e}"))?;
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            break;
+        }
+        if let Some(value) = trimmed.strip_prefix("Range: ") {
+            range_header = Some(value.to_string());
+        }
+    }
+
+    if path != "/fixture.mp3" {
+        write_fixture_response(&mut stream, "404 Not Found", &[], None, method == "HEAD")?;
+        return Ok(());
+    }
+
+    handle_range_request(&mut stream, method, range_header, bytes, options)
+}
+
+fn handle_range_request(
+    stream: &mut TcpStream,
+    method: &str,
+    range_header: Option<String>,
+    bytes: &[u8],
+    options: FixtureServerOptions,
+) -> Result<(), String> {
+    let (status, mut body, mut content_range, body_start) =
+        match parse_range_request(range_header.as_deref(), bytes.len()) {
+            Ok(Some((start, end))) => (
+                "206 Partial Content",
+                &bytes[start..end],
+                Some(format!("bytes {}-{}/{}", start, end - 1, bytes.len())),
+                start,
+            ),
+            Ok(None) => ("200 OK", bytes, None, 0),
+        Err(()) => {
+            write_fixture_response(
+                stream,
+                "416 Range Not Satisfiable",
+                &[],
+                Some(format!("bytes */{}", bytes.len())),
+                method == "HEAD",
+            )?;
+            return Ok(());
+        }
+    };
+
+    if let Some(truncate_after_absolute) = options.truncate_after_absolute {
+        if body_start < truncate_after_absolute {
+            let max_len = truncate_after_absolute - body_start;
+            body = &body[..body.len().min(max_len)];
+        } else {
+            body = &[];
+        }
+
+        if content_range.is_some() {
+            content_range = if body.is_empty() {
+                None
+            } else {
+                let end = body_start + body.len() - 1;
+                Some(format!("bytes {}-{}/{}", body_start, end, bytes.len()))
+            };
+        }
+    }
+
+    write_fixture_response(stream, status, body, content_range, method == "HEAD")
+}
+
+fn parse_range_request(header: Option<&str>, len: usize) -> Result<Option<(usize, usize)>, ()> {
+    let Some(header) = header else {
+        return Ok(None);
+    };
+
+    let spec = header.strip_prefix("bytes=").ok_or(())?;
+    if spec.contains(',') {
+        return Err(());
+    }
+
+    let (start, end) = spec.split_once('-').ok_or(())?;
+    if start.is_empty() {
+        let suffix = end.parse::<usize>().map_err(|_| ())?;
+        if suffix == 0 {
+            return Err(());
+        }
+        let start = len.saturating_sub(suffix.min(len));
+        return Ok(Some((start, len)));
+    }
+
+    let start = start.parse::<usize>().map_err(|_| ())?;
+    if start >= len {
+        return Err(());
+    }
+
+    if end.is_empty() {
+        return Ok(Some((start, len)));
+    }
+
+    let end = end.parse::<usize>().map_err(|_| ())?;
+    if end < start {
+        return Err(());
+    }
+
+    Ok(Some((start, end.saturating_add(1).min(len))))
+}
+
+fn write_fixture_response(
+    stream: &mut TcpStream,
+    status: &str,
+    body: &[u8],
+    content_range: Option<String>,
+    head_only: bool,
+) -> Result<(), String> {
+    let mut response = format!(
+        "HTTP/1.1 {status}\r\nContent-Length: {}\r\nAccept-Ranges: bytes\r\nContent-Type: audio/mpeg\r\nConnection: close\r\n",
+        body.len()
+    );
+
+    if let Some(content_range) = content_range {
+        response.push_str(&format!("Content-Range: {content_range}\r\n"));
+    }
+
+    response.push_str("\r\n");
+    stream
+        .write_all(response.as_bytes())
+        .map_err(|e| format!("write response headers failed: {e}"))?;
+    if !head_only {
+        stream.write_all(body).map_err(|e| format!("write response body failed: {e}"))?;
+    }
+    stream.flush().map_err(|e| format!("flush response failed: {e}"))?;
+    Ok(())
 }
 
 struct MpvTestSession {
@@ -151,13 +473,6 @@ impl MpvTestSession {
             .ok_or_else(|| "playback-time not a number".to_string())
     }
 
-    fn get_path(&self) -> Result<String, String> {
-        self.get_property("path")?
-            .as_str()
-            .map(|s| s.to_string())
-            .ok_or_else(|| "path not a string".to_string())
-    }
-
     fn is_playing(&self) -> bool {
         self.get_property("core-idle")
             .ok()
@@ -175,6 +490,77 @@ impl Drop for MpvTestSession {
     }
 }
 
+fn fixture_wav_bytes(duration_secs: u32, sample_rate: u32) -> Vec<u8> {
+    let channels: u16 = 1;
+    let bits_per_sample: u16 = 8;
+    let bytes_per_sample = (bits_per_sample / 8) as u32;
+    let data_len = duration_secs
+        .saturating_mul(sample_rate)
+        .saturating_mul(channels as u32)
+        .saturating_mul(bytes_per_sample);
+    let riff_len = 36u32.saturating_add(data_len);
+    let byte_rate = sample_rate
+        .saturating_mul(channels as u32)
+        .saturating_mul(bytes_per_sample);
+    let block_align = channels * (bits_per_sample / 8);
+
+    let mut bytes = Vec::with_capacity(44 + data_len as usize);
+    bytes.extend_from_slice(b"RIFF");
+    bytes.extend_from_slice(&riff_len.to_le_bytes());
+    bytes.extend_from_slice(b"WAVE");
+    bytes.extend_from_slice(b"fmt ");
+    bytes.extend_from_slice(&16u32.to_le_bytes());
+    bytes.extend_from_slice(&1u16.to_le_bytes());
+    bytes.extend_from_slice(&channels.to_le_bytes());
+    bytes.extend_from_slice(&sample_rate.to_le_bytes());
+    bytes.extend_from_slice(&byte_rate.to_le_bytes());
+    bytes.extend_from_slice(&block_align.to_le_bytes());
+    bytes.extend_from_slice(&bits_per_sample.to_le_bytes());
+    bytes.extend_from_slice(b"data");
+    bytes.extend_from_slice(&data_len.to_le_bytes());
+    bytes.resize(bytes.len() + data_len as usize, 128u8);
+    bytes
+}
+
+fn wait_for_end_file_reason(
+    internal_events: &Receiver<InternalEvent>,
+    timeout: Duration,
+) -> Result<String, String> {
+    let start = Instant::now();
+    while start.elapsed() < timeout {
+        match internal_events.recv_timeout(Duration::from_millis(200)) {
+            Ok(InternalEvent::EndFile { reason }) => return Ok(reason),
+            Ok(_) => continue,
+            Err(_) => continue,
+        }
+    }
+    Err(format!("timed out waiting for EndFile event after {timeout:?}"))
+}
+
+fn init_test_logger() {
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        let _ = env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+            .is_test(true)
+            .try_init();
+    });
+}
+
+struct StaticUrlPreparer {
+    url: String,
+    prepare_calls: Arc<AtomicUsize>,
+}
+
+#[async_trait]
+impl MediaPreparer for StaticUrlPreparer {
+    async fn prepare(&self, _track_id: &str, _tier: PreloadTier) -> anyhow::Result<PreparedMedia> {
+        self.prepare_calls.fetch_add(1, Ordering::SeqCst);
+        Ok(PreparedMedia::Direct { url: self.url.clone() })
+    }
+
+    fn prefetch(&self, _track_id: &str, _tier: PreloadTier) {}
+}
+
 #[test]
 #[ignore = "requires network"]
 fn test_ytx_extracts_valid_url() {
@@ -188,6 +574,175 @@ fn test_ytx_extracts_valid_url() {
         "URL should be from Google/YouTube"
     );
     assert!(url.len() > 100, "URL should be substantial (got {} chars)", url.len());
+}
+
+#[test]
+#[ignore = "requires mpv"]
+fn test_runtime_direct_builder_path_starts_fixture_playback() {
+    let fixture_bytes = fixture_mp3_bytes();
+    let server = StaticAudioServer::start(fixture_bytes).expect("fixture server should start");
+    let (_temp_dir, playback) =
+        build_playback_service(AudioDeliveryMode::Direct).expect("playback service should start");
+
+    let prepared = PreparedMedia::Direct { url: server.url() };
+    let input = FfmpegConcatSource::build_from_prepared(&prepared).expect("builder should succeed");
+
+    assert_eq!(input.url, server.url());
+    assert!(input.mpv_args.is_empty());
+
+    playback.playlist_append_input(&input).expect("append input should succeed");
+    playback.playlist_play_index(0).expect("play index should succeed");
+
+    let ttfa = wait_for_first_audio(&playback, Duration::from_secs(5))
+        .expect("direct runtime should reach first audio");
+    let steady_position = wait_for_position_at_least(&playback, 1.0, Duration::from_secs(5))
+        .expect("direct runtime should stay active through sample window");
+
+    println!(
+        "runtime_direct_fixture ttfa_ms={} steady_position_s={steady_position:.3}",
+        ttfa.as_millis()
+    );
+}
+
+#[test]
+#[ignore = "requires mpv"]
+fn test_runtime_combined_builder_path_starts_fixture_playback() {
+    let fixture_bytes = fixture_mp3_bytes();
+    let fixture_len = fixture_bytes.len() as u64;
+    let prefix_len = fixture_len.min(64 * 1024) as usize;
+    let prefix_dir = TempDir::new().expect("tempdir should be created");
+    let prefix_path = prefix_dir.path().join("fixture-prefix.mp3");
+    fs::write(&prefix_path, &fixture_bytes[..prefix_len]).expect("prefix should be written");
+
+    let server = StaticAudioServer::start(fixture_bytes).expect("fixture server should start");
+    let (_temp_dir, playback) = build_playback_service(AudioDeliveryMode::Combined)
+        .expect("combined playback service should start");
+
+    let prepared = PreparedMedia::StagedPrefix {
+        path: prefix_path.clone(),
+        bytes: prefix_len as u64,
+        url: server.url(),
+        content_length: fixture_len,
+    };
+    let input = FfmpegConcatSource::build_from_prepared(&prepared).expect("builder should succeed");
+
+    assert!(input.url.starts_with("lavf://concat:"));
+    assert_eq!(
+        input.mpv_args,
+        vec![
+            "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat"
+                .to_string()
+        ]
+    );
+
+    playback.playlist_append_input(&input).expect("append input should succeed");
+    playback.playlist_play_index(0).expect("play index should succeed");
+
+    let ttfa = wait_for_first_audio(&playback, Duration::from_secs(5))
+        .expect("combined runtime should reach first audio");
+    let steady_position = wait_for_position_at_least(&playback, 1.0, Duration::from_secs(5))
+        .expect("combined runtime should stay active through sample window");
+
+    println!(
+        "runtime_combined_fixture ttfa_ms={} steady_position_s={steady_position:.3} prefix_bytes={}",
+        ttfa.as_millis(),
+        prefix_len
+    );
+}
+
+#[test]
+#[ignore = "requires mpv"]
+fn test_runtime_direct_truncated_fixture_triggers_eof_recovery_diagnostic() {
+    init_test_logger();
+
+    const SAMPLE_RATE: u32 = 8_000;
+    const FULL_DURATION_SECS: u32 = 120;
+    const TRUNCATE_AT_SECS: u32 = 40;
+    const SEEK_TARGET_SECS: f64 = 35.0;
+
+    let fixture_bytes = fixture_wav_bytes(FULL_DURATION_SECS, SAMPLE_RATE);
+    let truncate_after_absolute = 44 + (TRUNCATE_AT_SECS * SAMPLE_RATE) as usize;
+
+    let server = StaticAudioServer::start_with_truncation(fixture_bytes, truncate_after_absolute)
+        .expect("fixture server should start with truncation");
+    let (temp_dir, playback) =
+        build_playback_service(AudioDeliveryMode::Direct).expect("playback service should start");
+    let playback = Arc::new(playback);
+
+    let queue = Arc::new(QueueService::new());
+    let mut song = Song::default();
+    song.uri = "fixture-eof-track".to_string();
+    song.metadata.insert("title".to_string(), vec!["fixture-eof-track".to_string()]);
+    queue.add(song, None);
+    let state_tracker = Arc::new(PlaybackStateTracker::new());
+
+    let prepare_calls = Arc::new(AtomicUsize::new(0));
+    let media_preparer: Arc<dyn MediaPreparer> = Arc::new(StaticUrlPreparer {
+        url: server.url(),
+        prepare_calls: Arc::clone(&prepare_calls),
+    });
+
+    let socket_path = temp_dir.path().join("mpv.sock");
+    let (event_tx, _event_rx) = channel::unbounded::<String>();
+    let (internal_event_tx, internal_event_rx) = channel::unbounded::<InternalEvent>();
+    playback
+        .start_event_loop(&socket_path, event_tx, internal_event_tx)
+        .expect("event loop should start");
+
+    let response = orchestrator::play_position_sync(
+        &playback,
+        &queue,
+        0,
+        &state_tracker,
+        &media_preparer,
+    );
+    assert!(matches!(response, rmpc::backends::youtube::protocol::ServerResponse::Ok));
+
+    wait_for_first_audio(playback.as_ref(), Duration::from_secs(5))
+        .expect("fixture should reach first audio");
+    playback.seek(SEEK_TARGET_SECS, "absolute").expect("seek should succeed");
+    let observed_position = wait_for_position_at_least(
+        playback.as_ref(),
+        SEEK_TARGET_SECS,
+        Duration::from_secs(5),
+    )
+        .expect("seek target should be reached");
+    let duration = playback.get_duration().expect("duration should be readable");
+
+    let reason = wait_for_end_file_reason(&internal_event_rx, Duration::from_secs(10))
+        .expect("expected EndFile event");
+    assert_eq!(reason, "eof", "fixture truncation should end with EOF");
+
+    let eof_position = observed_position;
+    let remaining = duration - eof_position;
+    let intended_repro_window = duration >= 90.0
+        && eof_position >= 30.0
+        && eof_position < duration
+        && remaining >= 20.0;
+    assert!(
+        intended_repro_window,
+        "expected known repro timing window, got {eof_position:.2}/{duration:.2}"
+    );
+
+    let eof_position_err = playback
+        .get_position()
+        .expect_err("EOF boundary should expose unavailable time-pos for this repro")
+        .to_string();
+    assert!(
+        eof_position_err.contains("property unavailable"),
+        "expected explicit EOF cause, got: {eof_position_err}"
+    );
+
+    orchestrator::handle_track_ended(&playback, &queue, &state_tracker, &media_preparer, &reason);
+
+    let calls = prepare_calls.load(Ordering::SeqCst);
+    let state = state_tracker.get();
+    assert_eq!(calls, 1, "expected no replay when EOF cause is explicit; prepare calls={calls}");
+    assert!(matches!(state, PlaybackState::PendingAdvance { .. }));
+
+    println!(
+        "[DIAG-EOF-TEST] reason={reason} eof_position_s={eof_position:.2} duration_s={duration:.2} remaining_s={remaining:.2} intended_repro_window={intended_repro_window} explicit_cause={eof_position_err:?} recovery_prepare_calls={calls} state={state:?}"
+    );
 }
 
 #[test]

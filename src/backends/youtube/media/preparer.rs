@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     path::PathBuf,
     sync::{
         Arc,
@@ -11,6 +11,7 @@ use std::{
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 use parking_lot::Mutex;
+use tokio::task::JoinHandle;
 use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use super::{
@@ -31,6 +32,8 @@ fn next_request_id() -> RequestId {
     REQUEST_ID_COUNTER.fetch_add(1, Ordering::Relaxed)
 }
 
+const MAX_PENDING_PRELOADS: usize = 8;
+
 #[derive(Debug)]
 pub enum CacheRequest {
     Prepare {
@@ -47,13 +50,22 @@ pub enum CacheRequest {
     Cancel {
         request_id: RequestId,
     },
+    ActivateWindow {
+        track_ids: Vec<String>,
+    },
     Shutdown,
 }
 
 #[derive(Debug, Clone)]
 pub enum PrepareResult {
-    Concat { prefix_path: PathBuf, stream_url: String, content_length: u64 },
-    Passthrough { stream_url: String },
+    StagedPrefix {
+        prefix_path: PathBuf,
+        prefix_bytes: u64,
+        stream_url: String,
+        content_length: u64,
+    },
+    Direct { stream_url: String },
+    Cancelled,
     Failed(String),
 }
 
@@ -68,12 +80,17 @@ enum JobState {
 #[derive(Debug)]
 struct InFlightJob {
     state: Mutex<JobState>,
+    task: Mutex<Option<JoinHandle<()>>>,
     notify: Notify,
 }
 
 impl InFlightJob {
     fn new(track_id: String) -> Self {
-        Self { state: Mutex::new(JobState::ResolvingUrl { track_id }), notify: Notify::new() }
+        Self {
+            state: Mutex::new(JobState::ResolvingUrl { track_id }),
+            task: Mutex::new(None),
+            notify: Notify::new(),
+        }
     }
 
     fn snapshot(&self) -> JobState {
@@ -83,6 +100,29 @@ impl InFlightJob {
     fn set_state(&self, new_state: JobState) {
         *self.state.lock() = new_state;
         self.notify.notify_waiters();
+    }
+
+    fn replace_task(&self, task: JoinHandle<()>) {
+        if let Some(existing) = self.task.lock().replace(task) {
+            existing.abort();
+        }
+    }
+
+    fn clear_task(&self) {
+        self.task.lock().take();
+    }
+
+    fn cancel(&self) {
+        if let Some(task) = self.task.lock().take() {
+            task.abort();
+        }
+
+        let mut state = self.state.lock();
+        if !matches!(*state, JobState::Completed(_)) {
+            *state = JobState::Completed(PrepareResult::Cancelled);
+            drop(state);
+            self.notify.notify_waiters();
+        }
     }
 }
 
@@ -137,6 +177,8 @@ enum InternalEvent {
 pub struct YouTubeMediaPreparer {
     rx: mpsc::Receiver<CacheRequest>,
     in_flight: HashMap<String, Arc<InFlightJob>>,
+    request_to_track: HashMap<RequestId, String>,
+    active_window: HashSet<String>,
     url_resolver: Arc<UrlResolver>,
     audio_cache: Arc<AudioCache>,
     audio_source_plan: AudioSourcePlan,
@@ -163,6 +205,8 @@ impl YouTubeMediaPreparer {
         let mut executor = Self {
             rx,
             in_flight: HashMap::new(),
+            request_to_track: HashMap::new(),
+            active_window: HashSet::new(),
             url_resolver,
             audio_cache,
             audio_source_plan,
@@ -188,6 +232,7 @@ impl YouTubeMediaPreparer {
                     match ev {
                         InternalEvent::JobFinished { track_id } => {
                             self.in_flight.remove(&track_id);
+                            self.request_to_track.retain(|_, mapped_track_id| mapped_track_id != &track_id);
                         }
                     }
                 }
@@ -202,6 +247,9 @@ impl YouTubeMediaPreparer {
                         }
                         CacheRequest::Cancel { request_id } => {
                             self.handle_cancel_request(request_id);
+                        }
+                        CacheRequest::ActivateWindow { track_ids } => {
+                            self.handle_activate_window(track_ids);
                         }
                         CacheRequest::Shutdown => {
                             break;
@@ -229,6 +277,13 @@ impl YouTubeMediaPreparer {
         deadline: Option<Duration>,
         response: oneshot::Sender<PrepareResult>,
     ) {
+        log::debug!(
+            transport:? = self.audio_source_plan.transport,
+            tier:? = tier,
+            deadline_ms = deadline.map(|d| d.as_millis() as u64).unwrap_or(0);
+            "[PREPARE] Received prepare request"
+        );
+        self.active_window.insert(track_id.clone());
         let (job, is_new) = self.get_or_create_job(&track_id);
 
         if is_new {
@@ -259,6 +314,19 @@ impl YouTubeMediaPreparer {
         tier: PreloadTier,
         request_id: RequestId,
     ) {
+        log::debug!(
+            transport:? = self.audio_source_plan.transport,
+            tier:? = tier,
+            request_id = request_id;
+            "[PREPARE] Queue preload request"
+        );
+        self.request_to_track.insert(request_id, track_id.clone());
+
+        if self.in_flight.contains_key(&track_id) {
+            return;
+        }
+
+        self.drop_queued_track(&track_id);
         let job = PreloadJob { track_id, tier, request_id };
 
         match job.tier {
@@ -269,16 +337,67 @@ impl YouTubeMediaPreparer {
                 self.background_queue.push_back(job);
             }
         }
+
+        self.trim_background_queue();
     }
 
     fn handle_cancel_request(&mut self, request_id: RequestId) {
+        let before = self.background_queue.len();
         self.background_queue.retain(|job| job.request_id != request_id);
+        let removed = before.saturating_sub(self.background_queue.len()) as u64;
+
+        if let Some(track_id) = self.request_to_track.remove(&request_id) {
+            let should_cancel = self
+                .request_to_track
+                .values()
+                .all(|existing_track_id| existing_track_id != &track_id);
+            if should_cancel {
+                self.cancel_track(&track_id);
+            }
+        }
+
+        log::debug!(
+            transport:? = self.audio_source_plan.transport,
+            request_id = request_id,
+            cancelled_jobs = removed;
+            "[PREPARE] Cancel preload request"
+        );
+    }
+
+    fn handle_activate_window(&mut self, track_ids: Vec<String>) {
+        self.active_window = track_ids.into_iter().collect();
+
+        let mut retained = VecDeque::new();
+        while let Some(job) = self.background_queue.pop_front() {
+            if self.active_window.contains(&job.track_id) {
+                retained.push_back(job);
+            } else {
+                self.request_to_track.remove(&job.request_id);
+            }
+        }
+        self.background_queue = retained;
+
+        let obsolete_tracks: Vec<String> = self
+            .in_flight
+            .keys()
+            .filter(|track_id| !self.active_window.contains(*track_id))
+            .cloned()
+            .collect();
+
+        for track_id in obsolete_tracks {
+            self.cancel_track(&track_id);
+        }
     }
 
     fn dispatch_background_job(&mut self) {
         let Some(job) = self.background_queue.pop_front() else {
             return;
         };
+
+        if !self.active_window.is_empty() && !self.active_window.contains(&job.track_id) {
+            self.request_to_track.remove(&job.request_id);
+            return;
+        }
 
         let (in_flight, is_new) = self.get_or_create_job(&job.track_id);
         if is_new {
@@ -304,6 +423,45 @@ impl YouTubeMediaPreparer {
         });
     }
 
+    fn drop_queued_track(&mut self, track_id: &str) {
+        self.background_queue.retain(|job| {
+            let keep = job.track_id != track_id;
+            if !keep {
+                self.request_to_track.remove(&job.request_id);
+            }
+            keep
+        });
+    }
+
+    fn trim_background_queue(&mut self) {
+        while self.background_queue.len() > MAX_PENDING_PRELOADS {
+            let drop_index = self
+                .background_queue
+                .iter()
+                .position(|job| matches!(job.tier, PreloadTier::Background))
+                .unwrap_or(self.background_queue.len().saturating_sub(1));
+
+            if let Some(dropped) = self.background_queue.remove(drop_index) {
+                self.request_to_track.remove(&dropped.request_id);
+                log::debug!(
+                    transport:? = self.audio_source_plan.transport,
+                    track_id:% = dropped.track_id.as_str(),
+                    tier:? = dropped.tier,
+                    request_id = dropped.request_id;
+                    "[PREPARE] Dropped stale preload due to bounded queue"
+                );
+            }
+        }
+    }
+
+    fn cancel_track(&mut self, track_id: &str) {
+        if let Some(job) = self.in_flight.remove(track_id) {
+            job.cancel();
+        }
+
+        self.request_to_track.retain(|_, mapped_track_id| mapped_track_id != track_id);
+    }
+
     fn get_or_create_job(&mut self, track_id: &str) -> (Arc<InFlightJob>, bool) {
         if let Some(existing) = self.in_flight.get(track_id) {
             return (Arc::clone(existing), false);
@@ -318,8 +476,9 @@ impl YouTubeMediaPreparer {
         let url_resolver = Arc::clone(&self.url_resolver);
         let internal_tx = self.internal_tx.clone();
         let uses_local_staging = self.audio_source_plan.uses_local_staging();
+        let task_job = Arc::clone(&job);
 
-        tokio::spawn(async move {
+        let task = tokio::spawn(async move {
             let track_id_for_blocking = track_id.clone();
             let resolved =
                 tokio::task::spawn_blocking(move || url_resolver.get_url(&track_id_for_blocking))
@@ -330,23 +489,33 @@ impl YouTubeMediaPreparer {
             match resolved {
                 Ok(stream_url) => {
                     if !uses_local_staging {
-                        job.set_state(JobState::Completed(PrepareResult::Passthrough {
+                        log::debug!(
+                            prefix_cache_result = "not_required",
+                            transport = "direct";
+                            "[PREPARE] Local staging disabled, using direct transport"
+                        );
+                        task_job.set_state(JobState::Completed(PrepareResult::Direct {
                             stream_url,
                         }));
+                        task_job.clear_task();
                         let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
                     } else {
-                        job.set_state(JobState::UrlResolved {
+                        task_job.set_state(JobState::UrlResolved {
                             track_id: track_id.clone(),
                             stream_url,
                         });
+                        task_job.clear_task();
                     }
                 }
                 Err(e) => {
-                    job.set_state(JobState::Completed(PrepareResult::Failed(e.to_string())));
+                    task_job.set_state(JobState::Completed(PrepareResult::Failed(e.to_string())));
+                    task_job.clear_task();
                     let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
                 }
             }
         });
+
+        job.replace_task(task);
     }
 
     #[allow(dead_code)]
@@ -397,15 +566,22 @@ impl YouTubeMediaPreparer {
                     return result;
                 }
                 JobState::UrlResolved { track_id, stream_url } => {
-                    if audio_cache.has_prefix(&track_id) {
-                        if let Some(content_length) = audio_cache.get_content_length(&track_id) {
-                            let prefix_path = audio_cache.cache_path(&track_id);
-                            return PrepareResult::Concat {
-                                prefix_path,
-                                stream_url,
-                                content_length,
-                            };
-                        }
+                    if let Some((prefix_path, prefix_bytes, content_length)) =
+                        audio_cache.get_prefix_metadata(&track_id)
+                    {
+                        log::debug!(
+                            tier:? = tier,
+                            prefix_cache_result = "hit",
+                            content_length = content_length,
+                            prefix_bytes = prefix_bytes;
+                            "[PREPARE] Prefix cache hit"
+                        );
+                        return PrepareResult::StagedPrefix {
+                            prefix_path,
+                            prefix_bytes,
+                            stream_url,
+                            content_length,
+                        };
                     }
 
                     let should_spawn = {
@@ -454,21 +630,53 @@ impl YouTubeMediaPreparer {
         stream_url: String,
         tier: PreloadTier,
     ) {
-        tokio::spawn(async move {
+        let task_job = Arc::clone(&job);
+
+        let task = tokio::spawn(async move {
             let _permit = permits.acquire(tier).await;
 
-            let outcome = match audio_cache.ensure_prefix(&track_id, &stream_url).await {
-                Ok((prefix_path, content_length)) => PrepareResult::Concat {
-                    prefix_path,
-                    stream_url: stream_url.clone(),
-                    content_length,
+            let outcome = match audio_cache.ensure_prefix(&track_id, &stream_url).await.and_then(
+                |(prefix_path, content_length)| {
+                    let prefix_bytes = std::fs::metadata(&prefix_path)
+                        .with_context(|| {
+                            format!("Failed to read prefix metadata for {}", prefix_path.display())
+                        })?
+                        .len();
+                    Ok((prefix_path, prefix_bytes, content_length))
                 },
-                Err(e) => PrepareResult::Failed(e.to_string()),
+            ) {
+                Ok((prefix_path, prefix_bytes, content_length)) => {
+                    log::debug!(
+                        tier:? = tier,
+                        prefix_cache_result = "downloaded",
+                        content_length = content_length,
+                        prefix_bytes = prefix_bytes;
+                        "[PREPARE] Prefix download completed"
+                    );
+                    PrepareResult::StagedPrefix {
+                        prefix_path,
+                        prefix_bytes,
+                        stream_url: stream_url.clone(),
+                        content_length,
+                    }
+                }
+                Err(e) => {
+                    log::warn!(
+                        tier:? = tier,
+                        prefix_cache_result = "failed",
+                        error:% = e;
+                        "[PREPARE] Prefix download failed"
+                    );
+                    PrepareResult::Failed(e.to_string())
+                }
             };
 
-            job.set_state(JobState::Completed(outcome));
+            task_job.set_state(JobState::Completed(outcome));
+            task_job.clear_task();
             let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
         });
+
+        job.replace_task(task);
     }
 
     async fn wait_for_prefix_result(
@@ -489,37 +697,66 @@ impl YouTubeMediaPreparer {
         if tier == PreloadTier::Immediate {
             if let Some(deadline) = deadline {
                 match tokio::time::timeout(deadline, wait).await {
-                    Ok(PrepareResult::Concat {
+                    Ok(PrepareResult::StagedPrefix {
                         prefix_path,
+                        prefix_bytes,
                         stream_url: resolved_url,
                         content_length,
-                    }) => PrepareResult::Concat {
+                    }) => PrepareResult::StagedPrefix {
                         prefix_path,
+                        prefix_bytes,
                         stream_url: resolved_url,
                         content_length,
                     },
-                    Ok(PrepareResult::Passthrough { stream_url: resolved_url }) => {
-                        PrepareResult::Passthrough { stream_url: resolved_url }
+                    Ok(PrepareResult::Direct { stream_url: resolved_url }) => {
+                        PrepareResult::Direct { stream_url: resolved_url }
                     }
-                    Ok(PrepareResult::Failed(_)) | Err(_) => {
-                        PrepareResult::Passthrough { stream_url }
+                    Ok(PrepareResult::Cancelled) => PrepareResult::Cancelled,
+                    Ok(PrepareResult::Failed(_)) => {
+                        log::warn!(
+                            tier:? = tier,
+                            fallback_reason = "prepare_failed",
+                            transport = "direct";
+                            "[PREPARE] Immediate tier fallback to direct"
+                        );
+                        PrepareResult::Direct { stream_url }
+                    }
+                    Err(_) => {
+                        log::warn!(
+                            tier:? = tier,
+                            fallback_reason = "deadline_timeout",
+                            transport = "direct";
+                            "[PREPARE] Immediate tier fallback to direct"
+                        );
+                        PrepareResult::Direct { stream_url }
                     }
                 }
             } else {
                 match wait.await {
-                    PrepareResult::Concat {
+                    PrepareResult::StagedPrefix {
                         prefix_path,
+                        prefix_bytes,
                         stream_url: resolved_url,
                         content_length,
-                    } => PrepareResult::Concat {
+                    } => PrepareResult::StagedPrefix {
                         prefix_path,
+                        prefix_bytes,
                         stream_url: resolved_url,
                         content_length,
                     },
-                    PrepareResult::Passthrough { stream_url: resolved_url } => {
-                        PrepareResult::Passthrough { stream_url: resolved_url }
+                    PrepareResult::Direct { stream_url: resolved_url } => {
+                        PrepareResult::Direct { stream_url: resolved_url }
                     }
-                    PrepareResult::Failed(_) => PrepareResult::Passthrough { stream_url },
+                    PrepareResult::Cancelled => PrepareResult::Cancelled,
+                    PrepareResult::Failed(_) => {
+                        log::warn!(
+                            tier:? = tier,
+                            fallback_reason = "prepare_failed_no_deadline",
+                            transport = "direct";
+                            "[PREPARE] Immediate tier fallback to direct"
+                        );
+                        PrepareResult::Direct { stream_url }
+                    }
                 }
             }
         } else {
@@ -555,10 +792,35 @@ impl YouTubeMediaPreparerHandle {
         }
     }
 
+    pub fn activate_playback_window(&self, track_ids: Vec<String>) {
+        if let Err(e) = self.tx.try_send(CacheRequest::ActivateWindow { track_ids }) {
+            log::debug!("YouTubeMediaPreparer activate_playback_window dropped: {e}");
+        }
+    }
+
     pub fn shutdown(&self) {
         if let Err(e) = self.tx.try_send(CacheRequest::Shutdown) {
             log::debug!("YouTubeMediaPreparer shutdown dropped: {e}");
         }
+    }
+}
+
+fn prepared_media_from_result(result: PrepareResult) -> Result<PreparedMedia> {
+    match result {
+        PrepareResult::StagedPrefix {
+            prefix_path,
+            prefix_bytes,
+            stream_url,
+            content_length,
+        } => Ok(PreparedMedia::StagedPrefix {
+            path: prefix_path,
+            bytes: prefix_bytes,
+            url: stream_url,
+            content_length,
+        }),
+        PrepareResult::Direct { stream_url } => Ok(PreparedMedia::Direct { url: stream_url }),
+        PrepareResult::Cancelled => Err(anyhow!("Preparation cancelled")),
+        PrepareResult::Failed(e) => Err(anyhow!("Preparation failed: {}", e)),
     }
 }
 
@@ -573,19 +835,255 @@ impl MediaPreparer for YouTubeMediaPreparerHandle {
         let result =
             YouTubeMediaPreparerHandle::prepare(self, track_id.to_string(), tier, deadline).await?;
 
-        match result {
-            PrepareResult::Concat { prefix_path, .. } => {
-                Ok(PreparedMedia::Concat { concat_path: prefix_path })
-            }
-            PrepareResult::Passthrough { stream_url } => {
-                Ok(PreparedMedia::Direct { url: stream_url })
-            }
-            PrepareResult::Failed(e) => Err(anyhow!("Preparation failed: {}", e)),
-        }
+        prepared_media_from_result(result)
     }
 
     fn prefetch(&self, track_id: &str, tier: PreloadTier) {
         let request_id = next_request_id();
         self.preload(track_id.to_string(), tier, request_id);
+    }
+
+    fn activate_playback_window(&self, track_ids: &[String]) {
+        YouTubeMediaPreparerHandle::activate_playback_window(self, track_ids.to_vec());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{path::PathBuf, sync::Arc, time::Duration};
+
+    use tempfile::TempDir;
+    use tokio::sync::mpsc;
+
+    use super::{
+        InFlightJob,
+        MAX_PENDING_PRELOADS,
+        PrepareResult,
+        PreloadJob,
+        TierPermits,
+        YouTubeMediaPreparer,
+        prepared_media_from_result,
+    };
+    use crate::backends::youtube::{
+        audio::{AudioCache, AudioSourcePlanner, CacheConfig},
+        config::AudioDeliveryMode,
+        media::{PreparedMedia, PreloadTier},
+        url_resolver::UrlResolver,
+    };
+
+    fn build_test_preparer() -> (TempDir, YouTubeMediaPreparer) {
+        let temp_dir = TempDir::new().unwrap();
+        let cache = Arc::new(
+            AudioCache::new(CacheConfig {
+                cache_dir: temp_dir.path().to_path_buf(),
+                prefix_size: 1024,
+                max_cache_size: 1024 * 1024,
+            })
+            .unwrap(),
+        );
+        let (tx, rx) = mpsc::channel(16);
+        let (internal_tx, internal_rx) = mpsc::unbounded_channel();
+
+        let preparer = YouTubeMediaPreparer {
+            rx,
+            in_flight: Default::default(),
+            request_to_track: Default::default(),
+            active_window: Default::default(),
+            url_resolver: Arc::new(UrlResolver::default()),
+            audio_cache: cache,
+            audio_source_plan: AudioSourcePlanner.plan(AudioDeliveryMode::Combined),
+            background_queue: Default::default(),
+            permits: TierPermits::new(),
+            internal_rx,
+            internal_tx,
+        };
+
+        drop(tx);
+        (temp_dir, preparer)
+    }
+
+    #[test]
+    fn staged_prepare_result_preserves_adapter_metadata() {
+        let prepared = prepared_media_from_result(PrepareResult::StagedPrefix {
+            prefix_path: PathBuf::from("/tmp/prefix.webm"),
+            prefix_bytes: 2048,
+            stream_url: "https://example.com/stream".to_string(),
+            content_length: 4096,
+        })
+        .unwrap();
+
+        match prepared {
+            PreparedMedia::StagedPrefix { path, bytes, url, content_length } => {
+                assert_eq!(path, PathBuf::from("/tmp/prefix.webm"));
+                assert_eq!(bytes, 2048);
+                assert_eq!(url, "https://example.com/stream");
+                assert_eq!(content_length, 4096);
+            }
+            other => panic!("expected staged prefix, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn activating_new_window_cancels_inflight_and_drops_stale_preloads() {
+        let (_temp_dir, mut preparer) = build_test_preparer();
+        let stale_job = Arc::new(InFlightJob::new("stale".to_string()));
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+
+        stale_job.replace_task(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            let _ = done_tx.send(());
+        }));
+
+        preparer.in_flight.insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer.request_to_track.insert(1, "stale-queued".to_string());
+        preparer.request_to_track.insert(2, "keep".to_string());
+        preparer.background_queue.push_back(PreloadJob {
+            track_id: "stale-queued".to_string(),
+            tier: PreloadTier::Background,
+            request_id: 1,
+        });
+        preparer.background_queue.push_back(PreloadJob {
+            track_id: "keep".to_string(),
+            tier: PreloadTier::Gapless,
+            request_id: 2,
+        });
+
+        preparer.handle_activate_window(vec!["keep".to_string()]);
+
+        assert!(!preparer.in_flight.contains_key("stale"));
+        assert!(matches!(stale_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+        assert_eq!(preparer.background_queue.len(), 1);
+        assert_eq!(preparer.background_queue[0].track_id, "keep");
+        assert!(!preparer.request_to_track.contains_key(&1));
+        assert!(preparer.request_to_track.contains_key(&2));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(50), done_rx).await,
+            Ok(Err(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancel_request_aborts_inflight_preload() {
+        let (_temp_dir, mut preparer) = build_test_preparer();
+        let stale_job = Arc::new(InFlightJob::new("stale".to_string()));
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+
+        stale_job.replace_task(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            let _ = done_tx.send(());
+        }));
+
+        preparer.in_flight.insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer.request_to_track.insert(41, "stale".to_string());
+
+        preparer.handle_cancel_request(41);
+
+        assert!(!preparer.in_flight.contains_key("stale"));
+        assert!(matches!(stale_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+        assert!(!preparer.request_to_track.contains_key(&41));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(50), done_rx).await,
+            Ok(Err(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn cancel_request_keeps_shared_track_alive_until_last_request_is_removed() {
+        let (_temp_dir, mut preparer) = build_test_preparer();
+        let shared_job = Arc::new(InFlightJob::new("shared".to_string()));
+        let (done_tx, done_rx) = tokio::sync::oneshot::channel();
+
+        shared_job.replace_task(tokio::spawn(async move {
+            tokio::time::sleep(Duration::from_secs(60)).await;
+            let _ = done_tx.send(());
+        }));
+
+        preparer.in_flight.insert("shared".to_string(), Arc::clone(&shared_job));
+        preparer.request_to_track.insert(41, "shared".to_string());
+        preparer.request_to_track.insert(42, "shared".to_string());
+
+        preparer.handle_cancel_request(41);
+
+        assert!(preparer.in_flight.contains_key("shared"));
+        assert!(!preparer.request_to_track.contains_key(&41));
+        assert!(preparer.request_to_track.contains_key(&42));
+        assert!(matches!(
+            tokio::time::timeout(Duration::from_millis(50), &mut Box::pin(done_rx)).await,
+            Err(_)
+        ));
+
+        preparer.handle_cancel_request(42);
+
+        assert!(!preparer.in_flight.contains_key("shared"));
+        assert!(!preparer.request_to_track.contains_key(&42));
+        assert!(matches!(shared_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+    }
+
+    #[test]
+    fn preload_queue_is_bounded_and_keeps_latest_background_jobs() {
+        let (_temp_dir, mut preparer) = build_test_preparer();
+
+        for idx in 0..(MAX_PENDING_PRELOADS + 3) {
+            preparer.handle_preload_request(
+                format!("track-{idx}"),
+                PreloadTier::Background,
+                idx as u64 + 1,
+            );
+        }
+
+        assert_eq!(preparer.background_queue.len(), MAX_PENDING_PRELOADS);
+
+        let queued: Vec<String> = preparer
+            .background_queue
+            .iter()
+            .map(|job| job.track_id.clone())
+            .collect();
+        let expected: Vec<String> = (3..(MAX_PENDING_PRELOADS + 3))
+            .map(|idx| format!("track-{idx}"))
+            .collect();
+
+        assert_eq!(queued, expected);
+        assert!(!preparer.request_to_track.contains_key(&1));
+        assert!(!preparer.request_to_track.contains_key(&2));
+        assert!(!preparer.request_to_track.contains_key(&3));
+        assert!(preparer.request_to_track.contains_key(&(MAX_PENDING_PRELOADS as u64 + 3)));
+    }
+
+    #[test]
+    fn preload_queue_retains_priority_jobs_under_background_churn() {
+        let (_temp_dir, mut preparer) = build_test_preparer();
+
+        for idx in 0..MAX_PENDING_PRELOADS {
+            preparer.handle_preload_request(
+                format!("background-{idx}"),
+                PreloadTier::Background,
+                idx as u64 + 1,
+            );
+        }
+
+        preparer.handle_preload_request(
+            "gapless-priority".to_string(),
+            PreloadTier::Gapless,
+            99,
+        );
+        preparer.handle_preload_request(
+            "immediate-priority".to_string(),
+            PreloadTier::Immediate,
+            100,
+        );
+
+        let queued: Vec<(String, PreloadTier)> = preparer
+            .background_queue
+            .iter()
+            .map(|job| (job.track_id.clone(), job.tier))
+            .collect();
+
+        assert_eq!(preparer.background_queue.len(), MAX_PENDING_PRELOADS);
+        assert!(queued.contains(&("gapless-priority".to_string(), PreloadTier::Gapless)));
+        assert!(queued.contains(&("immediate-priority".to_string(), PreloadTier::Immediate)));
+        assert!(!preparer.request_to_track.contains_key(&1));
+        assert!(!preparer.request_to_track.contains_key(&2));
+        assert!(preparer.request_to_track.contains_key(&99));
+        assert!(preparer.request_to_track.contains_key(&100));
     }
 }

@@ -7,9 +7,11 @@
 use std::sync::Arc;
 
 use parking_lot::Mutex;
+use tokio::runtime::{Builder, Handle};
 
 use crate::{
     backends::youtube::{
+        audio::MpvInput,
         media::{MediaPreparer, PreloadTier},
         services::{PlaybackService, QueueService},
     },
@@ -79,7 +81,7 @@ impl QueueEventHandler {
                 preparer.prefetch(&track_id, PreloadTier::Background);
             }
         } else {
-            self.playback.prefetch(video_ids);
+            log::warn!("QueueEventHandler missing media preparer; skipping background prefetch");
         }
     }
 
@@ -109,9 +111,10 @@ impl QueueEventHandler {
         if let Some(current_pos) = current_pos {
             let window_end = std::cmp::min(current_pos + PREFETCH_WINDOW_SIZE, play_order.len());
 
-            for &id in &play_order[current_pos + 1..window_end] {
-                if let Some(url) = self.resolve_playback_url(id) {
-                    if let Err(e) = self.playback.playlist_append(&url) {
+            for (offset, &id) in play_order[current_pos + 1..window_end].iter().enumerate() {
+                let tier = if offset == 0 { PreloadTier::Gapless } else { PreloadTier::Eager };
+                if let Some(input) = self.resolve_playback_input(id, tier) {
+                    if let Err(e) = self.playback.playlist_append_input(&input) {
                         log::warn!("Failed to append track {id} to MPV playlist: {e}");
                     } else {
                         log::debug!("Appended track {id} to MPV playlist");
@@ -122,9 +125,14 @@ impl QueueEventHandler {
             self.update_prefetch_window(play_order, current_id);
         } else if !play_order.is_empty() {
             let window_end = std::cmp::min(PREFETCH_WINDOW_SIZE, play_order.len());
-            for &id in &play_order[..window_end] {
-                if let Some(url) = self.resolve_playback_url(id) {
-                    if let Err(e) = self.playback.playlist_append(&url) {
+            for (offset, &id) in play_order[..window_end].iter().enumerate() {
+                let tier = match offset {
+                    0 => PreloadTier::Immediate,
+                    1 => PreloadTier::Gapless,
+                    _ => PreloadTier::Eager,
+                };
+                if let Some(input) = self.resolve_playback_input(id, tier) {
+                    if let Err(e) = self.playback.playlist_append_input(&input) {
                         log::warn!("Failed to append track {id} to MPV playlist: {e}");
                     }
                 }
@@ -132,22 +140,28 @@ impl QueueEventHandler {
         }
     }
 
-    fn resolve_playback_url(&self, id: QueueId) -> Option<String> {
+    fn resolve_playback_input(&self, id: QueueId, tier: PreloadTier) -> Option<MpvInput> {
         let play_queue = self.play_queue.lock();
         let song = play_queue.get_song(id)?;
-        let video_id = &song.uri;
+        let video_id = song.uri.clone();
         if video_id.is_empty() {
             log::warn!("Song {id} has empty video_id");
             return None;
         }
+        drop(play_queue);
 
-        match self.playback.build_playback_url(video_id) {
-            Ok(url) => Some(url),
-            Err(e) => {
-                log::warn!("Failed to build playback URL for {video_id}: {e}");
-                None
-            }
-        }
+        let Some(preparer) = self.media_preparer.as_ref() else {
+            log::warn!("QueueEventHandler missing media preparer; cannot resolve media for {video_id}");
+            return None;
+        };
+
+        prepare_media_blocking(preparer, &video_id, tier)
+            .and_then(|prepared| self.playback.build_runtime_input(&video_id, &prepared))
+            .map_err(|e| {
+                log::warn!("Failed to prepare playback input for {video_id}: {e}");
+                e
+            })
+            .ok()
     }
 
     fn update_prefetch_window(&self, play_order: &[QueueId], current_id: Option<QueueId>) {
@@ -173,6 +187,8 @@ impl QueueEventHandler {
         }
 
         if let Some(ref preparer) = self.media_preparer {
+            preparer.activate_playback_window(&video_ids);
+
             for (index, uri) in video_ids.iter().enumerate() {
                 let Some(track_id) = extract_video_id(uri) else {
                     continue;
@@ -187,7 +203,7 @@ impl QueueEventHandler {
                 preparer.prefetch(&track_id, tier);
             }
         } else {
-            self.playback.prefetch(video_ids);
+            log::warn!("QueueEventHandler missing media preparer; skipping prefetch window update");
         }
     }
 
@@ -201,10 +217,16 @@ impl QueueEventHandler {
 
     fn handle_cleared(&mut self) {
         log::debug!("QueueEvent::Cleared");
+        if let Some(ref preparer) = self.media_preparer {
+            preparer.activate_playback_window(&[]);
+        }
     }
 
     fn handle_stopped(&mut self) {
         log::debug!("QueueEvent::Stopped");
+        if let Some(ref preparer) = self.media_preparer {
+            preparer.activate_playback_window(&[]);
+        }
     }
 }
 
@@ -218,4 +240,17 @@ fn extract_video_id(uri: &str) -> Option<String> {
     }
 
     None
+}
+
+fn prepare_media_blocking(
+    media_preparer: &Arc<dyn MediaPreparer>,
+    track_id: &str,
+    tier: PreloadTier,
+) -> anyhow::Result<crate::backends::youtube::media::PreparedMedia> {
+    if let Ok(handle) = Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(media_preparer.prepare(track_id, tier)))
+    } else {
+        let runtime = Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(media_preparer.prepare(track_id, tier))
+    }
 }

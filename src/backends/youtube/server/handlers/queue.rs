@@ -4,10 +4,12 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 use parking_lot::Mutex;
+use tokio::runtime::{Builder, Handle};
 
 use super::{super::orchestrator::PREFETCH_WINDOW_SIZE, queue_events::QueueEventHandler};
 use crate::{
     backends::youtube::{
+        media::{MediaPreparer, PreloadTier, PreparedMedia},
         protocol::{ServerResponse, SongData},
         services::{PlaybackService, QueueService},
     },
@@ -24,13 +26,23 @@ pub fn handle_add(
     position: Option<u32>,
     play_queue: &Arc<Mutex<PlayQueue>>,
     queue_event_handler: &Mutex<QueueEventHandler>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     let mut song = Song::default();
     song.uri = uri.to_string();
     song.metadata.insert("title".into(), vec![uri.to_string()]);
 
     let song_data = SongData::from(song);
-    handle_add_song(queue, playback, event_tx, song_data, position, play_queue, queue_event_handler)
+    handle_add_song(
+        queue,
+        playback,
+        event_tx,
+        song_data,
+        position,
+        play_queue,
+        queue_event_handler,
+        media_preparer,
+    )
 }
 
 /// Handle AddSong command with full metadata
@@ -42,6 +54,7 @@ pub fn handle_add_song(
     position: Option<u32>,
     play_queue: &Arc<Mutex<PlayQueue>>,
     queue_event_handler: &Mutex<QueueEventHandler>,
+    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
     let video_id = song_data.file.clone();
 
@@ -69,9 +82,18 @@ pub fn handle_add_song(
         && insert_pos >= base
         && insert_pos < base + PREFETCH_WINDOW_SIZE
     {
-        match playback.build_playback_url(&video_id) {
-            Ok(url) => {
-                if let Err(e) = playback.playlist_append(&url) {
+        let window_offset = insert_pos.saturating_sub(base);
+        let tier = match window_offset {
+            0 => PreloadTier::Immediate,
+            1 => PreloadTier::Gapless,
+            _ => PreloadTier::Eager,
+        };
+
+        match prepare_media_blocking(media_preparer, &video_id, tier)
+            .and_then(|prepared| playback.build_runtime_input(&video_id, &prepared))
+        {
+            Ok(input) => {
+                if let Err(e) = playback.playlist_append_input(&input) {
                     log::warn!("Failed to append to MPV buffer: {}", e);
                 } else {
                     // Move from end to correct position in MPV buffer
@@ -87,17 +109,44 @@ pub fn handle_add_song(
                 }
             }
             Err(e) => {
-                log::warn!("Failed to resolve URL for window insert: {}", e);
+                log::warn!("Failed to prepare media for window insert: {}", e);
             }
         }
     } else if queue.current_index().is_some() {
-        playback.prefetch_audio_batch(vec![video_id.clone()]);
-        log::debug!("Triggered background audio prefetch for {}", video_id);
+        if let Some(track_id) = extract_video_id(&video_id) {
+            media_preparer.prefetch(&track_id, PreloadTier::Background);
+            log::debug!("Triggered background media prefetch for {}", track_id);
+        }
     }
 
     // 5. Notify clients
     let _ = event_tx.send("playlist".to_string());
     ServerResponse::Ok
+}
+
+fn extract_video_id(uri: &str) -> Option<String> {
+    if let Some(id) = uri.strip_prefix("youtube://") {
+        return Some(id.to_string());
+    }
+
+    if !uri.is_empty() && !uri.contains("://") {
+        return Some(uri.to_string());
+    }
+
+    None
+}
+
+fn prepare_media_blocking(
+    media_preparer: &Arc<dyn MediaPreparer>,
+    track_id: &str,
+    tier: PreloadTier,
+) -> anyhow::Result<PreparedMedia> {
+    if let Ok(handle) = Handle::try_current() {
+        tokio::task::block_in_place(|| handle.block_on(media_preparer.prepare(track_id, tier)))
+    } else {
+        let runtime = Builder::new_current_thread().enable_all().build()?;
+        runtime.block_on(media_preparer.prepare(track_id, tier))
+    }
 }
 
 /// Handle DeleteId command

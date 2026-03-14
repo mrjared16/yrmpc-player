@@ -7,6 +7,8 @@
 mod loader;
 mod output;
 mod preparer;
+mod relay;
+mod relay_runtime;
 mod resolver;
 
 use std::time::Instant;
@@ -16,6 +18,12 @@ use async_trait::async_trait;
 pub use loader::AudioLoader;
 pub use output::{MpvInput, MpvInputBuilder};
 pub use preparer::{CacheRequest, PrepareResult, YouTubeMediaPreparer, YouTubeMediaPreparerHandle};
+pub use relay::{
+    RelayByteRange, RelayContractError, RelayPlayerEndpoint, RelayRangeError,
+    RelayRangePolicy, RelayReconnectOwner, RelayResponsePlan, RelaySessionId, RelaySessionSpec,
+    RelaySessionState, RelayStagedArtifact, RelayTransportContract, RelayUpstreamStream,
+};
+pub use relay_runtime::RelayRuntime;
 pub use resolver::{AudioFormat, StreamInfo, StreamResolver};
 
 // Re-export existing PreloadTier
@@ -53,12 +61,19 @@ pub trait MediaPreparer: Send + Sync {
     /// Use for queue lookahead, gapless preparation, etc.
     /// Does not block - preparation happens asynchronously.
     fn prefetch(&self, track_id: &str, tier: PreloadTier);
+
+    fn activate_playback_window(&self, _track_ids: &[String]) {}
 }
 
 /// Prepared media result
 #[derive(Debug, Clone)]
 pub enum PreparedMedia {
-    Concat { concat_path: std::path::PathBuf },
+    StagedPrefix {
+        path: std::path::PathBuf,
+        bytes: u64,
+        url: String,
+        content_length: u64,
+    },
     Direct { url: String },
     LocalFile { path: std::path::PathBuf },
 }
@@ -67,8 +82,17 @@ impl PreparedMedia {
     /// Convert to MPV-compatible URL/path string
     pub fn to_mpv_url(&self) -> String {
         match self {
-            PreparedMedia::Concat { concat_path } => {
-                format!("concat:{}", concat_path.display())
+            PreparedMedia::StagedPrefix { path, bytes, url, content_length } => {
+                if bytes >= content_length {
+                    path.display().to_string()
+                } else {
+                    format!(
+                        "lavf://concat:{}|subfile,,start,{},end,0,,:{}",
+                        path.display(),
+                        bytes,
+                        url
+                    )
+                }
             }
             PreparedMedia::Direct { url } => url.clone(),
             PreparedMedia::LocalFile { path } => path.display().to_string(),
@@ -89,9 +113,28 @@ mod tests {
     }
 
     #[test]
-    fn prepared_media_concat_url_conversion() {
-        let media = PreparedMedia::Concat { concat_path: PathBuf::from("/tmp/concat.txt") };
-        assert_eq!(media.to_mpv_url(), "concat:/tmp/concat.txt");
+    fn prepared_media_staged_prefix_url_conversion() {
+        let media = PreparedMedia::StagedPrefix {
+            path: PathBuf::from("/tmp/prefix.webm"),
+            bytes: 2048,
+            url: "https://example.com/stream".to_string(),
+            content_length: 4096,
+        };
+        assert_eq!(
+            media.to_mpv_url(),
+            "lavf://concat:/tmp/prefix.webm|subfile,,start,2048,end,0,,:https://example.com/stream"
+        );
+    }
+
+    #[test]
+    fn prepared_media_staged_prefix_uses_local_file_when_fully_cached() {
+        let media = PreparedMedia::StagedPrefix {
+            path: PathBuf::from("/tmp/full.webm"),
+            bytes: 4096,
+            url: "https://example.com/stream".to_string(),
+            content_length: 4096,
+        };
+        assert_eq!(media.to_mpv_url(), "/tmp/full.webm");
     }
 
     #[test]

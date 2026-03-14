@@ -285,19 +285,7 @@ fn test_ffmpeg_concat_source_protocol_whitelist() {
 
 #[test]
 fn test_ffmpeg_concat_source_creation() {
-    let temp_dir = TempDir::new().unwrap();
-    let config = CacheConfig {
-        cache_dir: temp_dir.path().to_path_buf(),
-        prefix_size: 1024,
-        max_cache_size: 10240,
-    };
-    let cache = Arc::new(AudioCache::new(config).unwrap());
-
-    let url_resolver = Box::new(|_video_id: &str| -> anyhow::Result<String> {
-        Ok("https://test.com/stream".to_string())
-    });
-
-    let _source = FfmpegConcatSource::new(cache, url_resolver);
+    let _source = FfmpegConcatSource;
 }
 
 // ============================================================================

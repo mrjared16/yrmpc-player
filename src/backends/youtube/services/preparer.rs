@@ -25,20 +25,20 @@ pub struct PreparedPlayback {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PlaybackMode {
     /// Using cached prefix + remote stream (best quality, gapless).
-    Concat,
+    Combined,
     /// Direct stream URL (fallback when prefix not ready in time).
-    Passthrough,
+    Direct,
 }
 
 #[derive(Debug, Clone)]
 pub struct PlaybackPreparerConfig {
-    /// Max wait time for Immediate tier before falling back to passthrough.
-    pub passthrough_deadline_ms: u64,
+    /// Max wait time for Immediate tier before falling back to direct transport.
+    pub direct_deadline_ms: u64,
 }
 
 impl Default for PlaybackPreparerConfig {
     fn default() -> Self {
-        Self { passthrough_deadline_ms: 200 }
+        Self { direct_deadline_ms: 200 }
     }
 }
 
@@ -59,7 +59,7 @@ impl PlaybackPreparer {
 
     /// Prepare a track for playback according to its tier.
     ///
-    /// - Immediate: wait up to `passthrough_deadline_ms`, then passthrough
+    /// - Immediate: wait up to `direct_deadline_ms`, then direct
     ///   fallback
     /// - Gapless/Eager/Background: wait for prefix completion
     pub async fn prepare(&self, track_id: &str, tier: PreloadTier) -> Result<PreparedPlayback> {
@@ -111,7 +111,7 @@ impl PlaybackPreparer {
         track_id: &str,
         stream_url: &str,
     ) -> Result<PreparedPlayback> {
-        let deadline = Duration::from_millis(self.config.passthrough_deadline_ms);
+        let deadline = Duration::from_millis(self.config.direct_deadline_ms);
 
         match race_prefix_with_deadline(deadline, self.cache.ensure_prefix(track_id, stream_url))
             .await
@@ -123,20 +123,20 @@ impl PlaybackPreparer {
                 Ok(PreparedPlayback {
                     track_id: track_id.to_string(),
                     input,
-                    mode: PlaybackMode::Concat,
+                    mode: PlaybackMode::Combined,
                 })
             }
             PrefixRace::Failed(e) => {
-                log::warn!("Prefix download failed for {}, using passthrough: {}", track_id, e);
-                self.build_passthrough(track_id, stream_url)
+                log::warn!("Prefix download failed for {}, using direct transport: {}", track_id, e);
+                self.build_direct(track_id, stream_url)
             }
             PrefixRace::TimedOut => {
                 log::info!(
-                    "Prefix not ready for {} within {}ms, using passthrough",
+                    "Prefix not ready for {} within {}ms, using direct transport",
                     track_id,
-                    self.config.passthrough_deadline_ms
+                    self.config.direct_deadline_ms
                 );
-                self.build_passthrough(track_id, stream_url)
+                self.build_direct(track_id, stream_url)
             }
         }
     }
@@ -150,7 +150,11 @@ impl PlaybackPreparer {
         self.cache.touch(track_id);
 
         let input = self.build_concat_input(&prefix_path, content_length, stream_url);
-        Ok(PreparedPlayback { track_id: track_id.to_string(), input, mode: PlaybackMode::Concat })
+        Ok(PreparedPlayback {
+            track_id: track_id.to_string(),
+            input,
+            mode: PlaybackMode::Combined,
+        })
     }
 
     fn build_concat_input(
@@ -181,11 +185,11 @@ impl PlaybackPreparer {
         MpvInput::with_args(concat_url, FfmpegConcatSource::protocol_whitelist_args())
     }
 
-    fn build_passthrough(&self, track_id: &str, stream_url: &str) -> Result<PreparedPlayback> {
+    fn build_direct(&self, track_id: &str, stream_url: &str) -> Result<PreparedPlayback> {
         Ok(PreparedPlayback {
             track_id: track_id.to_string(),
             input: MpvInput::new(stream_url.to_string()),
-            mode: PlaybackMode::Passthrough,
+            mode: PlaybackMode::Direct,
         })
     }
 }
@@ -224,7 +228,7 @@ mod tests {
     }
 
     #[tokio::test(start_paused = true)]
-    async fn test_prepare_immediate_timeout_returns_passthrough() {
+    async fn test_prepare_immediate_timeout_returns_direct() {
         let deadline = Duration::from_millis(200);
 
         let ensure_prefix = async {
@@ -266,7 +270,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(prepared.mode, PlaybackMode::Concat);
+        assert_eq!(prepared.mode, PlaybackMode::Combined);
         assert_eq!(prepared.track_id, track_id);
 
         let expected_url =
@@ -303,7 +307,7 @@ mod tests {
             .await
             .unwrap();
 
-        assert_eq!(prepared.mode, PlaybackMode::Concat);
+        assert_eq!(prepared.mode, PlaybackMode::Combined);
         assert_eq!(prepared.track_id, track_id);
         assert_eq!(prepared.input.url, prefix_path.to_string_lossy().to_string());
         assert!(prepared.input.mpv_args.is_empty());

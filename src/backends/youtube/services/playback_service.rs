@@ -18,7 +18,8 @@ use parking_lot::Mutex;
 
 use super::{super::url_resolver::UrlResolver, InternalEvent};
 use crate::backends::youtube::{
-    audio::{AudioSourcePlan, AudioTransportTarget, MpvAudioSource, MpvInput},
+    audio::{AudioSourcePlan, AudioTransportTarget, MpvAudioSource, MpvInput, sources::concat::FfmpegConcatSource},
+    media::{PreparedMedia, RelayRuntime},
     mpv::{MpvEvent, MpvIpc},
 };
 
@@ -37,6 +38,7 @@ pub struct PlaybackService {
     event_loop_running: Arc<AtomicBool>,
     audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
     audio_source_plan: AudioSourcePlan,
+    relay_runtime: Option<Arc<RelayRuntime>>,
 }
 
 impl PlaybackService {
@@ -46,6 +48,7 @@ impl PlaybackService {
         url_resolver: Arc<UrlResolver>,
         audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
         audio_source_plan: AudioSourcePlan,
+        relay_runtime: Option<Arc<RelayRuntime>>,
     ) -> Result<Self> {
         let (mpv, mpv_process) =
             Self::connect_or_spawn_mpv(socket_path, audio_source_plan.enable_mpv_reconnect)?;
@@ -57,7 +60,25 @@ impl PlaybackService {
             event_loop_running: Arc::new(AtomicBool::new(false)),
             audio_source,
             audio_source_plan,
+            relay_runtime,
         })
+    }
+
+    pub fn build_runtime_input(&self, track_id: &str, prepared: &PreparedMedia) -> Result<MpvInput> {
+        match self.audio_source_plan.transport {
+            AudioTransportTarget::LocalRelay => {
+                if let Some(relay_runtime) = &self.relay_runtime {
+                    if matches!(prepared, PreparedMedia::StagedPrefix { .. }) {
+                        return relay_runtime.register_session(track_id, prepared);
+                    }
+                }
+
+                FfmpegConcatSource::build_from_prepared(prepared)
+            }
+            AudioTransportTarget::DirectUrl | AudioTransportTarget::Combined => {
+                FfmpegConcatSource::build_from_prepared(prepared)
+            }
+        }
     }
 
     /// Start the MPV event loop in a background thread
@@ -318,14 +339,7 @@ impl PlaybackService {
         log::debug!("Setting force-media-title to: {}", media_title);
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
 
-        for arg in &input.mpv_args {
-            if let Some(opt) = arg.strip_prefix("--") {
-                if let Some((key, value)) = opt.split_once('=') {
-                    log::debug!("[PLAYBACK] mpv_property: {}={}", key, value);
-                    self.mpv.lock().set_property(key, serde_json::json!(value))?;
-                }
-            }
-        }
+        self.apply_mpv_args(&input.mpv_args)?;
 
         log::info!("[PLAYBACK] loadfile: {}", &input.url);
         self.mpv.lock().send_command(vec!["loadfile", &input.url, "replace"])?;
@@ -397,35 +411,10 @@ impl PlaybackService {
         self.set_volume(new_vol)
     }
 
-    /// Get stream URL for video ID
-    pub fn get_stream_url(&self, video_id: &str) -> Result<String> {
-        self.url_resolver.get_url(video_id)
-    }
-
-    /// Build MPV input for a video, using audio source if available
-    pub fn build_mpv_input(&self, video_id: &str) -> Result<MpvInput> {
-        if let Some(ref audio_source) = self.audio_source {
-            let mut source = audio_source.lock();
-            source.build_mpv_input(video_id)
-        } else {
-            // Fallback to direct URL
-            let url = self.get_stream_url(video_id)?;
-            Ok(MpvInput::new(url))
-        }
-    }
-
-    /// Keep old method for backward compatibility
-    pub fn build_playback_url(&self, video_id: &str) -> Result<String> {
-        let input = self.build_mpv_input(video_id)?;
-        let mode = Self::mode_label(self.audio_source_plan.transport);
-        log::info!("[PLAYBACK] build_url video_id={} mode={}", video_id, mode);
-        Ok(input.url)
-    }
-
     fn mode_label(transport: AudioTransportTarget) -> &'static str {
         match transport {
             AudioTransportTarget::DirectUrl => "DIRECT",
-            AudioTransportTarget::CombinedConcat => "COMBINED",
+            AudioTransportTarget::Combined => "COMBINED",
             AudioTransportTarget::LocalRelay => "RELAY",
         }
     }
@@ -461,6 +450,15 @@ impl PlaybackService {
         let url_preview = if url.len() > 100 { &url[..100] } else { url };
         log::info!("[PLAYBACK] playlist_append url=\"{}...\"", url_preview);
         self.mpv.lock().send_command(vec!["loadfile", url, "append"])?;
+        Ok(())
+    }
+
+    pub fn playlist_append_input(&self, input: &MpvInput) -> Result<()> {
+        self.apply_mpv_args(&input.mpv_args)?;
+
+        let url_preview = if input.url.len() > 100 { &input.url[..100] } else { &input.url };
+        log::info!("[PLAYBACK] playlist_append_input url=\"{}...\"", url_preview);
+        self.mpv.lock().send_command(vec!["loadfile", &input.url, "append"])?;
         Ok(())
     }
 
@@ -518,6 +516,28 @@ impl PlaybackService {
         self.mpv.lock().set_property("force-media-title", serde_json::json!(media_title))?;
         Ok(())
     }
+
+    fn apply_mpv_args(&self, mpv_args: &[String]) -> Result<()> {
+        for arg in mpv_args {
+            if let Some((key, value)) = runtime_property_update_from_arg(arg) {
+                log::debug!("[PLAYBACK] mpv_property: {}={}", key, value);
+                self.mpv.lock().set_property(key, serde_json::json!(value))?;
+            }
+        }
+
+        Ok(())
+    }
+}
+
+fn runtime_property_update_from_arg(arg: &str) -> Option<(&str, &str)> {
+    let opt = arg.strip_prefix("--")?;
+    let (key, value) = opt.split_once('=')?;
+
+    if key == "stream-lavf-o-append" {
+        return None;
+    }
+
+    Some((key, value))
 }
 
 impl Drop for PlaybackService {
@@ -529,5 +549,25 @@ impl Drop for PlaybackService {
             let _ = child.kill();
             let _ = child.wait();
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::runtime_property_update_from_arg;
+
+    #[test]
+    fn runtime_property_update_ignores_stream_lavf_append_flags() {
+        assert_eq!(
+            runtime_property_update_from_arg(
+                "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat"
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn runtime_property_update_keeps_regular_property_flags() {
+        assert_eq!(runtime_property_update_from_arg("--pause=yes"), Some(("pause", "yes")));
     }
 }
