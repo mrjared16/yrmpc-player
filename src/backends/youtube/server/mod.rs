@@ -116,7 +116,15 @@ impl YouTubeServer {
         let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = None;
         let relay_runtime = if matches!(audio_source_plan.transport, AudioTransportTarget::LocalRelay)
         {
-            Some(Arc::new(RelayRuntime::start().context("start relay runtime")?))
+            match RelayRuntime::start() {
+                Ok(runtime) => Some(Arc::new(runtime)),
+                Err(err) => {
+                    log::warn!(
+                        "Failed to start relay runtime; falling back to non-relay runtime input path: {err}"
+                    );
+                    None
+                }
+            }
         } else {
             None
         };
@@ -126,7 +134,13 @@ impl YouTubeServer {
                 log::info!("Audio mode: Direct (no local staging)");
             }
             AudioTransportTarget::LocalRelay => {
-                log::info!("Audio mode: Relay (localhost streaming runtime enabled)");
+                if relay_runtime.is_some() {
+                    log::info!("Audio mode: Relay (localhost streaming runtime enabled)");
+                } else {
+                    log::info!(
+                        "Audio mode: Relay requested (runtime unavailable, using fallback input path)"
+                    );
+                }
             }
             AudioTransportTarget::Combined => {
                 log::info!(
