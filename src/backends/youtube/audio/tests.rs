@@ -5,7 +5,7 @@ use tempfile::TempDir;
 use super::{
     cache::{AudioCache, CacheConfig},
     mpv_source::MpvInput,
-    sources::concat::FfmpegConcatSource,
+    sources::concat::PreparedMediaInputAdapter,
 };
 
 // ============================================================================
@@ -242,12 +242,12 @@ fn test_audio_cache_eviction_multiple_rounds() {
 }
 
 // ============================================================================
-// FfmpegConcatSource Tests
+// PreparedMediaInputAdapter Tests
 // ============================================================================
 
 #[test]
 fn test_ffmpeg_concat_source_build_url() {
-    let url = FfmpegConcatSource::build_concat_url(
+    let url = PreparedMediaInputAdapter::build_concat_url(
         &PathBuf::from("/cache/video.webm"),
         200000,
         "https://youtube.com/stream",
@@ -260,7 +260,7 @@ fn test_ffmpeg_concat_source_build_url() {
 
 #[test]
 fn test_ffmpeg_concat_source_build_url_with_spaces() {
-    let url = FfmpegConcatSource::build_concat_url(
+    let url = PreparedMediaInputAdapter::build_concat_url(
         &PathBuf::from("/cache/my video.webm"),
         204800,
         "https://example.com/stream?id=123",
@@ -273,7 +273,7 @@ fn test_ffmpeg_concat_source_build_url_with_spaces() {
 
 #[test]
 fn test_ffmpeg_concat_source_protocol_whitelist() {
-    let args = FfmpegConcatSource::protocol_whitelist_args();
+    let args = PreparedMediaInputAdapter::protocol_whitelist_args();
     assert_eq!(args.len(), 1);
     assert!(args[0].contains("protocol_whitelist"));
     assert!(args[0].contains("concat"));
@@ -285,7 +285,7 @@ fn test_ffmpeg_concat_source_protocol_whitelist() {
 
 #[test]
 fn test_ffmpeg_concat_source_creation() {
-    let _source = FfmpegConcatSource;
+    let _source = PreparedMediaInputAdapter;
 }
 
 // ============================================================================

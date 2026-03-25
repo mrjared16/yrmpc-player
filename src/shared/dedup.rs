@@ -57,6 +57,71 @@ impl<V> SyncSlot<V> {
     }
 }
 
+struct SyncGuard<
+    'a,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+> {
+    dedup: &'a Dedup<K, V>,
+    key: K,
+    slot: Arc<SyncSlot<V>>,
+}
+
+impl<K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'static> Drop
+    for SyncGuard<'_, K, V>
+{
+    fn drop(&mut self) {
+        self.dedup.release_sync_slot(&self.key, &self.slot);
+    }
+}
+
+pub enum SyncFlight<
+    'a,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+> {
+    Leader(SyncLeader<'a, K, V>),
+    Follower(SyncFollower<'a, K, V>),
+}
+
+pub struct SyncLeader<
+    'a,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+> {
+    guard: SyncGuard<'a, K, V>,
+}
+
+impl<K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'static>
+    SyncLeader<'_, K, V>
+{
+    pub fn complete(self, value: V) -> V {
+        let _ = self.guard.slot.cell.set(value);
+        self.guard
+            .slot
+            .cell
+            .get()
+            .expect("sync single-flight leader must publish a value")
+            .clone()
+    }
+}
+
+pub struct SyncFollower<
+    'a,
+    K: Eq + Hash + Clone + Send + Sync + 'static,
+    V: Clone + Send + Sync + 'static,
+> {
+    guard: SyncGuard<'a, K, V>,
+}
+
+impl<K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'static>
+    SyncFollower<'_, K, V>
+{
+    pub fn wait(self) -> V {
+        self.guard.slot.cell.wait().clone()
+    }
+}
+
 impl<K: std::fmt::Debug + Eq + Hash, V> std::fmt::Debug for Dedup<K, V> {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Dedup")
@@ -91,17 +156,17 @@ where
         }
     }
 
-    fn acquire_sync_slot(&self, key: K) -> Arc<SyncSlot<V>> {
+    fn acquire_sync_slot(&self, key: K) -> (Arc<SyncSlot<V>>, bool) {
         match self.sync_slots.entry(key) {
             Entry::Occupied(entry) => {
                 let slot = entry.get().clone();
                 slot.users.fetch_add(1, Ordering::AcqRel);
-                slot
+                (slot, false)
             }
             Entry::Vacant(entry) => {
                 let slot = Arc::new(SyncSlot::new());
                 entry.insert(slot.clone());
-                slot
+                (slot, true)
             }
         }
     }
@@ -210,27 +275,28 @@ where
     where
         F: FnOnce() -> V,
     {
-        struct Guard<
-            'a,
-            K: Eq + Hash + Clone + Send + Sync + 'static,
-            V: Clone + Send + Sync + 'static,
-        > {
-            dedup: &'a Dedup<K, V>,
-            key: K,
-            slot: Arc<SyncSlot<V>>,
-        }
-        impl<K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'static> Drop
-            for Guard<'_, K, V>
-        {
-            fn drop(&mut self) {
-                self.dedup.release_sync_slot(&self.key, &self.slot);
-            }
-        }
-
-        let slot = self.acquire_sync_slot(key.clone());
-        let _guard = Guard { dedup: self, key, slot: slot.clone() };
+        let (slot, _) = self.acquire_sync_slot(key.clone());
+        let _guard = SyncGuard { dedup: self, key, slot: slot.clone() };
 
         slot.cell.get_or_init(compute).clone()
+    }
+
+    pub fn sync_singleflight(&self, key: K) -> SyncFlight<'_, K, V> {
+        let (slot, is_leader) = self.acquire_sync_slot(key.clone());
+        let guard = SyncGuard { dedup: self, key, slot };
+
+        if is_leader {
+            SyncFlight::Leader(SyncLeader { guard })
+        } else {
+            SyncFlight::Follower(SyncFollower { guard })
+        }
+    }
+
+    pub fn publish_or_wait_sync(&self, key: K, value: V) -> V {
+        match self.sync_singleflight(key) {
+            SyncFlight::Leader(leader) => leader.complete(value),
+            SyncFlight::Follower(follower) => follower.wait(),
+        }
     }
 
     /// Explicitly remove an entry (for TTL or error recovery).
@@ -402,6 +468,37 @@ mod tests {
 
         assert_eq!(r1, 42);
         assert_eq!(r2, 42);
+        assert_eq!(counter.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn test_sync_singleflight_shares_leader_result() {
+        use std::{thread, time::Duration};
+
+        let dedup: Dedup<String, i32> = Dedup::new();
+        let counter = Arc::new(AtomicUsize::new(0));
+
+        let dedup1 = dedup.clone();
+        let counter1 = counter.clone();
+        let leader = thread::spawn(move || match dedup1.sync_singleflight("key".to_string()) {
+            SyncFlight::Leader(leader) => {
+                counter1.fetch_add(1, Ordering::SeqCst);
+                thread::sleep(Duration::from_millis(50));
+                leader.complete(42)
+            }
+            SyncFlight::Follower(_) => panic!("first caller should lead"),
+        });
+
+        thread::sleep(Duration::from_millis(10));
+
+        let dedup2 = dedup.clone();
+        let follower = thread::spawn(move || match dedup2.sync_singleflight("key".to_string()) {
+            SyncFlight::Leader(_) => panic!("second caller should follow"),
+            SyncFlight::Follower(follower) => follower.wait(),
+        });
+
+        assert_eq!(leader.join().unwrap(), 42);
+        assert_eq!(follower.join().unwrap(), 42);
         assert_eq!(counter.load(Ordering::SeqCst), 1);
     }
 

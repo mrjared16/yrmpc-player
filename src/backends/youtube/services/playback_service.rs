@@ -18,7 +18,7 @@ use parking_lot::Mutex;
 
 use super::{super::url_resolver::UrlResolver, InternalEvent};
 use crate::backends::youtube::{
-    audio::{AudioSourcePlan, AudioTransportTarget, MpvAudioSource, MpvInput, sources::concat::FfmpegConcatSource},
+    audio::{AudioDeliveryPlan, AudioTransportTarget, MpvAudioSource, MpvInput, sources::concat::PreparedMediaInputAdapter},
     media::{PreparedMedia, RelayRuntime},
     mpv::{MpvEvent, MpvIpc},
 };
@@ -37,8 +37,87 @@ pub struct PlaybackService {
     url_resolver: Arc<UrlResolver>,
     event_loop_running: Arc<AtomicBool>,
     audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
-    audio_source_plan: AudioSourcePlan,
+    audio_source_plan: AudioDeliveryPlan,
     relay_runtime: Option<Arc<RelayRuntime>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RuntimeInputRoute {
+    Relay,
+    DirectFallback,
+    Prepared,
+}
+
+#[derive(Debug, Clone)]
+pub struct RuntimeInputDecision {
+    pub input: MpvInput,
+    pub route: RuntimeInputRoute,
+}
+
+fn direct_fallback_input(prepared: &PreparedMedia) -> Result<MpvInput> {
+    match prepared {
+        PreparedMedia::StagedPrefix { url, .. }
+        | PreparedMedia::StreamAndCache { url, .. }
+        | PreparedMedia::Direct { url } => Ok(MpvInput::new(url.clone())),
+        PreparedMedia::LocalFile { .. } => PreparedMediaInputAdapter::build_from_prepared(prepared),
+    }
+}
+
+fn runtime_input_from_prepared(
+    transport: AudioTransportTarget,
+    relay_runtime: Option<&RelayRuntime>,
+    track_id: &str,
+    prepared: &PreparedMedia,
+    allow_direct_fallback: bool,
+) -> Result<RuntimeInputDecision> {
+    match transport {
+        AudioTransportTarget::LocalRelay => {
+            if matches!(prepared, PreparedMedia::StagedPrefix { .. } | PreparedMedia::StreamAndCache { .. }) {
+                if let Some(relay_runtime) = relay_runtime {
+                    match relay_runtime.register_session(track_id, prepared) {
+                        Ok(input) => {
+                            return Ok(RuntimeInputDecision {
+                                input,
+                                route: RuntimeInputRoute::Relay,
+                            });
+                        }
+                        Err(error) if allow_direct_fallback => {
+                            log::warn!(
+                                "relay setup failed for current track {}, falling back to direct: {}",
+                                track_id,
+                                error
+                            );
+                            return Ok(RuntimeInputDecision {
+                                input: direct_fallback_input(prepared)?,
+                                route: RuntimeInputRoute::DirectFallback,
+                            });
+                        }
+                        Err(error) => return Err(error),
+                    }
+                }
+
+                if allow_direct_fallback {
+                    log::warn!(
+                        "relay runtime unavailable for current track {}, falling back to direct",
+                        track_id
+                    );
+                    return Ok(RuntimeInputDecision {
+                        input: direct_fallback_input(prepared)?,
+                        route: RuntimeInputRoute::DirectFallback,
+                    });
+                }
+            }
+
+            Ok(RuntimeInputDecision {
+                input: PreparedMediaInputAdapter::build_from_prepared(prepared)?,
+                route: RuntimeInputRoute::Prepared,
+            })
+        }
+        AudioTransportTarget::DirectUrl | AudioTransportTarget::PreparedInput => Ok(RuntimeInputDecision {
+            input: PreparedMediaInputAdapter::build_from_prepared(prepared)?,
+            route: RuntimeInputRoute::Prepared,
+        }),
+    }
 }
 
 impl PlaybackService {
@@ -47,7 +126,7 @@ impl PlaybackService {
         socket_path: &Path,
         url_resolver: Arc<UrlResolver>,
         audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>>,
-        audio_source_plan: AudioSourcePlan,
+        audio_source_plan: AudioDeliveryPlan,
         relay_runtime: Option<Arc<RelayRuntime>>,
     ) -> Result<Self> {
         let (mpv, mpv_process) =
@@ -65,20 +144,35 @@ impl PlaybackService {
     }
 
     pub fn build_runtime_input(&self, track_id: &str, prepared: &PreparedMedia) -> Result<MpvInput> {
-        match self.audio_source_plan.transport {
-            AudioTransportTarget::LocalRelay => {
-                if let Some(relay_runtime) = &self.relay_runtime {
-                    if matches!(prepared, PreparedMedia::StagedPrefix { .. }) {
-                        return relay_runtime.register_session(track_id, prepared);
-                    }
-                }
+        Ok(self.build_runtime_input_decision(track_id, prepared)?.input)
+    }
 
-                FfmpegConcatSource::build_from_prepared(prepared)
-            }
-            AudioTransportTarget::DirectUrl | AudioTransportTarget::Combined => {
-                FfmpegConcatSource::build_from_prepared(prepared)
-            }
-        }
+    pub fn build_runtime_input_decision(
+        &self,
+        track_id: &str,
+        prepared: &PreparedMedia,
+    ) -> Result<RuntimeInputDecision> {
+        runtime_input_from_prepared(
+            self.audio_source_plan.transport,
+            self.relay_runtime.as_deref(),
+            track_id,
+            prepared,
+            false,
+        )
+    }
+
+    pub fn build_current_runtime_input_with_direct_fallback(
+        &self,
+        track_id: &str,
+        prepared: &PreparedMedia,
+    ) -> Result<RuntimeInputDecision> {
+        runtime_input_from_prepared(
+            self.audio_source_plan.transport,
+            self.relay_runtime.as_deref(),
+            track_id,
+            prepared,
+            true,
+        )
     }
 
     /// Start the MPV event loop in a background thread
@@ -119,8 +213,6 @@ impl PlaybackService {
             while running.load(Ordering::SeqCst) {
                 match event_reader.read_event() {
                     Ok(Some(event)) => {
-                        log::debug!("MPV event: {:?}", event);
-
                         match event {
                             MpvEvent::TrackChanged { position } => {
                                 log::info!("Track changed to position {}", position);
@@ -157,7 +249,9 @@ impl PlaybackService {
                                     let _ = event_tx.send("player".to_string());
                                 }
                             }
-                            MpvEvent::TimeRemaining { .. } => {}
+                            MpvEvent::PlaybackStarted => {
+                                let _ = internal_event_tx.send(InternalEvent::PlaybackStarted);
+                            }
                             MpvEvent::Other(_) => {
                                 // Ignore other events
                             }
@@ -265,6 +359,7 @@ impl PlaybackService {
             "--audio-client-name=music-daemon".to_string(),
             "--stream-lavf-o-append=protocol_whitelist=file,http,https,tcp,tls,crypto,subfile,concat"
                 .to_string(),
+            "--script=/usr/lib/mpv-mpris/mpris.so".to_string(),
             format!("--input-ipc-server={}", socket_str),
         ];
 
@@ -414,7 +509,7 @@ impl PlaybackService {
     fn mode_label(transport: AudioTransportTarget) -> &'static str {
         match transport {
             AudioTransportTarget::DirectUrl => "DIRECT",
-            AudioTransportTarget::Combined => "COMBINED",
+            AudioTransportTarget::PreparedInput => "STAGED",
             AudioTransportTarget::LocalRelay => "RELAY",
         }
     }
@@ -426,10 +521,6 @@ impl PlaybackService {
 
     pub fn prefetch_audio_batch(&self, video_ids: Vec<String>) {
         self.prefetch(video_ids);
-    }
-
-    pub fn clear_stream_url_cache(&self) {
-        self.url_resolver.clear_cache();
     }
 
     pub fn has_cached_audio(&self, video_id: &str) -> bool {
@@ -554,6 +645,14 @@ impl Drop for PlaybackService {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
+    use super::{RuntimeInputRoute, runtime_input_from_prepared};
+    use crate::backends::youtube::{
+        audio::AudioTransportTarget,
+        media::{PreparedMedia, RelayRuntime},
+    };
+
     use super::runtime_property_update_from_arg;
 
     #[test]
@@ -569,5 +668,51 @@ mod tests {
     #[test]
     fn runtime_property_update_keeps_regular_property_flags() {
         assert_eq!(runtime_property_update_from_arg("--pause=yes"), Some(("pause", "yes")));
+    }
+
+    #[test]
+    fn relay_current_track_falls_back_to_direct_when_runtime_is_unavailable() {
+        let prepared = PreparedMedia::StreamAndCache {
+            url: "https://example.com/upstream".to_string(),
+            content_length: 4096,
+            prefix_path: PathBuf::from("/tmp/prefix.webm"),
+            prefix_size: 1024,
+        };
+
+        let decision = runtime_input_from_prepared(
+            AudioTransportTarget::LocalRelay,
+            None,
+            "track-123",
+            &prepared,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(decision.route, RuntimeInputRoute::DirectFallback);
+        assert_eq!(decision.input.url, "https://example.com/upstream");
+        assert!(decision.input.mpv_args.is_empty());
+    }
+
+    #[test]
+    fn relay_current_track_keeps_relay_path_when_runtime_is_available() {
+        let relay_runtime = RelayRuntime::start().unwrap();
+        let prepared = PreparedMedia::StreamAndCache {
+            url: "https://example.com/upstream".to_string(),
+            content_length: 4096,
+            prefix_path: PathBuf::from("/tmp/prefix.webm"),
+            prefix_size: 1024,
+        };
+
+        let decision = runtime_input_from_prepared(
+            AudioTransportTarget::LocalRelay,
+            Some(&relay_runtime),
+            "track-123",
+            &prepared,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(decision.route, RuntimeInputRoute::Relay);
+        assert!(decision.input.url.contains("/relay/"));
     }
 }

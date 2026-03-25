@@ -66,6 +66,16 @@ pub trait Extractor: Send + Sync {
 
     /// Invalidate (remove) a specific video ID from the cache.
     fn invalidate(&self, video_id: &str);
+
+    /// Re-extract a fresh URL, invalidating only the cache entry.
+    ///
+    /// Unlike `invalidate()` + `extract_one()`, this preserves dedup slots
+    /// so concurrent callers coalesce instead of each spawning extractions.
+    /// Used by relay 403 retry to refresh stale URLs without cascading.
+    fn refresh(&self, video_id: &str) -> Result<String> {
+        self.invalidate(video_id);
+        self.extract_one(video_id)
+    }
 }
 
 #[cfg(test)]

@@ -2,260 +2,229 @@
 
 use std::sync::Arc;
 
-use crossbeam::channel::Sender;
-use parking_lot::Mutex;
-use tokio::runtime::{Builder, Handle};
-
-use super::{super::orchestrator::PREFETCH_WINDOW_SIZE, queue_events::QueueEventHandler};
 use crate::{
     backends::youtube::{
-        media::{MediaPreparer, PreloadTier, PreparedMedia},
         protocol::{ServerResponse, SongData},
+        server::queue_coordinator::QueueCoordinator,
         services::{PlaybackService, QueueService},
     },
     domain::Song,
-    shared::play_queue::{PlayQueue, QueueCommand},
+    shared::play_queue::PlayQueue,
 };
 
 /// Handle Add command (URI only, legacy)
 pub fn handle_add(
-    queue: &Arc<QueueService>,
-    playback: &Arc<PlaybackService>,
-    event_tx: &Sender<String>,
+    queue_coordinator: &QueueCoordinator,
     uri: &str,
     position: Option<u32>,
-    play_queue: &Arc<Mutex<PlayQueue>>,
-    queue_event_handler: &Mutex<QueueEventHandler>,
-    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
-    let mut song = Song::default();
-    song.uri = uri.to_string();
-    song.metadata.insert("title".into(), vec![uri.to_string()]);
-
-    let song_data = SongData::from(song);
-    handle_add_song(
-        queue,
-        playback,
-        event_tx,
-        song_data,
-        position,
-        play_queue,
-        queue_event_handler,
-        media_preparer,
-    )
+    queue_coordinator.add_uri(uri, position)
 }
 
 /// Handle AddSong command with full metadata
 pub fn handle_add_song(
-    queue: &Arc<QueueService>,
-    playback: &Arc<PlaybackService>,
-    event_tx: &Sender<String>,
+    queue_coordinator: &QueueCoordinator,
     song_data: SongData,
     position: Option<u32>,
-    play_queue: &Arc<Mutex<PlayQueue>>,
-    queue_event_handler: &Mutex<QueueEventHandler>,
-    media_preparer: &Arc<dyn MediaPreparer>,
 ) -> ServerResponse {
-    let video_id = song_data.file.clone();
-
-    // Get rolling window bounds BEFORE add
-    let base = queue.playback_base_index();
-    let queue_len = queue.len();
-
-    // 1. Store metadata in QueueService immediately
-    let song = song_data.to_song();
-    let queue_id = queue.add(song.clone(), position);
-    log::debug!("Added song to queue: id={}, video_id={}", queue_id, video_id);
-
-    // 2. Route through PlayQueue for event-driven updates
-    let events = play_queue.lock().apply(QueueCommand::Add { song });
-    for event in events {
-        queue_event_handler.lock().handle(event);
-    }
-
-    // 3. Calculate where the song was inserted
-    let insert_pos = position.map(|p| (p as usize).min(queue_len)).unwrap_or(queue_len);
-
-    // 4. If inserted within the rolling window AND we're currently playing, resolve
-    //    URL and add to MPV buffer for seamless playback
-    if queue.current_index().is_some()
-        && insert_pos >= base
-        && insert_pos < base + PREFETCH_WINDOW_SIZE
-    {
-        let window_offset = insert_pos.saturating_sub(base);
-        let tier = match window_offset {
-            0 => PreloadTier::Immediate,
-            1 => PreloadTier::Gapless,
-            _ => PreloadTier::Eager,
-        };
-
-        match prepare_media_blocking(media_preparer, &video_id, tier)
-            .and_then(|prepared| playback.build_runtime_input(&video_id, &prepared))
-        {
-            Ok(input) => {
-                if let Err(e) = playback.playlist_append_input(&input) {
-                    log::warn!("Failed to append to MPV buffer: {}", e);
-                } else {
-                    // Move from end to correct position in MPV buffer
-                    let mpv_insert_pos = insert_pos.saturating_sub(base);
-                    let mpv_current_end = playback.get_playlist_count().unwrap_or(1);
-                    if mpv_current_end > 1 && mpv_insert_pos < mpv_current_end - 1 {
-                        if let Err(e) = playback.playlist_move(mpv_current_end - 1, mpv_insert_pos)
-                        {
-                            log::warn!("Failed to reorder MPV buffer: {}", e);
-                        }
-                    }
-                    log::debug!("Added song to MPV buffer at position {}", mpv_insert_pos);
-                }
-            }
-            Err(e) => {
-                log::warn!("Failed to prepare media for window insert: {}", e);
-            }
-        }
-    } else if queue.current_index().is_some() {
-        if let Some(track_id) = extract_video_id(&video_id) {
-            media_preparer.prefetch(&track_id, PreloadTier::Background);
-            log::debug!("Triggered background media prefetch for {}", track_id);
-        }
-    }
-
-    // 5. Notify clients
-    let _ = event_tx.send("playlist".to_string());
-    ServerResponse::Ok
-}
-
-fn extract_video_id(uri: &str) -> Option<String> {
-    if let Some(id) = uri.strip_prefix("youtube://") {
-        return Some(id.to_string());
-    }
-
-    if !uri.is_empty() && !uri.contains("://") {
-        return Some(uri.to_string());
-    }
-
-    None
-}
-
-fn prepare_media_blocking(
-    media_preparer: &Arc<dyn MediaPreparer>,
-    track_id: &str,
-    tier: PreloadTier,
-) -> anyhow::Result<PreparedMedia> {
-    if let Ok(handle) = Handle::try_current() {
-        tokio::task::block_in_place(|| handle.block_on(media_preparer.prepare(track_id, tier)))
-    } else {
-        let runtime = Builder::new_current_thread().enable_all().build()?;
-        runtime.block_on(media_preparer.prepare(track_id, tier))
-    }
+    queue_coordinator.add_song(song_data, position)
 }
 
 /// Handle DeleteId command
-pub fn handle_delete_id(
-    queue: &Arc<QueueService>,
-    playback: &Arc<PlaybackService>,
-    event_tx: &Sender<String>,
-    id: u32,
-    play_queue: &Arc<Mutex<PlayQueue>>,
-    queue_event_handler: &Mutex<QueueEventHandler>,
-) -> ServerResponse {
-    let current_idx = queue.current_index();
-    let deleting_current = current_idx
-        .and_then(|idx| queue.get_by_index(idx).ok())
-        .map(|s| s.id == Some(id))
-        .unwrap_or(false);
-
-    let base = queue.playback_base_index();
-
-    match queue.remove(id) {
-        Ok((_removed_item, removed_pos)) => {
-            let events = play_queue.lock().apply(QueueCommand::Remove { id: id as u64 });
-            for event in events {
-                queue_event_handler.lock().handle(event);
-            }
-
-            if removed_pos >= base && removed_pos < base + PREFETCH_WINDOW_SIZE {
-                let mpv_idx = removed_pos - base;
-                if let Err(e) = playback.playlist_remove(mpv_idx) {
-                    log::warn!("Failed to sync MPV buffer on delete: {}", e);
-                }
-                log::debug!("Removed song from MPV buffer at index {}", mpv_idx);
-            }
-
-            if deleting_current {
-                if let Err(e) = playback.stop() {
-                    log::warn!("Failed to stop playback after delete: {}", e);
-                }
-                let _ = event_tx.send("player".to_string());
-            }
-            let _ = event_tx.send("playlist".to_string());
-            ServerResponse::Ok
-        }
-        Err(e) => ServerResponse::Error(e.to_string()),
-    }
+pub fn handle_delete_id(queue_coordinator: &QueueCoordinator, id: u32) -> ServerResponse {
+    queue_coordinator.delete_id(id)
 }
 
 /// Handle Clear command
-pub fn handle_clear(
-    queue: &Arc<QueueService>,
-    playback: &Arc<PlaybackService>,
-    event_tx: &Sender<String>,
-    play_queue: &Arc<Mutex<PlayQueue>>,
-    queue_event_handler: &Mutex<QueueEventHandler>,
-) -> ServerResponse {
-    queue.clear();
-
-    let events = play_queue.lock().apply(QueueCommand::Clear);
-    for event in events {
-        queue_event_handler.lock().handle(event);
-    }
-
-    if let Err(e) = playback.stop() {
-        log::warn!("Failed to stop playback on clear: {}", e);
-    }
-    let _ = event_tx.send("playlist".to_string());
-    let _ = event_tx.send("player".to_string());
-    ServerResponse::Ok
+pub fn handle_clear(queue_coordinator: &QueueCoordinator) -> ServerResponse {
+    queue_coordinator.clear()
 }
 
 /// Handle MoveId command
-pub fn handle_move_id(
-    queue: &Arc<QueueService>,
-    playback: &Arc<PlaybackService>,
-    event_tx: &Sender<String>,
-    from: u32,
-    to: u32,
-    play_queue: &Arc<Mutex<PlayQueue>>,
-    queue_event_handler: &Mutex<QueueEventHandler>,
-) -> ServerResponse {
-    let base = queue.playback_base_index();
+pub fn handle_move_id(queue_coordinator: &QueueCoordinator, from: u32, to: u32) -> ServerResponse {
+    queue_coordinator.move_id(from, to)
+}
 
-    match queue.move_song(from, to) {
-        Ok((from_idx, to_idx)) => {
-            let events = play_queue
-                .lock()
-                .apply(QueueCommand::Move { id: from as u64, to_position: to_idx });
-            for event in events {
-                queue_event_handler.lock().handle(event);
-            }
+#[cfg(test)]
+mod tests {
+    use std::sync::Arc;
 
-            let from_in_window = from_idx >= base && from_idx < base + PREFETCH_WINDOW_SIZE;
-            let to_in_window = to_idx >= base && to_idx < base + PREFETCH_WINDOW_SIZE;
+    use anyhow::Result;
+    use async_trait::async_trait;
+    use parking_lot::Mutex;
+    use tempfile::TempDir;
 
-            if from_in_window || to_in_window {
-                let from_mpv = from_idx.saturating_sub(base);
-                let to_mpv = to_idx.saturating_sub(base);
+    use super::*;
+    use crate::{
+        backends::youtube::{
+            audio::AudioDeliveryPlanner,
+            config::{AudioDeliveryMode, ExtractorType},
+            media::{MediaPreparer, PreparedMedia, PreloadTier},
+            server::{
+                handlers::queue_events::QueueEventHandler,
+                orchestrator::Orchestrator,
+                queue_coordinator::QueueCoordinator,
+                test_support::{acquire_mpv_test_guard, RecordingMediaPreparer, MpvTestGuard},
+            },
+            services::PlaybackStateTracker,
+            url_resolver::UrlResolver,
+        },
+        shared::play_queue::PlayQueue,
+    };
 
-                if from_mpv < PREFETCH_WINDOW_SIZE && to_mpv < PREFETCH_WINDOW_SIZE {
-                    if let Err(e) = playback.playlist_move(from_mpv, to_mpv) {
-                        log::warn!("Failed to sync MPV buffer on move: {}", e);
-                    }
-                    log::debug!("Moved song in MPV buffer: {} -> {}", from_mpv, to_mpv);
-                }
-            }
+    struct StubMediaPreparer;
 
-            let _ = event_tx.send("playlist".to_string());
-            ServerResponse::Ok
+    #[async_trait]
+    impl MediaPreparer for StubMediaPreparer {
+        async fn prepare(&self, track_id: &str, _tier: PreloadTier) -> Result<PreparedMedia> {
+            Ok(PreparedMedia::Direct { url: format!("https://example.invalid/{track_id}") })
         }
-        Err(e) => ServerResponse::Error(e.to_string()),
+
+        fn prefetch(&self, _track_id: &str, _tier: PreloadTier) {}
+    }
+
+    fn test_song(uri: &str) -> SongData {
+        SongData::from(Song { uri: uri.to_string(), ..Song::default() })
+    }
+
+    fn setup_queue_harness(
+    ) -> (
+        MpvTestGuard,
+        TempDir,
+        Arc<QueueCoordinator>,
+        Arc<QueueService>,
+        Arc<Mutex<PlayQueue>>,
+    ) {
+        let mpv_guard = acquire_mpv_test_guard();
+        let temp_dir = TempDir::new().unwrap();
+        let socket = temp_dir.path().join("test-mpv.sock");
+        let url_resolver = Arc::new(UrlResolver::new(ExtractorType::default()));
+        let playback = Arc::new(
+            PlaybackService::new(
+                &socket,
+                url_resolver,
+                None,
+                AudioDeliveryPlanner.plan(AudioDeliveryMode::Direct),
+                None,
+            )
+            .unwrap(),
+        );
+        let queue = Arc::new(QueueService::new());
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let state_tracker = Arc::new(PlaybackStateTracker::new());
+        let media_preparer: Arc<dyn MediaPreparer> = Arc::new(StubMediaPreparer);
+        let orchestrator = Orchestrator::new(
+            Arc::clone(&playback),
+            Arc::clone(&queue),
+            state_tracker,
+            media_preparer,
+        );
+        let queue_event_handler = Mutex::new(QueueEventHandler::new(
+            Arc::clone(&playback),
+            Arc::clone(&queue),
+            Arc::clone(&play_queue),
+        ));
+        let (event_tx, _event_rx) = crossbeam::channel::unbounded();
+        let queue_coordinator = Arc::new(QueueCoordinator::new(
+            Arc::clone(&queue),
+            Arc::clone(&playback),
+            Arc::clone(&play_queue),
+            queue_event_handler.into_inner(),
+            Arc::new(orchestrator),
+            event_tx,
+        ));
+
+        (mpv_guard, temp_dir, queue_coordinator, queue, play_queue)
+    }
+
+    #[test]
+    fn handle_add_song_keeps_play_queue_order_aligned_with_positioned_insert() {
+        let (_mpv_guard, _temp_dir, queue_coordinator, queue, play_queue) =
+            setup_queue_harness();
+
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-0"), None),
+            ServerResponse::Ok
+        ));
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-2"), None),
+            ServerResponse::Ok
+        ));
+
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-1"), Some(1)),
+            ServerResponse::Ok
+        ));
+
+        let queue_titles: Vec<String> = (0..queue.len())
+            .map(|idx| queue.get_by_index(idx).unwrap().uri)
+            .collect();
+        let play_queue_titles: Vec<String> = {
+            let play_queue = play_queue.lock();
+            play_queue
+                .get_play_order()
+                .iter()
+                .map(|id| play_queue.get_song(*id).unwrap().uri.clone())
+                .collect()
+        };
+
+        assert_eq!(queue_titles, vec!["song-0", "song-1", "song-2"]);
+        assert_eq!(play_queue_titles, queue_titles);
+    }
+
+    #[test]
+    fn handle_add_song_outside_active_window_warms_once_via_queue_event_handler() {
+        let _mpv_guard = acquire_mpv_test_guard();
+        let temp_dir = TempDir::new().unwrap();
+        let socket = temp_dir.path().join("test-mpv.sock");
+        let url_resolver = Arc::new(UrlResolver::new(ExtractorType::default()));
+        let playback = Arc::new(
+            PlaybackService::new(
+                &socket,
+                url_resolver,
+                None,
+                AudioDeliveryPlanner.plan(AudioDeliveryMode::Direct),
+                None,
+            )
+            .unwrap(),
+        );
+        let queue = Arc::new(QueueService::new());
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let state_tracker = Arc::new(PlaybackStateTracker::new());
+        let recording = Arc::new(RecordingMediaPreparer::default());
+        let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
+        let orchestrator = Orchestrator::new(
+            Arc::clone(&playback),
+            Arc::clone(&queue),
+            state_tracker,
+            Arc::clone(&media_preparer),
+        );
+        let queue_event_handler = Mutex::new(
+            QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(media_preparer),
+        );
+        let (event_tx, _event_rx) = crossbeam::channel::unbounded();
+        let queue_coordinator = QueueCoordinator::new(
+            Arc::clone(&queue),
+            Arc::clone(&playback),
+            Arc::clone(&play_queue),
+            queue_event_handler.into_inner(),
+            Arc::new(orchestrator),
+            event_tx,
+        );
+
+        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-0"), None), ServerResponse::Ok));
+        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-1"), None), ServerResponse::Ok));
+        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-2"), None), ServerResponse::Ok));
+
+        recording.warmed_batches.lock().clear();
+        recording.warmed.lock().clear();
+
+        queue.set_current(Some(0));
+
+        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-999"), Some(3)), ServerResponse::Ok));
+
+        assert!(recording.warmed.lock().is_empty());
+        assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["song-999".to_string()]]);
     }
 }

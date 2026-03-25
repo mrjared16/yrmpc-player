@@ -4,6 +4,11 @@ use std::{path::PathBuf, time::Duration};
 
 use serde::Deserialize;
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct YtDlpExtractorConfig {
+    pub cookies_path: Option<String>,
+}
+
 /// Stream URL extractor type
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 #[serde(rename_all = "lowercase")]
@@ -18,9 +23,11 @@ pub enum ExtractorType {
 /// Audio delivery mode for playback.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
 pub enum AudioDeliveryMode {
-    #[serde(rename = "combined", alias = "ffmpegconcat", alias = "concat")]
     #[default]
-    Combined,
+    #[serde(rename = "auto")]
+    Auto,
+    #[serde(rename = "staged", alias = "combined", alias = "ffmpegconcat", alias = "concat")]
+    Staged,
     #[serde(rename = "direct", alias = "passthrough")]
     Direct,
     #[serde(rename = "relay", alias = "proxy")]
@@ -29,7 +36,7 @@ pub enum AudioDeliveryMode {
 
 impl AudioDeliveryMode {
     pub fn is_direct_like(self) -> bool {
-        matches!(self, Self::Direct | Self::Relay)
+        matches!(self, Self::Auto | Self::Direct)
     }
 }
 
@@ -38,7 +45,8 @@ impl AudioDeliveryMode {
 #[serde(default)]
 pub struct AudioConfig {
     /// Audio delivery mode
-    pub source: AudioDeliveryMode,
+    #[serde(alias = "source")]
+    pub delivery_mode: AudioDeliveryMode,
     /// Cache directory for audio prefixes
     pub cache_dir: Option<PathBuf>,
     /// Prefix size in bytes (default: 200KB)
@@ -50,7 +58,7 @@ pub struct AudioConfig {
 impl Default for AudioConfig {
     fn default() -> Self {
         Self {
-            source: AudioDeliveryMode::default(),
+            delivery_mode: AudioDeliveryMode::default(),
             cache_dir: None,
             prefix_size: 204_800,
             max_cache_size: 209_715_200,
@@ -130,6 +138,8 @@ pub struct ApiConfig {
     /// - "pytubefix": Uses pytubefix Python library, faster but requires
     ///   installation
     pub extractor: ExtractorType,
+
+    pub yt_dlp_extractor_args: Vec<String>,
 }
 
 impl Default for YouTubeConfig {
@@ -172,6 +182,7 @@ impl Default for ApiConfig {
             cache_duration: Duration::from_secs(3600),
             max_search_results: 50,
             extractor: ExtractorType::default(), // ytx by default (fast, ~200ms)
+            yt_dlp_extractor_args: Vec::new(),
         }
     }
 }
@@ -200,26 +211,38 @@ mod tests {
 
     #[test]
     fn audio_delivery_mode_accepts_current_values() {
-        let direct: AudioConfig = toml::from_str("source = \"direct\"").expect("parse direct");
-        let combined: AudioConfig =
-            toml::from_str("source = \"combined\"").expect("parse combined");
-        let relay: AudioConfig = toml::from_str("source = \"relay\"").expect("parse relay");
+        let auto: AudioConfig = toml::from_str("delivery_mode = \"auto\"").expect("parse auto");
+        let direct: AudioConfig =
+            toml::from_str("delivery_mode = \"direct\"").expect("parse direct");
+        let staged: AudioConfig =
+            toml::from_str("delivery_mode = \"staged\"").expect("parse staged");
+        let relay: AudioConfig = toml::from_str("delivery_mode = \"relay\"").expect("parse relay");
 
-        assert_eq!(direct.source, AudioDeliveryMode::Direct);
-        assert_eq!(combined.source, AudioDeliveryMode::Combined);
-        assert_eq!(relay.source, AudioDeliveryMode::Relay);
+        assert_eq!(auto.delivery_mode, AudioDeliveryMode::Auto);
+        assert_eq!(direct.delivery_mode, AudioDeliveryMode::Direct);
+        assert_eq!(staged.delivery_mode, AudioDeliveryMode::Staged);
+        assert_eq!(relay.delivery_mode, AudioDeliveryMode::Relay);
     }
 
     #[test]
     fn audio_delivery_mode_accepts_legacy_aliases() {
         let passthrough: AudioConfig =
-            toml::from_str("source = \"passthrough\"").expect("parse passthrough alias");
+            toml::from_str("delivery_mode = \"passthrough\"").expect("parse passthrough alias");
         let ffmpegconcat: AudioConfig =
-            toml::from_str("source = \"ffmpegconcat\"").expect("parse ffmpegconcat alias");
-        let concat: AudioConfig = toml::from_str("source = \"concat\"").expect("parse concat");
+            toml::from_str("delivery_mode = \"ffmpegconcat\"").expect("parse ffmpegconcat alias");
+        let concat: AudioConfig =
+            toml::from_str("delivery_mode = \"concat\"").expect("parse concat alias");
+        let combined_legacy: AudioConfig =
+            toml::from_str("source = \"combined\"").expect("parse legacy source key");
 
-        assert_eq!(passthrough.source, AudioDeliveryMode::Direct);
-        assert_eq!(ffmpegconcat.source, AudioDeliveryMode::Combined);
-        assert_eq!(concat.source, AudioDeliveryMode::Combined);
+        assert_eq!(passthrough.delivery_mode, AudioDeliveryMode::Direct);
+        assert_eq!(ffmpegconcat.delivery_mode, AudioDeliveryMode::Staged);
+        assert_eq!(concat.delivery_mode, AudioDeliveryMode::Staged);
+        assert_eq!(combined_legacy.delivery_mode, AudioDeliveryMode::Staged);
+    }
+
+    #[test]
+    fn audio_delivery_mode_default_is_auto() {
+        assert_eq!(AudioDeliveryMode::default(), AudioDeliveryMode::Auto);
     }
 }

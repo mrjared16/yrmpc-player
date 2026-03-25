@@ -10,7 +10,7 @@ use std::{
         Arc,
         atomic::{AtomicU64, Ordering},
     },
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Result, anyhow};
@@ -19,14 +19,20 @@ use parking_lot::Mutex;
 use super::Extractor;
 use crate::shared::{
     cache::{Cache, CacheConfig as SharedCacheConfig},
-    dedup::Dedup,
+    dedup::{Dedup, SyncFlight},
 };
+
+/// Minimum age of a cached URL before refresh() will re-extract.
+/// If a URL is younger than this, a 403 is treated as CDN/network issue,
+/// not URL expiry, and the cached URL is returned as-is.
+const REFRESH_COOLDOWN: Duration = Duration::from_secs(60);
 
 #[derive(Clone)]
 struct CacheEntry {
     url: String,
     version: u64,
     immediate: bool,
+    created_at: Instant,
 }
 
 fn should_replace(existing: &CacheEntry, new_version: u64, new_immediate: bool) -> bool {
@@ -122,6 +128,18 @@ impl<E: Extractor> CachedExtractor<E> {
         cache.get(video_id).map(|entry| entry.url)
     }
 
+    /// Return cached URL if it exists AND was created within the refresh cooldown.
+    fn get_cached_if_fresh(&self, video_id: &str) -> Option<String> {
+        let mut cache = self.cache.lock();
+        cache.get(video_id).and_then(|entry| {
+            if entry.created_at.elapsed() < REFRESH_COOLDOWN {
+                Some(entry.url)
+            } else {
+                None
+            }
+        })
+    }
+
     fn try_cache(&self, video_id: &str, url: String, version: u64, immediate: bool) -> bool {
         let mut cache = self.cache.lock();
         let should_write = match cache.get(video_id) {
@@ -130,7 +148,7 @@ impl<E: Extractor> CachedExtractor<E> {
         };
 
         if should_write {
-            cache.insert(video_id.to_string(), CacheEntry { url, version, immediate });
+            cache.insert(video_id.to_string(), CacheEntry { url, version, immediate, created_at: Instant::now() });
         }
         should_write
     }
@@ -139,6 +157,11 @@ impl<E: Extractor> CachedExtractor<E> {
     fn put_cached(&self, video_id: String, url: String) {
         let version = self.next_version.fetch_add(1, Ordering::Relaxed);
         self.try_cache(&video_id, url, version, false);
+    }
+
+    #[cfg(test)]
+    fn refresh_cache_only(&self, video_id: &str) {
+        self.cache.lock().invalidate(video_id);
     }
 }
 
@@ -177,13 +200,13 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         let mut batch_results = self.inner.extract_batch(&uncached);
 
         for id in uncached {
-            let prefetch_result: Result<String, String> = match batch_results.remove(&id) {
+            let batch_result: Result<String, String> = match batch_results.remove(&id) {
                 Some(Ok(url)) => Ok(url),
                 Some(Err(err)) => Err(err.to_string()),
                 None => Err(format!("Inner extractor omitted batch result for {id}")),
             };
 
-            let result = self.dedup.get_or_init_sync(id.clone(), || prefetch_result.clone());
+            let result = self.dedup.publish_or_wait_sync(id.clone(), batch_result);
 
             match result {
                 Ok(url) => {
@@ -211,31 +234,44 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
             return Ok(url);
         }
 
-        let result = self.dedup.get_or_init_sync(video_id.to_string(), || {
-            let version = self.next_version.fetch_add(1, Ordering::Relaxed);
-            log::info!("[EXTRACT] cache_miss video_id={} version={}", video_id, version);
+        let result = match self.dedup.sync_singleflight(video_id.to_string()) {
+            SyncFlight::Leader(leader) => {
+                let version = self.next_version.fetch_add(1, Ordering::Relaxed);
+                let bt = std::backtrace::Backtrace::force_capture();
+                let bt_summary: String = bt.to_string()
+                    .lines()
+                    .filter(|l| l.contains("rmpc"))
+                    .take(8)
+                    .collect::<Vec<_>>()
+                    .join(" <- ");
+                log::info!(
+                    "[EXTRACT] cache_miss video_id={} version={} callers=[{}]",
+                    video_id,
+                    version,
+                    bt_summary
+                );
 
-            match self.inner.extract_one(video_id) {
-                Ok(url) => {
-                    self.try_cache(video_id, url.clone(), version, true);
-                    log::info!(
-                        "[EXTRACT] complete video_id={} elapsed={:?}",
-                        video_id,
-                        start.elapsed()
-                    );
-                    Ok(url)
-                }
-                Err(e) => {
-                    log::warn!(
-                        "[EXTRACT] failed video_id={} elapsed={:?} error={}",
-                        video_id,
-                        start.elapsed(),
-                        e
-                    );
-                    Err(e.to_string())
-                }
+                let leader_result = match self.inner.extract_one(video_id) {
+                    Ok(url) => {
+                        self.try_cache(video_id, url.clone(), version, true);
+                        log::info!("[EXTRACT] complete video_id={} elapsed={:?}", video_id, start.elapsed());
+                        Ok(url)
+                    }
+                    Err(e) => {
+                        log::warn!(
+                            "[EXTRACT] failed video_id={} elapsed={:?} error={}",
+                            video_id,
+                            start.elapsed(),
+                            e
+                        );
+                        Err(e.to_string())
+                    }
+                };
+
+                leader.complete(leader_result)
             }
-        });
+            SyncFlight::Follower(follower) => follower.wait(),
+        };
 
         match result {
             Ok(url) => Ok(url),
@@ -256,6 +292,22 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         self.cache.lock().invalidate(video_id);
         self.dedup.invalidate(video_id);
         self.inner.invalidate(video_id);
+    }
+
+    fn refresh(&self, video_id: &str) -> Result<String> {
+        // If the URL was extracted recently, a 403 is likely a CDN/network
+        // issue, not URL expiry. Return the cached URL without re-extracting.
+        if let Some(url) = self.get_cached_if_fresh(video_id) {
+            log::info!("[EXTRACT] refresh_skipped video_id={} reason=url_still_fresh", video_id,);
+            return Ok(url);
+        }
+
+        // Only invalidate the cache entry, NOT the dedup slot.
+        // This ensures concurrent callers coalesce instead of each
+        // triggering a separate yt-dlp extraction.
+        log::info!("[EXTRACT] refresh_extracting video_id={}", video_id);
+        self.cache.lock().invalidate(video_id);
+        self.extract_one(video_id)
     }
 }
 
@@ -576,5 +628,85 @@ mod tests {
             "Cache should preserve fast path result. Expected: {}, Got: {}",
             fast_url, cached_url
         );
+    }
+
+    #[test]
+    fn test_refresh_skips_recent_url() {
+        // Given: A slow extractor (100ms delay)
+        let extractor = CountingExtractor::new(Duration::from_millis(100));
+        let cached = Arc::new(CachedExtractor::new(extractor));
+
+        // Pre-populate cache
+        let url1 = cached.extract_one("refresh_id").unwrap();
+        assert!(url1.contains("single_1_"), "First extraction should be call #1");
+        assert_eq!(cached.cache_len(), 1);
+
+        let url2 = cached.refresh("refresh_id").unwrap();
+
+        assert_eq!(url2, url1, "Refresh should reuse a fresh cached URL");
+
+        let url3 = cached.extract_one("refresh_id").unwrap();
+        assert_eq!(url3, url2, "Cache should still contain the fresh URL");
+
+        assert_eq!(cached.inner().extract_one_count(), 1);
+    }
+
+    #[test]
+    fn test_refresh_reextracts_stale_url() {
+        let extractor = CountingExtractor::new(Duration::from_millis(100));
+        let cached = Arc::new(CachedExtractor::new(extractor));
+
+        let url1 = cached.extract_one("refresh_id").unwrap();
+        assert!(url1.contains("single_1_"), "First extraction should be call #1");
+
+        cached.cache.lock().insert(
+            "refresh_id".to_string(),
+            CacheEntry {
+                url: url1,
+                version: 1,
+                immediate: true,
+                created_at: Instant::now() - REFRESH_COOLDOWN - Duration::from_secs(1),
+            },
+        );
+
+        let url2 = cached.refresh("refresh_id").unwrap();
+
+        assert!(
+            url2.contains("single_2_"),
+            "Stale refresh should trigger a new extraction, got: {}",
+            url2
+        );
+        assert_eq!(cached.inner().extract_one_count(), 2);
+    }
+
+    #[test]
+    fn test_refresh_coalesces_with_concurrent_extraction() {
+        // Given: A slow extractor (200ms delay)
+        let extractor = CountingExtractor::new(Duration::from_millis(200));
+        let cached = Arc::new(CachedExtractor::new(extractor));
+
+        // Pre-populate cache so refresh has something to invalidate
+        let _ = cached.extract_one("coalesce_id").unwrap();
+        assert_eq!(cached.inner().extract_one_count(), 1);
+
+        // Invalidate cache to force re-extraction on next call
+        cached.refresh_cache_only("coalesce_id");
+
+        // When: Two threads call extract_one concurrently after cache invalidation
+        let cached1 = Arc::clone(&cached);
+        let cached2 = Arc::clone(&cached);
+
+        let handle1 = thread::spawn(move || cached1.extract_one("coalesce_id"));
+        thread::sleep(Duration::from_millis(10)); // Ensure thread1 starts first
+        let handle2 = thread::spawn(move || cached2.extract_one("coalesce_id"));
+
+        let url1 = handle1.join().unwrap().unwrap();
+        let url2 = handle2.join().unwrap().unwrap();
+
+        // Then: Both get same URL (dedup coalesced)
+        assert_eq!(url1, url2, "Concurrent extractions should coalesce");
+
+        // And: Only 2 total extractions (1 initial + 1 after refresh, NOT 3)
+        assert_eq!(cached.inner().extract_one_count(), 2);
     }
 }

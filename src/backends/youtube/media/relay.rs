@@ -191,6 +191,14 @@ pub struct RelayUpstreamStream {
     pub content_length: u64,
 }
 
+/// When set, the relay opens the upstream from byte 0 and writes the first
+/// `size` bytes to `path` as a side-effect (tee / multiplexer mode).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RelayTeePrefix {
+    pub path: PathBuf,
+    pub size: u64,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RelaySessionSpec {
     pub track_id: String,
@@ -198,6 +206,10 @@ pub struct RelaySessionSpec {
     pub upstream: RelayUpstreamStream,
     pub contract: RelayTransportContract,
     pub state: RelaySessionState,
+    /// If set, the relay streams from byte 0 and saves the first N bytes to
+    /// disk.  The `staged` artifact is empty in this mode — everything comes
+    /// from upstream.
+    pub tee_prefix: Option<RelayTeePrefix>,
 }
 
 impl RelaySessionSpec {
@@ -210,32 +222,53 @@ impl RelaySessionSpec {
             return Err(RelayContractError::EmptyTrackId);
         }
 
-        let PreparedMedia::StagedPrefix { path, bytes, url, content_length } = prepared else {
-            return Err(RelayContractError::PreparedMediaMissingStagedPrefix);
-        };
-
-        if url.is_empty() {
-            return Err(RelayContractError::EmptyUpstreamUrl);
+        match prepared {
+            PreparedMedia::StagedPrefix { path, bytes, url, content_length } => {
+                if url.is_empty() {
+                    return Err(RelayContractError::EmptyUpstreamUrl);
+                }
+                if *bytes == 0 || *content_length == 0 {
+                    return Err(RelayContractError::EmptyPrefixArtifact);
+                }
+                if *bytes > *content_length {
+                    return Err(RelayContractError::PrefixLongerThanContent);
+                }
+                Ok(Self {
+                    track_id,
+                    staged: RelayStagedArtifact {
+                        path: path.clone(),
+                        available: RelayByteRange { start: 0, end: *bytes },
+                    },
+                    upstream: RelayUpstreamStream { url: url.clone(), content_length: *content_length },
+                    contract: RelayTransportContract::default(),
+                    state: RelaySessionState::Registered,
+                    tee_prefix: None,
+                })
+            }
+            PreparedMedia::StreamAndCache { url, content_length, prefix_path, prefix_size } => {
+                if url.is_empty() {
+                    return Err(RelayContractError::EmptyUpstreamUrl);
+                }
+                if *content_length == 0 {
+                    return Err(RelayContractError::EmptyPrefixArtifact);
+                }
+                Ok(Self {
+                    track_id,
+                    staged: RelayStagedArtifact {
+                        path: prefix_path.clone(),
+                        available: RelayByteRange { start: 0, end: 0 }, // no staged data yet
+                    },
+                    upstream: RelayUpstreamStream { url: url.clone(), content_length: *content_length },
+                    contract: RelayTransportContract::default(),
+                    state: RelaySessionState::Registered,
+                    tee_prefix: Some(RelayTeePrefix {
+                        path: prefix_path.clone(),
+                        size: (*prefix_size).min(*content_length),
+                    }),
+                })
+            }
+            _ => Err(RelayContractError::PreparedMediaMissingStagedPrefix),
         }
-
-        if *bytes == 0 || *content_length == 0 {
-            return Err(RelayContractError::EmptyPrefixArtifact);
-        }
-
-        if *bytes > *content_length {
-            return Err(RelayContractError::PrefixLongerThanContent);
-        }
-
-        Ok(Self {
-            track_id,
-            staged: RelayStagedArtifact {
-                path: path.clone(),
-                available: RelayByteRange { start: 0, end: *bytes },
-            },
-            upstream: RelayUpstreamStream { url: url.clone(), content_length: *content_length },
-            contract: RelayTransportContract::default(),
-            state: RelaySessionState::Registered,
-        })
     }
 
     pub fn player_endpoint(
@@ -392,6 +425,33 @@ mod tests {
         assert_eq!(session.upstream.content_length, 4096);
         assert_eq!(session.contract, RelayTransportContract::default());
         assert_eq!(session.state, RelaySessionState::Registered);
+    }
+
+    #[test]
+    fn relay_contract_maps_stream_and_cache_into_tee_session() {
+        let prepared = PreparedMedia::StreamAndCache {
+            url: "https://example.com/upstream".to_string(),
+            content_length: 4096,
+            prefix_path: PathBuf::from("/tmp/prefix.webm"),
+            prefix_size: 2048,
+        };
+
+        let session = RelaySessionSpec::try_from_prepared("track-123", &prepared).unwrap();
+
+        assert_eq!(session.track_id, "track-123");
+        assert_eq!(session.staged.path, PathBuf::from("/tmp/prefix.webm"));
+        assert_eq!(session.staged.available, RelayByteRange { start: 0, end: 0 });
+        assert_eq!(session.upstream.url, "https://example.com/upstream");
+        assert_eq!(session.upstream.content_length, 4096);
+        assert_eq!(session.contract, RelayTransportContract::default());
+        assert_eq!(session.state, RelaySessionState::Registered);
+        assert_eq!(
+            session.tee_prefix,
+            Some(super::RelayTeePrefix {
+                path: PathBuf::from("/tmp/prefix.webm"),
+                size: 2048,
+            })
+        );
     }
 
     #[test]

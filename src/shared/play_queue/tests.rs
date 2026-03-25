@@ -21,6 +21,24 @@ fn test_add_single_song() {
 }
 
 #[test]
+fn test_add_at_inserts_at_requested_position() {
+    let mut queue = PlayQueue::new();
+    queue.apply(QueueCommand::Add { song: create_test_song("one") });
+    queue.apply(QueueCommand::Add { song: create_test_song("three") });
+
+    let events = queue.apply(QueueCommand::AddAt { song: create_test_song("two"), position: 1 });
+
+    let ids = match &events[0] {
+        QueueEvent::ItemsAdded { ids } => ids,
+        _ => panic!("Expected ItemsAdded event"),
+    };
+    assert_eq!(ids.len(), 1);
+    assert_eq!(queue.get_song(queue.get_play_order()[0]).unwrap().metadata["title"][0], "one");
+    assert_eq!(queue.get_song(queue.get_play_order()[1]).unwrap().metadata["title"][0], "two");
+    assert_eq!(queue.get_song(queue.get_play_order()[2]).unwrap().metadata["title"][0], "three");
+}
+
+#[test]
 fn test_add_batch() {
     let mut queue = PlayQueue::new();
     let songs = vec![create_test_song("one"), create_test_song("two"), create_test_song("three")];

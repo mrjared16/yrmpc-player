@@ -44,8 +44,8 @@ pub enum MpvEvent {
     EndFile { reason: String, file_error: Option<String> },
     /// Idle state changed
     IdleChanged { idle: bool },
-    /// Time remaining in current track (seconds)
-    TimeRemaining { seconds: f64 },
+    /// Playback has actually started or restarted
+    PlaybackStarted,
     /// Some other event we don't care about
     Other(String),
 }
@@ -290,17 +290,13 @@ impl MpvIpc {
                                 resp.data.as_ref().and_then(|v| v.as_bool()).unwrap_or(false);
                             MpvEvent::IdleChanged { idle }
                         }
-                        "time-remaining" => {
-                            let seconds =
-                                resp.data.as_ref().and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            MpvEvent::TimeRemaining { seconds }
-                        }
                         _ => MpvEvent::Other(format!("property-change: {}", name)),
                     }
                 } else {
                     MpvEvent::Other("property-change: unknown".to_string())
                 }
             }
+            "playback-restart" => MpvEvent::PlaybackStarted,
             "end-file" => {
                 let reason = resp.reason.clone().unwrap_or_else(|| "unknown".to_string());
                 let file_error = resp.file_error.clone();

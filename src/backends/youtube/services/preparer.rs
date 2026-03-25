@@ -9,7 +9,7 @@ use anyhow::{Context, Result};
 
 use super::preload_scheduler::TrackId;
 use crate::backends::youtube::{
-    audio::{MpvInput, cache::AudioCache, sources::concat::FfmpegConcatSource},
+    audio::{MpvInput, cache::AudioCache, sources::concat::PreparedMediaInputAdapter},
     protocol::play_intent::PreloadTier,
     url_resolver::UrlResolver,
 };
@@ -181,8 +181,8 @@ impl PlaybackPreparer {
             return MpvInput::new(prefix_path.to_string_lossy().to_string());
         }
 
-        let concat_url = FfmpegConcatSource::build_concat_url(prefix_path, prefix_size, stream_url);
-        MpvInput::with_args(concat_url, FfmpegConcatSource::protocol_whitelist_args())
+        let concat_url = PreparedMediaInputAdapter::build_concat_url(prefix_path, prefix_size, stream_url);
+        MpvInput::with_args(concat_url, PreparedMediaInputAdapter::protocol_whitelist_args())
     }
 
     fn build_direct(&self, track_id: &str, stream_url: &str) -> Result<PreparedPlayback> {
@@ -274,9 +274,9 @@ mod tests {
         assert_eq!(prepared.track_id, track_id);
 
         let expected_url =
-            FfmpegConcatSource::build_concat_url(&prefix_path, prefix_size, stream_url);
+            PreparedMediaInputAdapter::build_concat_url(&prefix_path, prefix_size, stream_url);
         assert_eq!(prepared.input.url, expected_url);
-        assert_eq!(prepared.input.mpv_args, FfmpegConcatSource::protocol_whitelist_args());
+        assert_eq!(prepared.input.mpv_args, PreparedMediaInputAdapter::protocol_whitelist_args());
     }
 
     #[tokio::test]

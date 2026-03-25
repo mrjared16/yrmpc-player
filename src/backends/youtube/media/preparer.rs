@@ -10,13 +10,11 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
-use parking_lot::Mutex;
-use tokio::task::JoinHandle;
-use tokio::sync::{Notify, OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, oneshot};
 
 use super::{
     super::{
-        audio::{AudioSourcePlan, cache::AudioCache},
+        audio::{AudioDeliveryPlan, cache::AudioCache},
         protocol::play_intent::RequestId,
         url_resolver::UrlResolver,
     },
@@ -24,6 +22,11 @@ use super::{
     PreloadTier,
     PrepareStatus,
     PreparedMedia,
+    StreamResolver,
+};
+use super::{
+    job_registry::{InFlightJob, JobProgress, JobRegistry},
+    staging_pipeline::StagingPipeline,
 };
 
 static REQUEST_ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -47,6 +50,12 @@ pub enum CacheRequest {
         tier: PreloadTier,
         request_id: RequestId,
     },
+    Warm {
+        track_id: String,
+    },
+    WarmBatch {
+        track_ids: Vec<String>,
+    },
     Cancel {
         request_id: RequestId,
     },
@@ -56,7 +65,7 @@ pub enum CacheRequest {
     Shutdown,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PrepareResult {
     StagedPrefix {
         prefix_path: PathBuf,
@@ -64,66 +73,115 @@ pub enum PrepareResult {
         stream_url: String,
         content_length: u64,
     },
+    /// Relay will stream from byte 0 in a single connection, teeing first
+    /// prefix_size bytes to prefix_path.  Used on cache miss to avoid a
+    /// separate prefix download that triggers YouTube CDN rate-limiting.
+    StreamAndCache {
+        stream_url: String,
+        content_length: u64,
+        prefix_path: PathBuf,
+        prefix_size: u64,
+    },
     Direct { stream_url: String },
     Cancelled,
     Failed(String),
 }
 
+/// Parse the `clen=` query parameter from a YouTube stream URL.
+fn parse_content_length_from_url(url: &str) -> Option<u64> {
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or("");
+    query
+        .split('&')
+        .find_map(|param| param.strip_prefix("clen="))
+        .and_then(|v| v.parse::<u64>().ok())
+}
+
 #[derive(Debug, Clone)]
-enum JobState {
-    ResolvingUrl { track_id: String },
-    UrlResolved { track_id: String, stream_url: String },
-    DownloadingPrefix { track_id: String, stream_url: String },
-    Completed(PrepareResult),
+enum UrlResolvedAction {
+    Complete(PrepareResult),
+    WaitForPrefixDownload { track_id: String, stream_url: String },
 }
 
-#[derive(Debug)]
-struct InFlightJob {
-    state: Mutex<JobState>,
-    task: Mutex<Option<JoinHandle<()>>>,
-    notify: Notify,
+fn decide_url_resolved_action(
+    pipeline: &StagingPipeline,
+    allow_immediate_direct: bool,
+    stream_immediate_cache_miss: bool,
+    tier: PreloadTier,
+    track_id: &str,
+    stream_url: &str,
+) -> UrlResolvedAction {
+    if let Some((prefix_path, prefix_bytes, content_length)) = pipeline.get_prefix_metadata(track_id) {
+        log::debug!(
+            tier:? = tier,
+            prefix_cache_result = "hit",
+            content_length = content_length,
+            prefix_bytes = prefix_bytes;
+            "[PREPARE] Prefix cache hit"
+        );
+
+        return UrlResolvedAction::Complete(PrepareResult::StagedPrefix {
+            prefix_path,
+            prefix_bytes,
+            stream_url: stream_url.to_string(),
+            content_length,
+        });
+    }
+
+    if tier == PreloadTier::Immediate {
+        if stream_immediate_cache_miss {
+            let Some(content_length) = parse_content_length_from_url(stream_url) else {
+                return UrlResolvedAction::Complete(PrepareResult::Failed(
+                    "Missing clen= in stream URL for tee relay path".to_string(),
+                ));
+            };
+
+            return UrlResolvedAction::Complete(PrepareResult::StreamAndCache {
+                stream_url: stream_url.to_string(),
+                content_length,
+                prefix_path: pipeline.prefix_path_for(track_id),
+                prefix_size: pipeline.default_prefix_size().min(content_length),
+            });
+        }
+
+        if allow_immediate_direct {
+            log::debug!(
+                tier:? = tier,
+                prefix_cache_result = "miss",
+                transport = "direct";
+                "[PREPARE] Immediate tier using direct transport on cache miss"
+            );
+
+            return UrlResolvedAction::Complete(PrepareResult::Direct {
+                stream_url: stream_url.to_string(),
+            });
+        }
+    }
+
+    UrlResolvedAction::WaitForPrefixDownload {
+        track_id: track_id.to_string(),
+        stream_url: stream_url.to_string(),
+    }
 }
 
-impl InFlightJob {
-    fn new(track_id: String) -> Self {
-        Self {
-            state: Mutex::new(JobState::ResolvingUrl { track_id }),
-            task: Mutex::new(None),
-            notify: Notify::new(),
-        }
+fn direct_bypass_for_inflight_prefix(
+    tier: PreloadTier,
+    allow_immediate_direct: bool,
+    stream_url: &str,
+) -> Option<PrepareResult> {
+    if tier == PreloadTier::Immediate && allow_immediate_direct {
+        log::debug!(
+            tier:? = tier,
+            prefix_cache_result = "pending",
+            transport = "direct";
+            "[PREPARE] Immediate tier bypassing in-flight prefix download"
+        );
+
+        return Some(PrepareResult::Direct {
+            stream_url: stream_url.to_string(),
+        });
     }
 
-    fn snapshot(&self) -> JobState {
-        self.state.lock().clone()
-    }
-
-    fn set_state(&self, new_state: JobState) {
-        *self.state.lock() = new_state;
-        self.notify.notify_waiters();
-    }
-
-    fn replace_task(&self, task: JoinHandle<()>) {
-        if let Some(existing) = self.task.lock().replace(task) {
-            existing.abort();
-        }
-    }
-
-    fn clear_task(&self) {
-        self.task.lock().take();
-    }
-
-    fn cancel(&self) {
-        if let Some(task) = self.task.lock().take() {
-            task.abort();
-        }
-
-        let mut state = self.state.lock();
-        if !matches!(*state, JobState::Completed(_)) {
-            *state = JobState::Completed(PrepareResult::Cancelled);
-            drop(state);
-            self.notify.notify_waiters();
-        }
-    }
+    None
 }
 
 #[derive(Debug, Clone)]
@@ -170,18 +228,17 @@ impl TierPermits {
 }
 
 #[derive(Debug)]
-enum InternalEvent {
+pub(super) enum InternalEvent {
     JobFinished { track_id: String },
 }
 
 pub struct YouTubeMediaPreparer {
     rx: mpsc::Receiver<CacheRequest>,
-    in_flight: HashMap<String, Arc<InFlightJob>>,
+    job_registry: JobRegistry,
     request_to_track: HashMap<RequestId, String>,
     active_window: HashSet<String>,
-    url_resolver: Arc<UrlResolver>,
-    audio_cache: Arc<AudioCache>,
-    audio_source_plan: AudioSourcePlan,
+    pipeline: Arc<StagingPipeline>,
+    audio_source_plan: AudioDeliveryPlan,
     background_queue: VecDeque<PreloadJob>,
     permits: TierPermits,
     internal_rx: mpsc::UnboundedReceiver<InternalEvent>,
@@ -191,24 +248,30 @@ pub struct YouTubeMediaPreparer {
 #[derive(Clone)]
 pub struct YouTubeMediaPreparerHandle {
     tx: mpsc::Sender<CacheRequest>,
+    url_resolver: Arc<dyn StreamResolver>,
 }
 
 impl YouTubeMediaPreparer {
     pub fn spawn(
         url_resolver: Arc<UrlResolver>,
         audio_cache: Arc<AudioCache>,
-        audio_source_plan: AudioSourcePlan,
+        audio_source_plan: AudioDeliveryPlan,
     ) -> YouTubeMediaPreparerHandle {
         let (tx, rx) = mpsc::channel(256);
         let (internal_tx, internal_rx) = mpsc::unbounded_channel();
+        let resolver_handle: Arc<dyn StreamResolver> = url_resolver.clone();
+        let pipeline = Arc::new(StagingPipeline::new(
+            url_resolver,
+            audio_cache,
+            audio_source_plan,
+        ));
 
         let mut executor = Self {
             rx,
-            in_flight: HashMap::new(),
+            job_registry: JobRegistry::default(),
             request_to_track: HashMap::new(),
             active_window: HashSet::new(),
-            url_resolver,
-            audio_cache,
+            pipeline,
             audio_source_plan,
             background_queue: VecDeque::new(),
             permits: TierPermits::new(),
@@ -220,7 +283,7 @@ impl YouTubeMediaPreparer {
             executor.run().await;
         });
 
-        YouTubeMediaPreparerHandle { tx }
+        YouTubeMediaPreparerHandle { tx, url_resolver: resolver_handle }
     }
 
     async fn run(&mut self) {
@@ -231,7 +294,7 @@ impl YouTubeMediaPreparer {
                 Some(ev) = self.internal_rx.recv() => {
                     match ev {
                         InternalEvent::JobFinished { track_id } => {
-                            self.in_flight.remove(&track_id);
+                            self.job_registry.remove(&track_id);
                             self.request_to_track.retain(|_, mapped_track_id| mapped_track_id != &track_id);
                         }
                     }
@@ -245,9 +308,15 @@ impl YouTubeMediaPreparer {
                         CacheRequest::Preload { track_id, tier, request_id } => {
                             self.handle_preload_request(track_id, tier, request_id);
                         }
-                        CacheRequest::Cancel { request_id } => {
-                            self.handle_cancel_request(request_id);
-                        }
+                CacheRequest::Warm { track_id } => {
+                    self.handle_warm_request(track_id);
+                }
+                CacheRequest::WarmBatch { track_ids } => {
+                    self.handle_warm_batch_request(track_ids);
+                }
+                CacheRequest::Cancel { request_id } => {
+                    self.handle_cancel_request(request_id);
+                }
                         CacheRequest::ActivateWindow { track_ids } => {
                             self.handle_activate_window(track_ids);
                         }
@@ -290,15 +359,20 @@ impl YouTubeMediaPreparer {
             self.spawn_url_resolution(track_id.clone(), Arc::clone(&job));
         }
 
-        let audio_cache = Arc::clone(&self.audio_cache);
+        let pipeline = Arc::clone(&self.pipeline);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
+        let allow_immediate_direct = self.audio_source_plan.allows_immediate_direct();
+        let stream_immediate_cache_miss =
+            self.audio_source_plan.streams_immediate_cache_miss_via_relay();
 
         tokio::spawn(async move {
             let result = Self::wait_or_coalesce_impl(
-                audio_cache,
+                pipeline,
                 permits,
                 internal_tx,
+                allow_immediate_direct,
+                stream_immediate_cache_miss,
                 Arc::clone(&job),
                 tier,
                 deadline,
@@ -322,8 +396,13 @@ impl YouTubeMediaPreparer {
         );
         self.request_to_track.insert(request_id, track_id.clone());
 
-        if self.in_flight.contains_key(&track_id) {
-            return;
+        if let Some(progress) = self.job_registry.progress(&track_id) {
+            match progress {
+                JobProgress::ResolvingUrl | JobProgress::UrlResolved { .. } => {}
+                JobProgress::DownloadingPrefix { .. } | JobProgress::Completed(_) => {
+                    return;
+                }
+            }
         }
 
         self.drop_queued_track(&track_id);
@@ -339,6 +418,37 @@ impl YouTubeMediaPreparer {
         }
 
         self.trim_background_queue();
+    }
+
+    fn handle_warm_request(&mut self, track_id: String) {
+        log::debug!(
+            transport:? = self.audio_source_plan.transport;
+            "[PREPARE] Warm queued track"
+        );
+
+        let (job, is_new) = self.get_or_create_job(&track_id);
+        if is_new {
+            self.spawn_url_resolution(track_id, job);
+        }
+    }
+
+    fn handle_warm_batch_request(&mut self, track_ids: Vec<String>) {
+        if track_ids.is_empty() {
+            return;
+        }
+
+        log::debug!(
+            transport:? = self.audio_source_plan.transport,
+            count = track_ids.len();
+            "[PREPARE] Batch warm queued tracks"
+        );
+
+        for track_id in track_ids {
+            let (job, is_new) = self.get_or_create_job(&track_id);
+            if is_new {
+                self.spawn_url_resolution(track_id, job);
+            }
+        }
     }
 
     fn handle_cancel_request(&mut self, request_id: RequestId) {
@@ -377,12 +487,7 @@ impl YouTubeMediaPreparer {
         }
         self.background_queue = retained;
 
-        let obsolete_tracks: Vec<String> = self
-            .in_flight
-            .keys()
-            .filter(|track_id| !self.active_window.contains(*track_id))
-            .cloned()
-            .collect();
+        let obsolete_tracks = self.job_registry.tracks_outside_window(&self.active_window);
 
         for track_id in obsolete_tracks {
             self.cancel_track(&track_id);
@@ -404,17 +509,22 @@ impl YouTubeMediaPreparer {
             self.spawn_url_resolution(job.track_id.clone(), Arc::clone(&in_flight));
         }
 
-        let audio_cache = Arc::clone(&self.audio_cache);
+        let pipeline = Arc::clone(&self.pipeline);
         let permits = self.permits.clone();
         let internal_tx = self.internal_tx.clone();
         let track_id = job.track_id;
         let tier = job.tier;
+        let allow_immediate_direct = self.audio_source_plan.allows_immediate_direct();
+        let stream_immediate_cache_miss =
+            self.audio_source_plan.streams_immediate_cache_miss_via_relay();
 
         tokio::spawn(async move {
             let _ = Self::wait_or_coalesce_impl(
-                audio_cache,
+                pipeline,
                 permits,
                 internal_tx,
+                allow_immediate_direct,
+                stream_immediate_cache_miss,
                 Arc::clone(&in_flight),
                 tier,
                 None,
@@ -455,60 +565,45 @@ impl YouTubeMediaPreparer {
     }
 
     fn cancel_track(&mut self, track_id: &str) {
-        if let Some(job) = self.in_flight.remove(track_id) {
-            job.cancel();
-        }
+        self.job_registry.cancel_track(track_id);
 
         self.request_to_track.retain(|_, mapped_track_id| mapped_track_id != track_id);
     }
 
     fn get_or_create_job(&mut self, track_id: &str) -> (Arc<InFlightJob>, bool) {
-        if let Some(existing) = self.in_flight.get(track_id) {
-            return (Arc::clone(existing), false);
-        }
-
-        let job = Arc::new(InFlightJob::new(track_id.to_string()));
-        self.in_flight.insert(track_id.to_string(), Arc::clone(&job));
-        (job, true)
+        self.job_registry.get_or_create(track_id)
     }
 
     fn spawn_url_resolution(&self, track_id: String, job: Arc<InFlightJob>) {
-        let url_resolver = Arc::clone(&self.url_resolver);
+        let pipeline = Arc::clone(&self.pipeline);
         let internal_tx = self.internal_tx.clone();
-        let uses_local_staging = self.audio_source_plan.uses_local_staging();
         let task_job = Arc::clone(&job);
 
         let task = tokio::spawn(async move {
-            let track_id_for_blocking = track_id.clone();
-            let resolved =
-                tokio::task::spawn_blocking(move || url_resolver.get_url(&track_id_for_blocking))
-                    .await
-                    .context("spawn_blocking failed")
-                    .and_then(|r| r.context("Failed to resolve stream URL"));
+            let resolved = pipeline.resolve_stream_url(track_id.clone()).await;
 
             match resolved {
                 Ok(stream_url) => {
-                    if !uses_local_staging {
+                    let completed = task_job.apply_url_resolution(
+                        track_id.clone(),
+                        stream_url,
+                        pipeline.uses_local_staging(),
+                    );
+
+                    if completed {
                         log::debug!(
                             prefix_cache_result = "not_required",
                             transport = "direct";
                             "[PREPARE] Local staging disabled, using direct transport"
                         );
-                        task_job.set_state(JobState::Completed(PrepareResult::Direct {
-                            stream_url,
-                        }));
                         task_job.clear_task();
                         let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
                     } else {
-                        task_job.set_state(JobState::UrlResolved {
-                            track_id: track_id.clone(),
-                            stream_url,
-                        });
                         task_job.clear_task();
                     }
                 }
                 Err(e) => {
-                    task_job.set_state(JobState::Completed(PrepareResult::Failed(e.to_string())));
+                    task_job.fail(e.to_string());
                     task_job.clear_task();
                     let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
                 }
@@ -539,9 +634,11 @@ impl YouTubeMediaPreparer {
         deadline: Option<Duration>,
     ) -> PrepareResult {
         Self::wait_or_coalesce_impl(
-            Arc::clone(&self.audio_cache),
+            Arc::clone(&self.pipeline),
             self.permits.clone(),
             self.internal_tx.clone(),
+            self.audio_source_plan.allows_immediate_direct(),
+            self.audio_source_plan.streams_immediate_cache_miss_via_relay(),
             job,
             tier,
             deadline,
@@ -550,79 +647,86 @@ impl YouTubeMediaPreparer {
     }
 
     async fn wait_or_coalesce_impl(
-        audio_cache: Arc<AudioCache>,
+        pipeline: Arc<StagingPipeline>,
         permits: TierPermits,
         internal_tx: mpsc::UnboundedSender<InternalEvent>,
+        allow_immediate_direct: bool,
+        stream_immediate_cache_miss: bool,
         job: Arc<InFlightJob>,
         tier: PreloadTier,
         deadline: Option<Duration>,
     ) -> PrepareResult {
         loop {
-            match job.snapshot() {
-                JobState::ResolvingUrl { track_id: _ } => {
-                    job.notify.notified().await;
+            match job.progress() {
+                JobProgress::ResolvingUrl => {
+                    job.wait_for_update(JobProgress::ResolvingUrl).await;
                 }
-                JobState::Completed(result) => {
+                JobProgress::Completed(result) => {
                     return result;
                 }
-                JobState::UrlResolved { track_id, stream_url } => {
-                    if let Some((prefix_path, prefix_bytes, content_length)) =
-                        audio_cache.get_prefix_metadata(&track_id)
-                    {
-                        log::debug!(
-                            tier:? = tier,
-                            prefix_cache_result = "hit",
-                            content_length = content_length,
-                            prefix_bytes = prefix_bytes;
-                            "[PREPARE] Prefix cache hit"
-                        );
-                        return PrepareResult::StagedPrefix {
-                            prefix_path,
-                            prefix_bytes,
-                            stream_url,
-                            content_length,
-                        };
-                    }
-
-                    let should_spawn = {
-                        let mut state = job.state.lock();
-                        match &*state {
-                            JobState::UrlResolved { track_id: current_id, stream_url: current }
-                                if current_id == &track_id && current == &stream_url =>
-                            {
-                                *state = JobState::DownloadingPrefix {
-                                    track_id: track_id.clone(),
-                                    stream_url: stream_url.clone(),
-                                };
-                                true
-                            }
-                            _ => false,
+                JobProgress::UrlResolved { track_id, stream_url } => {
+                    match decide_url_resolved_action(
+                        &pipeline,
+                        allow_immediate_direct,
+                        stream_immediate_cache_miss,
+                        tier,
+                        &track_id,
+                        &stream_url,
+                    ) {
+                        UrlResolvedAction::Complete(result) => {
+                            job.complete(result.clone());
+                            let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
+                            return result;
                         }
-                    };
+                        UrlResolvedAction::WaitForPrefixDownload { track_id, stream_url } => {
+                            let should_spawn =
+                                job.transition_from_url_resolved_to_downloading(&track_id, &stream_url);
 
-                    if should_spawn {
-                        Self::spawn_prefix_download(
-                            Arc::clone(&audio_cache),
-                            permits.clone(),
-                            internal_tx.clone(),
-                            track_id.clone(),
-                            Arc::clone(&job),
-                            stream_url.clone(),
-                            tier,
-                        );
+                            if should_spawn {
+                                Self::spawn_prefix_download(
+                                    Arc::clone(&pipeline),
+                                    permits.clone(),
+                                    internal_tx.clone(),
+                                    track_id.clone(),
+                                    Arc::clone(&job),
+                                    stream_url.clone(),
+                                    tier,
+                                );
+                            }
+
+                            return Self::wait_for_prefix_result(
+                                job,
+                                stream_url,
+                                tier,
+                                deadline,
+                                allow_immediate_direct,
+                            )
+                            .await;
+                        }
+                    }
+                }
+                JobProgress::DownloadingPrefix { stream_url } => {
+                    if let Some(result) =
+                        direct_bypass_for_inflight_prefix(tier, allow_immediate_direct, &stream_url)
+                    {
+                        return result;
                     }
 
-                    return Self::wait_for_prefix_result(job, stream_url, tier, deadline).await;
-                }
-                JobState::DownloadingPrefix { track_id: _, stream_url } => {
-                    return Self::wait_for_prefix_result(job, stream_url, tier, deadline).await;
+                    return Self::wait_for_prefix_result(
+                        job,
+                        stream_url,
+                        tier,
+                        deadline,
+                        allow_immediate_direct,
+                    )
+                    .await;
                 }
             }
         }
     }
 
     fn spawn_prefix_download(
-        audio_cache: Arc<AudioCache>,
+        pipeline: Arc<StagingPipeline>,
         permits: TierPermits,
         internal_tx: mpsc::UnboundedSender<InternalEvent>,
         track_id: String,
@@ -635,16 +739,7 @@ impl YouTubeMediaPreparer {
         let task = tokio::spawn(async move {
             let _permit = permits.acquire(tier).await;
 
-            let outcome = match audio_cache.ensure_prefix(&track_id, &stream_url).await.and_then(
-                |(prefix_path, content_length)| {
-                    let prefix_bytes = std::fs::metadata(&prefix_path)
-                        .with_context(|| {
-                            format!("Failed to read prefix metadata for {}", prefix_path.display())
-                        })?
-                        .len();
-                    Ok((prefix_path, prefix_bytes, content_length))
-                },
-            ) {
+            let outcome = match pipeline.ensure_prefix(&track_id, &stream_url).await {
                 Ok((prefix_path, prefix_bytes, content_length)) => {
                     log::debug!(
                         tier:? = tier,
@@ -671,7 +766,7 @@ impl YouTubeMediaPreparer {
                 }
             };
 
-            task_job.set_state(JobState::Completed(outcome));
+            task_job.complete(outcome);
             task_job.clear_task();
             let _ = internal_tx.send(InternalEvent::JobFinished { track_id });
         });
@@ -684,17 +779,11 @@ impl YouTubeMediaPreparer {
         stream_url: String,
         tier: PreloadTier,
         deadline: Option<Duration>,
+        allow_immediate_direct: bool,
     ) -> PrepareResult {
-        let wait = async {
-            loop {
-                match job.snapshot() {
-                    JobState::Completed(result) => return result,
-                    _ => job.notify.notified().await,
-                }
-            }
-        };
+        let wait = job.wait_for_completion();
 
-        if tier == PreloadTier::Immediate {
+        if tier == PreloadTier::Immediate && allow_immediate_direct {
             if let Some(deadline) = deadline {
                 match tokio::time::timeout(deadline, wait).await {
                     Ok(PrepareResult::StagedPrefix {
@@ -711,6 +800,7 @@ impl YouTubeMediaPreparer {
                     Ok(PrepareResult::Direct { stream_url: resolved_url }) => {
                         PrepareResult::Direct { stream_url: resolved_url }
                     }
+                    Ok(result @ PrepareResult::StreamAndCache { .. }) => result,
                     Ok(PrepareResult::Cancelled) => PrepareResult::Cancelled,
                     Ok(PrepareResult::Failed(_)) => {
                         log::warn!(
@@ -747,6 +837,7 @@ impl YouTubeMediaPreparer {
                     PrepareResult::Direct { stream_url: resolved_url } => {
                         PrepareResult::Direct { stream_url: resolved_url }
                     }
+                    result @ PrepareResult::StreamAndCache { .. } => result,
                     PrepareResult::Cancelled => PrepareResult::Cancelled,
                     PrepareResult::Failed(_) => {
                         log::warn!(
@@ -786,6 +877,12 @@ impl YouTubeMediaPreparerHandle {
         }
     }
 
+    pub fn warm_url(&self, track_id: String) {
+        if let Err(e) = self.tx.try_send(CacheRequest::Warm { track_id }) {
+            log::debug!("YouTubeMediaPreparer warm dropped: {e}");
+        }
+    }
+
     pub fn cancel(&self, request_id: RequestId) {
         if let Err(e) = self.tx.try_send(CacheRequest::Cancel { request_id }) {
             log::debug!("YouTubeMediaPreparer cancel dropped: {e}");
@@ -803,6 +900,16 @@ impl YouTubeMediaPreparerHandle {
             log::debug!("YouTubeMediaPreparer shutdown dropped: {e}");
         }
     }
+
+    pub fn warm_many_urls(&self, track_ids: Vec<String>) {
+        if track_ids.is_empty() {
+            return;
+        }
+
+        if let Err(e) = self.tx.try_send(CacheRequest::WarmBatch { track_ids }) {
+            log::debug!("YouTubeMediaPreparer batch warm dropped: {e}");
+        }
+    }
 }
 
 fn prepared_media_from_result(result: PrepareResult) -> Result<PreparedMedia> {
@@ -817,6 +924,17 @@ fn prepared_media_from_result(result: PrepareResult) -> Result<PreparedMedia> {
             bytes: prefix_bytes,
             url: stream_url,
             content_length,
+        }),
+        PrepareResult::StreamAndCache {
+            stream_url,
+            content_length,
+            prefix_path,
+            prefix_size,
+        } => Ok(PreparedMedia::StreamAndCache {
+            url: stream_url,
+            content_length,
+            prefix_path,
+            prefix_size,
         }),
         PrepareResult::Direct { stream_url } => Ok(PreparedMedia::Direct { url: stream_url }),
         PrepareResult::Cancelled => Err(anyhow!("Preparation cancelled")),
@@ -843,6 +961,18 @@ impl MediaPreparer for YouTubeMediaPreparerHandle {
         self.preload(track_id.to_string(), tier, request_id);
     }
 
+    fn warm(&self, track_id: &str) {
+        self.warm_url(track_id.to_string());
+    }
+
+    fn warm_many(&self, track_ids: &[String]) {
+        YouTubeMediaPreparerHandle::warm_many_urls(self, track_ids.to_vec());
+    }
+
+    fn invalidate(&self, track_id: &str) {
+        self.url_resolver.invalidate(track_id);
+    }
+
     fn activate_playback_window(&self, track_ids: &[String]) {
         YouTubeMediaPreparerHandle::activate_playback_window(self, track_ids.to_vec());
     }
@@ -850,28 +980,46 @@ impl MediaPreparer for YouTubeMediaPreparerHandle {
 
 #[cfg(test)]
 mod tests {
-    use std::{path::PathBuf, sync::Arc, time::Duration};
+    use std::{
+        collections::HashMap,
+        io::{Read, Write},
+        net::TcpListener,
+        path::PathBuf,
+        sync::{
+            Arc,
+            atomic::{AtomicUsize, Ordering},
+        },
+        thread,
+        time::Duration,
+    };
 
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 
     use super::{
         InFlightJob,
+        JobRegistry,
         MAX_PENDING_PRELOADS,
         PrepareResult,
         PreloadJob,
+        StagingPipeline,
         TierPermits,
         YouTubeMediaPreparer,
         prepared_media_from_result,
     };
+    use super::super::job_registry::JobState;
     use crate::backends::youtube::{
-        audio::{AudioCache, AudioSourcePlanner, CacheConfig},
+        audio::{AudioCache, AudioDeliveryPlanner, CacheConfig},
         config::AudioDeliveryMode,
+        extractor::Extractor,
         media::{PreparedMedia, PreloadTier},
         url_resolver::UrlResolver,
     };
 
-    fn build_test_preparer() -> (TempDir, YouTubeMediaPreparer) {
+    fn build_test_preparer_with_resolver(
+        mode: AudioDeliveryMode,
+        url_resolver: Arc<UrlResolver>,
+    ) -> (TempDir, YouTubeMediaPreparer) {
         let temp_dir = TempDir::new().unwrap();
         let cache = Arc::new(
             AudioCache::new(CacheConfig {
@@ -883,15 +1031,16 @@ mod tests {
         );
         let (tx, rx) = mpsc::channel(16);
         let (internal_tx, internal_rx) = mpsc::unbounded_channel();
+        let audio_source_plan = AudioDeliveryPlanner.plan(mode);
+        let pipeline = Arc::new(StagingPipeline::new(url_resolver, cache, audio_source_plan));
 
         let preparer = YouTubeMediaPreparer {
             rx,
-            in_flight: Default::default(),
+            job_registry: JobRegistry::default(),
             request_to_track: Default::default(),
             active_window: Default::default(),
-            url_resolver: Arc::new(UrlResolver::default()),
-            audio_cache: cache,
-            audio_source_plan: AudioSourcePlanner.plan(AudioDeliveryMode::Combined),
+            pipeline,
+            audio_source_plan,
             background_queue: Default::default(),
             permits: TierPermits::new(),
             internal_rx,
@@ -900,6 +1049,83 @@ mod tests {
 
         drop(tx);
         (temp_dir, preparer)
+    }
+
+    fn build_test_preparer_for_mode(mode: AudioDeliveryMode) -> (TempDir, YouTubeMediaPreparer) {
+        build_test_preparer_with_resolver(
+            mode,
+            Arc::new(UrlResolver::default()),
+        )
+    }
+
+    fn build_test_preparer() -> (TempDir, YouTubeMediaPreparer) {
+        build_test_preparer_for_mode(AudioDeliveryMode::Staged)
+    }
+
+    fn spawn_prefix_probe_server() -> (String, Arc<AtomicUsize>) {
+        let listener = TcpListener::bind("127.0.0.1:0").expect("bind test prefix probe server");
+        let addr = listener.local_addr().expect("read test prefix probe addr");
+        let hits = Arc::new(AtomicUsize::new(0));
+        let hits_for_thread = Arc::clone(&hits);
+
+        thread::spawn(move || {
+            if let Ok((mut stream, _)) = listener.accept() {
+                hits_for_thread.fetch_add(1, Ordering::SeqCst);
+
+                let mut buf = [0_u8; 1024];
+                let _ = stream.read(&mut buf);
+                let body = vec![0_u8; 1024];
+                let response = format!(
+                    "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-1023/4096\r\nConnection: close\r\n\r\n",
+                    body.len()
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.write_all(&body);
+                let _ = stream.flush();
+            }
+        });
+
+        (format!("http://{addr}/audio?clen=4096"), hits)
+    }
+
+    struct SequenceExtractor {
+        base_url: String,
+        extract_one_count: AtomicUsize,
+    }
+
+    impl SequenceExtractor {
+        fn new(base_url: String) -> Self {
+            Self {
+                base_url,
+                extract_one_count: AtomicUsize::new(0),
+            }
+        }
+    }
+
+    impl Extractor for SequenceExtractor {
+        fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, anyhow::Result<String>> {
+            video_ids
+                .iter()
+                .map(|video_id| (video_id.clone(), self.extract_one(video_id)))
+                .collect()
+        }
+
+        fn name(&self) -> &'static str {
+            "sequence"
+        }
+
+        fn extract_one(&self, _video_id: &str) -> anyhow::Result<String> {
+            let seq = self.extract_one_count.fetch_add(1, Ordering::SeqCst) + 1;
+            Ok(format!("{}&seq={seq}", self.base_url))
+        }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
     }
 
     #[test]
@@ -924,6 +1150,201 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn immediate_failed_prepare_falls_back_to_direct() {
+        let job = Arc::new(InFlightJob::new("track-1".to_string()));
+        job.set_state(JobState::Completed(PrepareResult::Failed("boom".to_string())));
+
+        let result = YouTubeMediaPreparer::wait_for_prefix_result(
+            job,
+            "https://example.com/direct".to_string(),
+            PreloadTier::Immediate,
+            Some(Duration::from_millis(10)),
+            true,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            PrepareResult::Direct {
+                stream_url
+            } if stream_url == "https://example.com/direct"
+        ));
+    }
+
+    #[tokio::test]
+    async fn immediate_cache_miss_streams_and_caches_in_auto_mode() {
+        let (_temp_dir, preparer) = build_test_preparer_for_mode(AudioDeliveryMode::Auto);
+        let (stream_url, hits) = spawn_prefix_probe_server();
+        let track_id = "immediate-track";
+
+        let job = Arc::new(InFlightJob::new(track_id.to_string()));
+        job.set_state(JobState::UrlResolved {
+            track_id: track_id.to_string(),
+            stream_url: stream_url.clone(),
+        });
+
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let result = YouTubeMediaPreparer::wait_or_coalesce_impl(
+            Arc::clone(&preparer.pipeline),
+            preparer.permits.clone(),
+            internal_tx,
+            preparer.audio_source_plan.allows_immediate_direct(),
+            preparer.audio_source_plan.streams_immediate_cache_miss_via_relay(),
+            Arc::clone(&job),
+            PreloadTier::Immediate,
+            Some(Duration::from_millis(10)),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            PrepareResult::StreamAndCache {
+                stream_url: returned_url,
+                content_length,
+                prefix_path,
+                prefix_size,
+            } if returned_url == stream_url
+                && content_length == 4096
+                && prefix_path == preparer.pipeline.prefix_path_for(track_id)
+                && prefix_size == preparer.pipeline.default_prefix_size()
+        ));
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn immediate_cache_miss_streams_and_caches_in_relay_mode() {
+        let (_temp_dir, preparer) = build_test_preparer_for_mode(AudioDeliveryMode::Relay);
+        let (stream_url, hits) = spawn_prefix_probe_server();
+        let track_id = "relay-track";
+
+        let job = Arc::new(InFlightJob::new(track_id.to_string()));
+        job.set_state(JobState::UrlResolved {
+            track_id: track_id.to_string(),
+            stream_url: stream_url.clone(),
+        });
+
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let result = YouTubeMediaPreparer::wait_or_coalesce_impl(
+            Arc::clone(&preparer.pipeline),
+            preparer.permits.clone(),
+            internal_tx,
+            preparer.audio_source_plan.allows_immediate_direct(),
+            preparer.audio_source_plan.streams_immediate_cache_miss_via_relay(),
+            Arc::clone(&job),
+            PreloadTier::Immediate,
+            Some(Duration::from_secs(1)),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            PrepareResult::StreamAndCache {
+                stream_url: returned_url,
+                content_length,
+                prefix_path,
+                prefix_size,
+            } if returned_url == stream_url
+                && content_length == 4096
+                && prefix_path == preparer.pipeline.prefix_path_for(track_id)
+                && prefix_size == preparer.pipeline.default_prefix_size()
+        ));
+        assert_eq!(hits.load(Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn relay_mode_gapless_cache_miss_reuses_original_stream_url_after_prefix_download() {
+        let (base_url, _hits) = spawn_prefix_probe_server();
+        let extractor = Arc::new(SequenceExtractor::new(base_url.clone()));
+        let url_resolver = Arc::new(UrlResolver::from_extractor(
+            extractor.clone(),
+            crate::backends::youtube::config::ExtractorType::YtDlp,
+        ));
+        let (_temp_dir, preparer) =
+            build_test_preparer_with_resolver(AudioDeliveryMode::Relay, url_resolver.clone());
+        let track_id = "relay-refresh-track";
+        let initial_url = url_resolver.get_url(track_id).unwrap();
+
+        let job = Arc::new(InFlightJob::new(track_id.to_string()));
+        job.set_state(JobState::UrlResolved {
+            track_id: track_id.to_string(),
+            stream_url: initial_url.clone(),
+        });
+
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+        let result = YouTubeMediaPreparer::wait_or_coalesce_impl(
+            Arc::clone(&preparer.pipeline),
+            preparer.permits.clone(),
+            internal_tx,
+            preparer.audio_source_plan.allows_immediate_direct(),
+            preparer.audio_source_plan.streams_immediate_cache_miss_via_relay(),
+            Arc::clone(&job),
+            PreloadTier::Gapless,
+            Some(Duration::from_secs(1)),
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            PrepareResult::StagedPrefix {
+                stream_url: returned_url,
+                ..
+            } if returned_url == initial_url
+        ));
+        assert_eq!(extractor.extract_one_count.load(Ordering::SeqCst), 1);
+    }
+
+    #[tokio::test]
+    async fn cache_hit_returns_staged_prefix_without_download() {
+        let (temp_dir, preparer) = build_test_preparer();
+        let track_id = "cached-track";
+        let stream_url = "https://example.com/stream".to_string();
+        let prefix_path = temp_dir.path().join("cached-track.webm");
+        std::fs::write(&prefix_path, vec![0u8; 512]).unwrap();
+        preparer
+            .pipeline
+            .audio_cache()
+            .register_prefix(track_id, prefix_path.clone(), 512, 4096);
+
+        let job = Arc::new(InFlightJob::new(track_id.to_string()));
+        job.set_state(JobState::UrlResolved {
+            track_id: track_id.to_string(),
+            stream_url: stream_url.clone(),
+        });
+        let (internal_tx, _internal_rx) = mpsc::unbounded_channel();
+
+        let result = YouTubeMediaPreparer::wait_or_coalesce_impl(
+            Arc::clone(&preparer.pipeline),
+            preparer.permits.clone(),
+            internal_tx,
+            preparer.audio_source_plan.allows_immediate_direct(),
+            preparer.audio_source_plan.streams_immediate_cache_miss_via_relay(),
+            job,
+            PreloadTier::Gapless,
+            None,
+        )
+        .await;
+
+        assert!(matches!(
+            result,
+            PrepareResult::StagedPrefix {
+                prefix_path: returned_path,
+                prefix_bytes,
+                stream_url: returned_url,
+                content_length,
+            } if returned_path == prefix_path
+                && prefix_bytes == 512
+                && returned_url == stream_url
+                && content_length == 4096
+        ));
+    }
+
+    #[test]
+    fn direct_mode_plan_disables_local_staging() {
+        let (_temp_dir, preparer) = build_test_preparer_for_mode(AudioDeliveryMode::Direct);
+        assert!(!preparer.audio_source_plan.uses_local_staging());
+    }
+
+    #[tokio::test]
     async fn activating_new_window_cancels_inflight_and_drops_stale_preloads() {
         let (_temp_dir, mut preparer) = build_test_preparer();
         let stale_job = Arc::new(InFlightJob::new("stale".to_string()));
@@ -934,7 +1355,9 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer.in_flight.insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer
+            .job_registry
+            .insert("stale".to_string(), Arc::clone(&stale_job));
         preparer.request_to_track.insert(1, "stale-queued".to_string());
         preparer.request_to_track.insert(2, "keep".to_string());
         preparer.background_queue.push_back(PreloadJob {
@@ -950,8 +1373,8 @@ mod tests {
 
         preparer.handle_activate_window(vec!["keep".to_string()]);
 
-        assert!(!preparer.in_flight.contains_key("stale"));
-        assert!(matches!(stale_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+        assert!(!preparer.job_registry.contains("stale"));
+        assert!(matches!(stale_job.snapshot(), JobState::Completed(PrepareResult::Cancelled)));
         assert_eq!(preparer.background_queue.len(), 1);
         assert_eq!(preparer.background_queue[0].track_id, "keep");
         assert!(!preparer.request_to_track.contains_key(&1));
@@ -973,13 +1396,15 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer.in_flight.insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer
+            .job_registry
+            .insert("stale".to_string(), Arc::clone(&stale_job));
         preparer.request_to_track.insert(41, "stale".to_string());
 
         preparer.handle_cancel_request(41);
 
-        assert!(!preparer.in_flight.contains_key("stale"));
-        assert!(matches!(stale_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+        assert!(!preparer.job_registry.contains("stale"));
+        assert!(matches!(stale_job.snapshot(), JobState::Completed(PrepareResult::Cancelled)));
         assert!(!preparer.request_to_track.contains_key(&41));
         assert!(matches!(
             tokio::time::timeout(Duration::from_millis(50), done_rx).await,
@@ -998,13 +1423,15 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer.in_flight.insert("shared".to_string(), Arc::clone(&shared_job));
+        preparer
+            .job_registry
+            .insert("shared".to_string(), Arc::clone(&shared_job));
         preparer.request_to_track.insert(41, "shared".to_string());
         preparer.request_to_track.insert(42, "shared".to_string());
 
         preparer.handle_cancel_request(41);
 
-        assert!(preparer.in_flight.contains_key("shared"));
+        assert!(preparer.job_registry.contains("shared"));
         assert!(!preparer.request_to_track.contains_key(&41));
         assert!(preparer.request_to_track.contains_key(&42));
         assert!(matches!(
@@ -1014,9 +1441,51 @@ mod tests {
 
         preparer.handle_cancel_request(42);
 
-        assert!(!preparer.in_flight.contains_key("shared"));
+        assert!(!preparer.job_registry.contains("shared"));
         assert!(!preparer.request_to_track.contains_key(&42));
-        assert!(matches!(shared_job.snapshot(), super::JobState::Completed(PrepareResult::Cancelled)));
+        assert!(matches!(shared_job.snapshot(), JobState::Completed(PrepareResult::Cancelled)));
+    }
+
+    #[tokio::test]
+    async fn warm_job_can_be_promoted_to_staged_prefetch() {
+        let (temp_dir, mut preparer) = build_test_preparer();
+        let track_id = "queued-track";
+        let prefix_path = temp_dir.path().join("queued-track.webm");
+        std::fs::write(&prefix_path, vec![0u8; 256]).unwrap();
+        preparer
+            .pipeline
+            .audio_cache()
+            .register_prefix(track_id, prefix_path.clone(), 256, 4096);
+
+        let warm_job = Arc::new(InFlightJob::new(track_id.to_string()));
+        warm_job.set_state(JobState::UrlResolved {
+            track_id: track_id.to_string(),
+            stream_url: "https://example.com/stream".to_string(),
+        });
+        preparer
+            .job_registry
+            .insert(track_id.to_string(), Arc::clone(&warm_job));
+
+        preparer.handle_preload_request(track_id.to_string(), PreloadTier::Gapless, 7);
+
+        assert_eq!(preparer.background_queue.len(), 1);
+        assert_eq!(preparer.background_queue[0].track_id, track_id);
+
+        preparer.dispatch_background_job();
+
+        let result = tokio::time::timeout(Duration::from_secs(1), warm_job.wait_for_completion())
+            .await
+            .expect("warm job should complete after promotion");
+
+        assert!(matches!(
+            result,
+            PrepareResult::StagedPrefix {
+                prefix_path: returned_path,
+                prefix_bytes,
+                content_length,
+                ..
+            } if returned_path == prefix_path && prefix_bytes == 256 && content_length == 4096
+        ));
     }
 
     #[test]

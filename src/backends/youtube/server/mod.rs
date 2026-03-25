@@ -27,6 +27,15 @@
 
 pub mod handlers;
 pub mod orchestrator;
+pub mod playback_coordinator;
+pub mod playback_horizon;
+pub mod prefetch_manager;
+pub mod queue_coordinator;
+pub mod queue_view;
+pub mod track_ended;
+pub(crate) mod playback_prepare;
+#[cfg(test)]
+pub(crate) mod test_support;
 
 use std::{
     io::{BufReader, BufWriter},
@@ -47,12 +56,12 @@ use parking_lot::Mutex;
 
 use super::{
     audio::{
-        AudioSourcePlanner,
+        AudioDeliveryPlanner,
         AudioTransportTarget,
         CacheConfig,
         MpvAudioSource,
     },
-    config::{AudioDeliveryMode, ExtractorType},
+    config::{AudioDeliveryMode, ExtractorType, YtDlpExtractorConfig},
     media::{MediaPreparer, RelayRuntime},
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
@@ -65,7 +74,9 @@ use super::{
         YouTubeServices,
     },
 };
-use crate::shared::play_queue::{PlayQueue, QueueCommand, QueueEvent};
+use crate::shared::play_queue::PlayQueue;
+use orchestrator::Orchestrator;
+use queue_coordinator::QueueCoordinator;
 
 /// YouTube server orchestrates services and handles IPC
 pub struct YouTubeServer {
@@ -78,7 +89,8 @@ pub struct YouTubeServer {
     preload_scheduler: Arc<Mutex<PreloadScheduler>>,
     media_preparer: Arc<dyn MediaPreparer>,
     relay_runtime: Option<Arc<RelayRuntime>>,
-    queue_event_handler: Mutex<QueueEventHandler>,
+    orchestrator: Arc<Orchestrator>,
+    queue_coordinator: Arc<QueueCoordinator>,
     running: Arc<AtomicBool>,
     socket_path: PathBuf,
     mpv_socket_path: PathBuf,
@@ -95,6 +107,7 @@ impl YouTubeServer {
         cookie_file: Option<&str>,
         extractor_type: ExtractorType,
         audio_delivery_mode: AudioDeliveryMode,
+        ytdlp_config: YtDlpExtractorConfig,
     ) -> Result<Self> {
         let mpv_socket = socket_path.with_extension("mpv.sock");
 
@@ -108,15 +121,19 @@ impl YouTubeServer {
 
         // Create shared services registry (single source of truth)
         let cache_config = CacheConfig::default();
-        let audio_source_plan = AudioSourcePlanner.plan(audio_delivery_mode);
-        let services =
-            YouTubeServices::new(extractor_type, audio_source_plan, cache_config.clone())?;
+        let audio_source_plan = AudioDeliveryPlanner.plan(audio_delivery_mode);
+        let services = YouTubeServices::new(
+            extractor_type,
+            ytdlp_config,
+            audio_source_plan,
+            cache_config.clone(),
+        )?;
         let media_preparer = services.media_preparer();
 
         let audio_source: Option<Arc<Mutex<dyn MpvAudioSource>>> = None;
         let relay_runtime = if matches!(audio_source_plan.transport, AudioTransportTarget::LocalRelay)
         {
-            match RelayRuntime::start() {
+            match RelayRuntime::start_with_cache(services.audio_cache()) {
                 Ok(runtime) => Some(Arc::new(runtime)),
                 Err(err) => {
                     log::warn!(
@@ -142,9 +159,9 @@ impl YouTubeServer {
                     );
                 }
             }
-            AudioTransportTarget::Combined => {
+            AudioTransportTarget::PreparedInput => {
                 log::info!(
-                    "Audio mode: Combined (shared preparer stages prefixes in {:?})",
+                    "Audio mode: Staged (shared preparer stages prefixes in {:?})",
                     cache_config.cache_dir
                 );
             }
@@ -173,12 +190,33 @@ impl YouTubeServer {
 
         let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
 
+        let orchestrator = Arc::new(Orchestrator::new(
+            Arc::clone(&playback),
+            Arc::clone(&queue),
+            Arc::clone(&state_tracker),
+            Arc::clone(&media_preparer),
+        ));
+
         let queue_event_handler = QueueEventHandler::new(
             Arc::clone(&playback),
             Arc::clone(&queue),
             Arc::clone(&play_queue),
         )
-        .with_media_preparer(Arc::clone(&media_preparer));
+        .with_media_preparer(Arc::clone(&media_preparer))
+        .with_playback_coordinator(Arc::clone(orchestrator.coordinator()))
+        .with_prefix_window_worker_kick({
+            let orchestrator = Arc::clone(&orchestrator);
+            Arc::new(move || orchestrator.kick_prefix_window_worker())
+        });
+
+        let queue_coordinator = Arc::new(QueueCoordinator::new(
+            Arc::clone(&queue),
+            Arc::clone(&playback),
+            Arc::clone(&play_queue),
+            queue_event_handler,
+            Arc::clone(&orchestrator),
+            event_tx.clone(),
+        ));
 
         Ok(Self {
             api,
@@ -189,7 +227,8 @@ impl YouTubeServer {
             preload_scheduler,
             media_preparer,
             relay_runtime,
-            queue_event_handler: Mutex::new(queue_event_handler),
+            orchestrator,
+            queue_coordinator,
             running: Arc::new(AtomicBool::new(false)),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,
@@ -251,10 +290,7 @@ impl YouTubeServer {
         let internal_event_rx = self.internal_event_rx.clone();
         let event_tx = self.event_tx.clone();
         let running = Arc::clone(&self.running);
-        let playback = Arc::clone(&self.playback);
-        let queue = Arc::clone(&self.queue);
-        let state_tracker = Arc::clone(&self.state_tracker);
-        let media_preparer = Arc::clone(&self.media_preparer);
+        let orchestrator = Arc::clone(&self.orchestrator);
 
         thread::spawn(move || {
             log::info!("Internal event processor started");
@@ -262,36 +298,18 @@ impl YouTubeServer {
             while running.load(Ordering::SeqCst) {
                 match internal_event_rx.recv_timeout(Duration::from_millis(500)) {
                     Ok(event) => {
-                        log::debug!("Internal event processor received: {:?}", event);
-
                         match event {
                             InternalEvent::EndFile { reason } => {
-                                orchestrator::handle_track_ended(
-                                    &playback,
-                                    &queue,
-                                    &state_tracker,
-                                    &media_preparer,
-                                    &reason,
-                                );
+                                orchestrator.handle_track_ended(&reason);
                                 let _ = event_tx.send("player".to_string());
                             }
                             InternalEvent::TrackChanged { position } => {
-                                orchestrator::handle_track_changed(
-                                    &playback,
-                                    &queue,
-                                    &state_tracker,
-                                    &media_preparer,
-                                    position,
-                                );
+                                orchestrator.handle_track_changed(position);
                                 let _ = event_tx.send("player".to_string());
                             }
                             InternalEvent::IdleChanged { .. } => {}
-                            InternalEvent::TimeRemaining { seconds } => {
-                                orchestrator::handle_time_remaining(
-                                    &queue,
-                                    &media_preparer,
-                                    seconds,
-                                );
+                            InternalEvent::PlaybackStarted => {
+                                orchestrator.handle_playback_started();
                             }
                         }
                     }
@@ -353,11 +371,8 @@ impl YouTubeServer {
 
             // Playback handlers
             ServerCommand::Play => handlers::handle_play(
-                &self.playback,
-                &self.queue,
-                &self.state_tracker,
+                &self.orchestrator,
                 &self.event_tx,
-                &self.media_preparer,
             ),
             ServerCommand::Pause => handlers::handle_pause(&self.playback, &self.event_tx),
             ServerCommand::Stop => handlers::handle_stop(&self.playback, &self.event_tx),
@@ -368,88 +383,35 @@ impl YouTubeServer {
 
             // Navigation (uses orchestrator)
             ServerCommand::Next => {
-                orchestrator::next_track(
-                    &self.playback,
-                    &self.queue,
-                    &self.state_tracker,
-                    &self.media_preparer,
-                )
+                self.orchestrator.next_track()
             }
             ServerCommand::Previous => {
-                orchestrator::previous_track(
-                    &self.playback,
-                    &self.queue,
-                    &self.state_tracker,
-                    &self.media_preparer,
-                )
+                self.orchestrator.previous_track()
             }
-            ServerCommand::PlayPos(pos) => orchestrator::play_position_sync(
-                &self.playback,
-                &self.queue,
-                pos,
-                &self.state_tracker,
-                &self.media_preparer,
-            ),
+            ServerCommand::PlayPos(pos) => self.orchestrator.play_position_sync(pos),
             ServerCommand::PlayId(id) => {
-                orchestrator::play_id(
-                    &self.playback,
-                    &self.queue,
-                    id,
-                    &self.state_tracker,
-                    &self.media_preparer,
-                )
+                self.orchestrator.play_id(id)
             }
 
             // Queue handlers
-            ServerCommand::Add { uri, position } => handlers::handle_add(
-                &self.queue,
-                &self.playback,
-                &self.event_tx,
-                &uri,
-                position,
-                &self.play_queue,
-                &self.queue_event_handler,
-                &self.media_preparer,
-            ),
+            ServerCommand::Add { uri, position } => {
+                log::warn!("ServerCommand::Add is deprecated; prefer PlayWithIntent::Append");
+                handlers::handle_add(&self.queue_coordinator, &uri, position)
+            }
             ServerCommand::AddSong { song, position } => {
-                log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
-                let result = handlers::handle_add_song(
-                    &self.queue,
-                    &self.playback,
-                    &self.event_tx,
-                    song,
-                    position,
-                    &self.play_queue,
-                    &self.queue_event_handler,
-                    &self.media_preparer,
+                log::warn!(
+                    "ServerCommand::AddSong is deprecated; prefer PlayWithIntent::Append"
                 );
+                log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
+                let result = handlers::handle_add_song(&self.queue_coordinator, song, position);
                 log::info!("AddSong result: {:?}", result);
                 result
             }
-            ServerCommand::DeleteId(id) => handlers::handle_delete_id(
-                &self.queue,
-                &self.playback,
-                &self.event_tx,
-                id,
-                &self.play_queue,
-                &self.queue_event_handler,
-            ),
-            ServerCommand::Clear => handlers::handle_clear(
-                &self.queue,
-                &self.playback,
-                &self.event_tx,
-                &self.play_queue,
-                &self.queue_event_handler,
-            ),
-            ServerCommand::MoveId { from, to } => handlers::handle_move_id(
-                &self.queue,
-                &self.playback,
-                &self.event_tx,
-                from,
-                to,
-                &self.play_queue,
-                &self.queue_event_handler,
-            ),
+            ServerCommand::DeleteId(id) => handlers::handle_delete_id(&self.queue_coordinator, id),
+            ServerCommand::Clear => handlers::handle_clear(&self.queue_coordinator),
+            ServerCommand::MoveId { from, to } => {
+                handlers::handle_move_id(&self.queue_coordinator, from, to)
+            }
 
             // Volume/options handlers
             ServerCommand::GetVolume => handlers::handle_get_volume(&self.playback),
@@ -465,11 +427,11 @@ impl YouTubeServer {
             }
 
             // Status handlers
-            ServerCommand::GetStatus => handlers::handle_get_status(&self.playback, &self.queue),
+            ServerCommand::GetStatus => handlers::handle_get_status(&self.playback, self.queue.as_ref()),
             ServerCommand::GetCurrentSong => {
-                handlers::handle_get_current_song(&self.playback, &self.queue)
+                handlers::handle_get_current_song(&self.playback, self.queue.as_ref())
             }
-            ServerCommand::GetPlaylist => handlers::handle_get_playlist(&self.queue),
+            ServerCommand::GetPlaylist => handlers::handle_get_playlist(self.queue.as_ref()),
 
             // Search handlers
             ServerCommand::Search { query } => handlers::handle_search(&self.api, &query),
@@ -498,11 +460,9 @@ impl YouTubeServer {
                 handlers::handle_play_with_intent(
                     intent,
                     request_id,
-                    &self.playback,
-                    &self.queue,
-                    &self.state_tracker,
+                    &self.orchestrator,
+                    &self.queue_coordinator,
                     &self.event_tx,
-                    &self.media_preparer,
                 )
             }
             ServerCommand::CancelRequest { request_id: _ } => {
@@ -541,19 +501,6 @@ impl YouTubeServer {
         self.running.store(false, Ordering::SeqCst);
     }
 
-    pub fn apply_queue_command(&self, cmd: QueueCommand) -> Vec<QueueEvent> {
-        let events = self.play_queue.lock().apply(cmd);
-
-        let mut handler = self.queue_event_handler.lock();
-        for event in &events {
-            handler.handle(event.clone());
-        }
-
-        let _ = self.event_tx.send("playlist".to_string());
-
-        events
-    }
-
     pub fn play_queue(&self) -> &Arc<Mutex<PlayQueue>> {
         &self.play_queue
     }
@@ -579,6 +526,7 @@ mod tests {
             None,
             ExtractorType::default(),
             AudioDeliveryMode::default(),
+            YtDlpExtractorConfig::default(),
         );
         assert!(result.is_ok() || result.is_err());
     }

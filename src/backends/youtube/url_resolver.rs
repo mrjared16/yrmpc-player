@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::{
-    config::ExtractorType,
+    config::{ExtractorType, YtDlpExtractorConfig},
     extractor::{
         CacheConfig,
         CachedExtractor,
@@ -78,7 +78,14 @@ impl UrlResolver {
     /// External code should obtain resolvers from
     /// `YouTubeServices::url_resolver()`.
     pub(crate) fn new(extractor_type: ExtractorType) -> Self {
-        Self::with_config(extractor_type, CacheConfig::default(), true)
+        Self::with_ytdlp_config(extractor_type, YtDlpExtractorConfig::default())
+    }
+
+    pub(crate) fn with_ytdlp_config(
+        extractor_type: ExtractorType,
+        ytdlp_config: YtDlpExtractorConfig,
+    ) -> Self {
+        Self::with_config(extractor_type, CacheConfig::default(), true, ytdlp_config)
     }
 
     /// Create a new extractor with custom configuration.
@@ -95,12 +102,18 @@ impl UrlResolver {
         extractor_type: ExtractorType,
         cache_config: CacheConfig,
         enable_fallback: bool,
+        ytdlp_config: YtDlpExtractorConfig,
     ) -> Self {
         let inner: Arc<dyn Extractor> = match extractor_type {
             ExtractorType::Ytx => {
                 if enable_fallback {
                     Arc::new(CachedExtractor::with_config(
-                        FallbackExtractor::new(YtxExtractor::new(), YtDlpExtractor::new()),
+                        FallbackExtractor::new(
+                            YtxExtractor::new(),
+                            YtDlpExtractor::with_options(
+                                ytdlp_config.cookies_path.clone(),
+                            ),
+                        ),
                         cache_config,
                     ))
                 } else {
@@ -108,8 +121,10 @@ impl UrlResolver {
                 }
             }
             ExtractorType::YtDlp => {
-                // yt-dlp is the fallback, so no fallback needed
-                Arc::new(CachedExtractor::with_config(YtDlpExtractor::new(), cache_config))
+                let extractor = YtDlpExtractor::with_options(ytdlp_config.cookies_path);
+                extractor.eager_bootstrap_po_token_provider();
+                // yt-dlp is the primary extractor, so no fallback needed
+                Arc::new(CachedExtractor::with_config(extractor, cache_config))
             }
         };
 
@@ -125,13 +140,23 @@ impl UrlResolver {
         Self::new(ExtractorType::default())
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_extractor(inner: Arc<dyn Extractor>, extractor_type: ExtractorType) -> Self {
+        Self { inner, extractor_type }
+    }
+
     /// Create with custom cache TTL.
     ///
     /// # Visibility
     ///
     /// This is `pub(crate)` to enforce service sharing via `YouTubeServices`.
     pub(crate) fn with_cache_ttl(extractor_type: ExtractorType, ttl: Duration) -> Self {
-        Self::with_config(extractor_type, CacheConfig::default().with_ttl(ttl), true)
+        Self::with_config(
+            extractor_type,
+            CacheConfig::default().with_ttl(ttl),
+            true,
+            YtDlpExtractorConfig::default(),
+        )
     }
 
     /// Get the configured extractor type.
@@ -259,6 +284,18 @@ impl UrlResolver {
     pub fn clear_cache(&self) {
         self.inner.clear_cache();
     }
+
+    pub fn invalidate(&self, video_id: &str) {
+        self.inner.invalidate(video_id);
+    }
+
+    /// Re-extract a fresh URL, invalidating only the cache (not dedup).
+    ///
+    /// Used by relay 403 retry to avoid cascading yt-dlp extractions.
+    pub fn refresh_url(&self, video_id: &str) -> Result<String> {
+        self.inner.refresh(video_id)
+    }
+
 }
 
 #[async_trait]
@@ -318,11 +355,17 @@ impl Extractor for UrlResolver {
     fn invalidate(&self, video_id: &str) {
         self.inner.invalidate(video_id);
     }
+
+    fn refresh(&self, video_id: &str) -> Result<String> {
+        self.inner.refresh(video_id)
+    }
+
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::backends::youtube::extractor::YtDlpExtractor;
 
     #[test]
     fn test_extractor_type() {
@@ -337,5 +380,33 @@ mod tests {
     fn test_default_is_ytx() {
         let extractor = UrlResolver::default();
         assert_eq!(extractor.extractor_type(), ExtractorType::Ytx);
+    }
+
+    #[test]
+    fn test_ytdlp_path_attempts_eager_bootstrap() {
+        YtDlpExtractor::reset_eager_bootstrap_attempts_for_tests();
+
+        let _resolver = UrlResolver::with_config(
+            ExtractorType::YtDlp,
+            CacheConfig::default(),
+            false,
+            YtDlpExtractorConfig::default(),
+        );
+
+        assert_eq!(YtDlpExtractor::eager_bootstrap_attempts_for_tests(), 1);
+    }
+
+    #[test]
+    fn test_ytx_path_does_not_attempt_eager_bootstrap() {
+        YtDlpExtractor::reset_eager_bootstrap_attempts_for_tests();
+
+        let _resolver = UrlResolver::with_config(
+            ExtractorType::Ytx,
+            CacheConfig::default(),
+            false,
+            YtDlpExtractorConfig::default(),
+        );
+
+        assert_eq!(YtDlpExtractor::eager_bootstrap_attempts_for_tests(), 0);
     }
 }

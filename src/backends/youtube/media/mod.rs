@@ -4,12 +4,16 @@
 //! - Traits = pure interfaces
 //! - Implementations = handle IO
 
+mod job_registry;
 mod loader;
 mod output;
 mod preparer;
 mod relay;
+mod relay_planner;
 mod relay_runtime;
 mod resolver;
+mod staging_pipeline;
+mod upstream_plan;
 
 use std::time::Instant;
 
@@ -21,10 +25,13 @@ pub use preparer::{CacheRequest, PrepareResult, YouTubeMediaPreparer, YouTubeMed
 pub use relay::{
     RelayByteRange, RelayContractError, RelayPlayerEndpoint, RelayRangeError,
     RelayRangePolicy, RelayReconnectOwner, RelayResponsePlan, RelaySessionId, RelaySessionSpec,
-    RelaySessionState, RelayStagedArtifact, RelayTransportContract, RelayUpstreamStream,
+    RelaySessionState, RelayStagedArtifact, RelayTeePrefix, RelayTransportContract,
+    RelayUpstreamStream,
 };
+pub use relay_planner::{RelayPlayStrategy, RelayPlanner};
 pub use relay_runtime::RelayRuntime;
 pub use resolver::{AudioFormat, StreamInfo, StreamResolver};
+pub use upstream_plan::{UpstreamReadPlan, default_upstream_read_plans};
 
 // Re-export existing PreloadTier
 pub use crate::backends::youtube::protocol::play_intent::PreloadTier;
@@ -62,6 +69,18 @@ pub trait MediaPreparer: Send + Sync {
     /// Does not block - preparation happens asynchronously.
     fn prefetch(&self, track_id: &str, tier: PreloadTier);
 
+    fn warm(&self, track_id: &str) {
+        self.prefetch(track_id, PreloadTier::Background);
+    }
+
+    fn warm_many(&self, track_ids: &[String]) {
+        for track_id in track_ids {
+            self.warm(track_id);
+        }
+    }
+
+    fn invalidate(&self, _track_id: &str) {}
+
     fn activate_playback_window(&self, _track_ids: &[String]) {}
 }
 
@@ -73,6 +92,17 @@ pub enum PreparedMedia {
         bytes: u64,
         url: String,
         content_length: u64,
+    },
+    /// Relay streams from byte 0 in a single connection, tees first
+    /// `prefix_size` bytes to `prefix_path` on disk, and pipes everything
+    /// to MPV.  Used on cache miss to avoid a separate prefix download
+    /// (which triggers YouTube CDN rate-limiting on the subsequent relay
+    /// upstream request).
+    StreamAndCache {
+        url: String,
+        content_length: u64,
+        prefix_path: std::path::PathBuf,
+        prefix_size: u64,
     },
     Direct { url: String },
     LocalFile { path: std::path::PathBuf },
@@ -95,6 +125,7 @@ impl PreparedMedia {
                 }
             }
             PreparedMedia::Direct { url } => url.clone(),
+            PreparedMedia::StreamAndCache { url, .. } => url.clone(),
             PreparedMedia::LocalFile { path } => path.display().to_string(),
         }
     }
@@ -141,5 +172,16 @@ mod tests {
     fn prepared_media_local_file_conversion() {
         let media = PreparedMedia::LocalFile { path: PathBuf::from("/music/song.mp3") };
         assert_eq!(media.to_mpv_url(), "/music/song.mp3");
+    }
+
+    #[test]
+    fn prepared_media_stream_and_cache_uses_upstream_url() {
+        let media = PreparedMedia::StreamAndCache {
+            url: "https://example.com/stream".to_string(),
+            content_length: 4096,
+            prefix_path: PathBuf::from("/tmp/prefix.webm"),
+            prefix_size: 1024,
+        };
+        assert_eq!(media.to_mpv_url(), "https://example.com/stream");
     }
 }

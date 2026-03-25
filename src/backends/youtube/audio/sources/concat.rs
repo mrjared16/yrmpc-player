@@ -5,9 +5,9 @@ use crate::backends::youtube::{
     media::PreparedMedia,
 };
 
-pub struct FfmpegConcatSource;
+pub struct PreparedMediaInputAdapter;
 
-impl FfmpegConcatSource {
+impl PreparedMediaInputAdapter {
     /// MPV args needed to enable FFmpeg concat protocol.
     /// Uses --stream-lavf-o-append (not --demuxer-lavf-o) because we need the
     /// protocol whitelist at the STREAM layer, not just the demuxer layer.
@@ -47,6 +47,11 @@ impl FfmpegConcatSource {
                 }
             }
             PreparedMedia::Direct { url } => Ok(MpvSourceInput::new(url.clone())),
+            PreparedMedia::StreamAndCache { url, .. } => {
+                // StreamAndCache is normally handled by the relay; if we end up
+                // here it means the relay is unavailable, so fall back to direct.
+                Ok(MpvSourceInput::new(url.clone()))
+            }
             PreparedMedia::LocalFile { path } => {
                 Ok(MpvSourceInput::new(path.to_string_lossy().to_string()))
             }
@@ -58,7 +63,7 @@ impl FfmpegConcatSource {
 mod tests {
     use std::path::PathBuf;
 
-    use super::FfmpegConcatSource;
+    use super::PreparedMediaInputAdapter;
     use crate::backends::youtube::media::PreparedMedia;
 
     #[test]
@@ -70,13 +75,13 @@ mod tests {
             content_length: 4096,
         };
 
-        let input = FfmpegConcatSource::build_from_prepared(&prepared).unwrap();
+        let input = PreparedMediaInputAdapter::build_from_prepared(&prepared).unwrap();
 
         assert_eq!(
             input.url,
             "lavf://concat:/tmp/prefix.webm|subfile,,start,2048,end,0,,:https://example.com/stream"
         );
-        assert_eq!(input.mpv_args, FfmpegConcatSource::protocol_whitelist_args());
+        assert_eq!(input.mpv_args, PreparedMediaInputAdapter::protocol_whitelist_args());
     }
 
     #[test]
@@ -88,7 +93,7 @@ mod tests {
             content_length: 4096,
         };
 
-        let input = FfmpegConcatSource::build_from_prepared(&prepared).unwrap();
+        let input = PreparedMediaInputAdapter::build_from_prepared(&prepared).unwrap();
 
         assert_eq!(input.url, "/tmp/full.webm");
         assert!(input.mpv_args.is_empty());
@@ -98,7 +103,7 @@ mod tests {
     fn combined_adapter_passes_direct_prepared_media_through() {
         let prepared = PreparedMedia::Direct { url: "https://example.com/direct".to_string() };
 
-        let input = FfmpegConcatSource::build_from_prepared(&prepared).unwrap();
+        let input = PreparedMediaInputAdapter::build_from_prepared(&prepared).unwrap();
 
         assert_eq!(input.url, "https://example.com/direct");
         assert!(input.mpv_args.is_empty());

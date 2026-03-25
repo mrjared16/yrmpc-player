@@ -4,14 +4,12 @@ use std::sync::Arc;
 
 use crate::backends::youtube::{
     protocol::{ServerResponse, SongData, StatusData},
-    services::{PlaybackService, QueueService, RepeatMode},
+    server::queue_view::QueueView,
+    services::PlaybackService,
 };
 
 /// Handle GetStatus command
-pub fn handle_get_status(
-    playback: &Arc<PlaybackService>,
-    queue: &Arc<QueueService>,
-) -> ServerResponse {
+pub fn handle_get_status(playback: &Arc<PlaybackService>, queue: &dyn QueueView) -> ServerResponse {
     let paused = playback.is_paused().unwrap_or(true);
     let volume = playback.get_volume().unwrap_or(100);
     let time_pos = playback.get_position().unwrap_or(0.0);
@@ -25,25 +23,15 @@ pub fn handle_get_status(
         ("stop".to_string(), None, None)
     } else {
         let pos = current_queue_idx.unwrap();
-        let song_id = queue.get_by_index(pos).ok().and_then(|s| s.id);
+        let song_id = queue.get_by_index(pos).and_then(|s| s.id);
         let state = if paused { "pause" } else { "play" };
         (state.to_string(), Some(pos as u32), song_id)
     };
 
     // Get repeat/shuffle state
-    let repeat = match queue.repeat_mode() {
-        RepeatMode::Off => "off",
-        RepeatMode::One => "one",
-        RepeatMode::All => "all",
-    };
+    let repeat = queue.repeat_label();
     let shuffle = queue.shuffle_enabled();
-
-    let next_queue_pos = if shuffle {
-        queue.get_prefetched_at(1).map(|idx| idx as u32)
-    } else {
-        current_queue_idx
-            .and_then(|idx| if idx + 1 < queue_len { Some((idx + 1) as u32) } else { None })
-    };
+    let next_queue_pos = queue.next_index().map(|idx| idx as u32);
 
     ServerResponse::Status(StatusData {
         state,
@@ -60,23 +48,20 @@ pub fn handle_get_status(
 }
 
 /// Handle GetCurrentSong command
-pub fn handle_get_current_song(
-    _playback: &Arc<PlaybackService>,
-    queue: &Arc<QueueService>,
-) -> ServerResponse {
+pub fn handle_get_current_song(_playback: &Arc<PlaybackService>, queue: &dyn QueueView) -> ServerResponse {
     let queue_pos = match queue.current_index() {
         Some(pos) => pos,
         None => return ServerResponse::Song(None),
     };
 
     match queue.get_by_index(queue_pos) {
-        Ok(song) => ServerResponse::Song(Some(SongData::from(song))),
-        Err(_) => ServerResponse::Song(None),
+        Some(song) => ServerResponse::Song(Some(SongData::from(song))),
+        None => ServerResponse::Song(None),
     }
 }
 
 /// Handle GetPlaylist command
-pub fn handle_get_playlist(queue: &Arc<QueueService>) -> ServerResponse {
+pub fn handle_get_playlist(queue: &dyn QueueView) -> ServerResponse {
     let songs = queue.get_all();
     ServerResponse::Playlist(songs.into_iter().map(SongData::from).collect())
 }

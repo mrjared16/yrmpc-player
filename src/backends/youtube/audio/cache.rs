@@ -18,6 +18,16 @@ use crate::{
 const DEFAULT_PREFIX_SIZE: u64 = 204_800; // 200KB
 const DEFAULT_MAX_CACHE_SIZE: u64 = 209_715_200; // 200MB
 
+/// Parse the `clen=` query parameter from a YouTube stream URL.
+fn parse_clen_from_url(url: &str) -> Option<u64> {
+    let query = url.split_once('?').map(|(_, q)| q).unwrap_or(url);
+    query
+        .split('&')
+        .find_map(|param| param.strip_prefix("clen="))
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|len| *len > 0)
+}
+
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
     pub cache_dir: PathBuf,
@@ -161,8 +171,10 @@ impl AudioCache {
             if path.exists() {
                 self.touch(video_id);
                 log::info!(
-                    "[CACHE] hit video_id={} path={} elapsed={:?}",
+                    "[CACHE] hit video_id={} content_length={} current_url_clen={} path={} elapsed={:?}",
                     video_id,
+                    content_length,
+                    stream_url.split('&').find(|p| p.starts_with("clen=")).unwrap_or("?"),
                     path.display(),
                     start.elapsed()
                 );
@@ -173,16 +185,22 @@ impl AudioCache {
         log::info!("[CACHE] miss video_id={} downloading prefix...", video_id);
 
         let path = self.cache_path(video_id);
+        let prefix_size = self.config.prefix_size;
         let client = reqwest::Client::builder()
             .local_address(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED)) // Force IPv4
             .build()
             .context("Failed to build HTTP client")?;
 
-        let range_header = format!("bytes=0-{}", self.config.prefix_size - 1);
-        log::debug!("[CACHE] HTTP_START video_id={}", video_id);
+        // Download only the prefix using YouTube's &range= query parameter.
+        //
+        // CRITICAL: YouTube CDN tracks &range= (query param) and HTTP Range:
+        // header as SEPARATE token budgets.  By using &range= here, the relay
+        // upstream can later use HTTP Range: on the SAME cached URL without 403.
+        let range_end = prefix_size.saturating_sub(1);
+        let ranged_url = format!("{stream_url}&range=0-{range_end}");
+        log::debug!("[CACHE] HTTP_START video_id={} &range=0-{}", video_id, range_end);
         let response = client
-            .get(stream_url)
-            .header("Range", &range_header)
+            .get(&ranged_url)
             .send()
             .await
             .context("Failed to request audio prefix")?;
@@ -193,54 +211,24 @@ impl AudioCache {
             return Err(anyhow!("Prefix request failed with status {}", status));
         }
 
-        // Content-Range header format: "bytes 0-204799/12345678"
-        let content_range_total = response
-            .headers()
-            .get("content-range")
-            .and_then(|v| v.to_str().ok())
-            .and_then(|s| s.split('/').last())
-            .and_then(|s| s.parse::<u64>().ok());
+        // Parse content_length from clen= in the stream URL (the &range=
+        // response is HTTP 200 with no Content-Range header).
+        let content_length = parse_clen_from_url(stream_url)
+            .context("Missing clen= in stream URL")?;
 
-        let content_length = if let Some(total) = content_range_total {
-            total
-        } else if status == reqwest::StatusCode::OK {
-            response
-                .headers()
-                .get("content-length")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .or_else(|| response.content_length())
-                .filter(|len| *len > 0)
-                .context("Missing content length for HTTP 200 response")?
-        } else if status == reqwest::StatusCode::PARTIAL_CONTENT {
-            response
-                .headers()
-                .get("content-length")
-                .and_then(|v| v.to_str().ok())
-                .and_then(|s| s.parse::<u64>().ok())
-                .or_else(|| response.content_length())
-                .filter(|len| *len > 0 && *len < self.config.prefix_size)
-                .context("Missing or invalid Content-Range header")?
-        } else {
-            return Err(anyhow!(
-                "Unsupported status {} for prefix request without Content-Range",
-                status
-            ));
-        };
-
-        let bytes = response.bytes().await.context("Failed to download prefix")?;
+        let bytes = response.bytes().await.context("Failed to download audio prefix")?;
         let size = bytes.len() as u64;
 
         if let Some(parent) = path.parent() {
             std::fs::create_dir_all(parent)?;
         }
-        std::fs::write(&path, &bytes).context("Failed to write prefix file")?;
+        std::fs::write(&path, &bytes).context("Failed to write audio prefix")?;
 
         self.register_prefix(video_id, path.clone(), size, content_length);
         self.evict_lru()?;
 
         log::info!(
-            "[CACHE] downloaded video_id={} size={} content_length={} elapsed={:?}",
+            "[CACHE] downloaded prefix video_id={} prefix_size={} content_length={} elapsed={:?}",
             video_id,
             size,
             content_length,

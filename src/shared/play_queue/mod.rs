@@ -33,6 +33,7 @@ pub enum RepeatMode {
 pub enum QueueCommand {
     /// Add a single song to the end of the queue
     Add { song: Song },
+    AddAt { song: Song, position: usize },
     /// Add multiple songs to the end of the queue
     AddBatch { songs: Vec<Song> },
     /// Remove a song by its ID
@@ -121,6 +122,7 @@ impl PlayQueue {
     pub fn apply(&mut self, cmd: QueueCommand) -> Vec<QueueEvent> {
         match cmd {
             QueueCommand::Add { song } => self.handle_add(song),
+            QueueCommand::AddAt { song, position } => self.handle_add_at(song, position),
             QueueCommand::AddBatch { songs } => self.handle_add_batch(songs),
             QueueCommand::Remove { id } => self.handle_remove(id),
             QueueCommand::Move { id, to_position } => self.handle_move(id, to_position),
@@ -140,13 +142,17 @@ impl PlayQueue {
     // =========================================================================
 
     fn handle_add(&mut self, song: Song) -> Vec<QueueEvent> {
+        self.handle_add_at(song, self.play_order.len())
+    }
+
+    fn handle_add_at(&mut self, song: Song, position: usize) -> Vec<QueueEvent> {
         let id = self.next_id;
         self.next_id += 1;
 
         self.items.insert(id, song);
-        self.original_order.push(id);
-        // ALWAYS append to end, even during shuffle
-        self.play_order.push(id);
+        let insert_pos = position.min(self.play_order.len());
+        self.original_order.insert(insert_pos.min(self.original_order.len()), id);
+        self.play_order.insert(insert_pos, id);
 
         vec![QueueEvent::ItemsAdded { ids: vec![id] }]
     }

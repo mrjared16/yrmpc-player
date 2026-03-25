@@ -37,11 +37,12 @@ pub enum ServerCommand {
     },
 
     // Queue management
+    #[deprecated(note = "Use PlayWithIntent { intent: PlayIntent::Append, ... } for queue adds")]
     Add {
         uri: String,
         position: Option<u32>,
     },
-    /// Add song with full metadata (preferred over Add for preserving metadata)
+    #[deprecated(note = "Use PlayWithIntent { intent: PlayIntent::Append, ... } for queue adds")]
     AddSong {
         song: SongData,
         position: Option<u32>,

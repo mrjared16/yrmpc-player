@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use rmpc::backends::youtube::{
     YouTubeServer,
-    config::{AudioDeliveryMode, ExtractorType},
+    config::{AudioDeliveryMode, ExtractorType, YtDlpExtractorConfig},
 };
 
 #[derive(Parser, Debug)]
@@ -23,9 +23,27 @@ struct Args {
     #[arg(short, long, default_value = "ytdlp")]
     extractor: String,
 
-    /// Audio mode: combined (default), direct, or relay
-    #[arg(short, long, default_value = "combined")]
-    audio_source: String,
+    /// Audio delivery mode: auto (default), direct, relay, or staged/concat
+    #[arg(short, long = "audio-delivery", visible_alias = "audio-source", default_value = "auto")]
+    audio_delivery: String,
+}
+
+fn parse_audio_delivery_mode(raw: &str) -> AudioDeliveryMode {
+    match raw.to_lowercase().as_str() {
+        "auto" => AudioDeliveryMode::Auto,
+        "direct" | "passthrough" => AudioDeliveryMode::Direct,
+        "relay" | "proxy" => AudioDeliveryMode::Relay,
+        "staged" | "combined" | "concat" | "ffmpegconcat" => {
+            log::warn!(
+                "Audio delivery mode '{raw}' uses staged/concat playback, which has known 403/URL expiry issues; prefer '--audio-delivery relay'"
+            );
+            AudioDeliveryMode::Staged
+        }
+        other => {
+            log::warn!("Unknown --audio-delivery='{other}', falling back to 'auto'");
+            AudioDeliveryMode::Auto
+        }
+    }
 }
 
 fn find_default_cookie_file() -> Option<PathBuf> {
@@ -67,15 +85,7 @@ fn main() -> Result<()> {
     };
     log::info!("Using stream extractor: {:?}", extractor_type);
 
-    let audio_delivery_mode = match args.audio_source.to_lowercase().as_str() {
-        "direct" | "passthrough" => AudioDeliveryMode::Direct,
-        "relay" | "proxy" => AudioDeliveryMode::Relay,
-        "combined" | "concat" | "ffmpegconcat" => AudioDeliveryMode::Combined,
-        other => {
-            log::warn!("Unknown --audio-source='{other}', falling back to 'combined'");
-            AudioDeliveryMode::Combined
-        }
-    };
+    let audio_delivery_mode = parse_audio_delivery_mode(&args.audio_delivery);
     log::info!("Using audio mode: {:?}", audio_delivery_mode);
 
     let rt = tokio::runtime::Runtime::new()?;
@@ -86,9 +96,39 @@ fn main() -> Result<()> {
         cookie_path.as_deref().and_then(|p| p.to_str()),
         extractor_type,
         audio_delivery_mode,
+        YtDlpExtractorConfig {
+            cookies_path: cookie_path
+                .as_deref()
+                .and_then(|path| path.to_str())
+                .map(str::to_owned),
+        },
     )?;
 
     log::info!("YouTube daemon ready, entering event loop...");
 
     server.run()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Args, parse_audio_delivery_mode};
+    use clap::Parser;
+    use rmpc::backends::youtube::config::AudioDeliveryMode;
+
+    #[test]
+    fn audio_delivery_flag_defaults_to_auto() {
+        let args = Args::parse_from(["rmpcd"]);
+        assert_eq!(args.audio_delivery, "auto");
+    }
+
+    #[test]
+    fn parse_audio_delivery_mode_keeps_legacy_aliases() {
+        assert_eq!(parse_audio_delivery_mode("auto"), AudioDeliveryMode::Auto);
+        assert_eq!(parse_audio_delivery_mode("combined"), AudioDeliveryMode::Staged);
+        assert_eq!(parse_audio_delivery_mode("ffmpegconcat"), AudioDeliveryMode::Staged);
+        assert_eq!(parse_audio_delivery_mode("concat"), AudioDeliveryMode::Staged);
+        assert_eq!(parse_audio_delivery_mode("passthrough"), AudioDeliveryMode::Direct);
+        assert_eq!(parse_audio_delivery_mode("proxy"), AudioDeliveryMode::Relay);
+    }
+
 }

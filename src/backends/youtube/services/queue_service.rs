@@ -32,10 +32,17 @@ pub struct QueueItem {
     pub song: Song,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PlaybackWindowState {
+    pub current_idx: Option<usize>,
+    pub playback_base_index: usize,
+    pub prefetch_indices: Vec<usize>,
+}
+
 /// Queue service manages playback queue and current position
 pub struct QueueService {
     queue: Mutex<VecDeque<QueueItem>>,
-    current_idx: Mutex<Option<usize>>,
+    playback_window: Mutex<PlaybackWindowState>,
     next_id: Mutex<u32>,
     repeat_mode: Mutex<RepeatMode>,
     shuffle_enabled: Mutex<bool>,
@@ -44,28 +51,6 @@ pub struct QueueService {
     /// Pre-computed shuffle order (None = sequential mode)
     /// Contains queue indices in shuffled playback order
     shuffle_order: Mutex<Option<Vec<usize>>>,
-    /// Playback base index - the queue index corresponding to MPV's playlist[0]
-    ///
-    /// When we call play_position(pos), we load pos and the next 2 tracks into
-    /// MPV. MPV's playlist-pos is relative to this base, so:
-    ///   actual_queue_position = playback_base_index + mpv_playlist_pos
-    ///
-    /// This is DIFFERENT from current_idx because:
-    /// - current_idx tracks what's logically "playing" in the queue
-    /// - playback_base_index tracks where MPV's prefetch window begins
-    ///
-    /// After auto-advance within the prefetch window, current_idx changes but
-    /// playback_base_index stays the same until we rebuild the MPV playlist.
-    playback_base_index: Mutex<usize>,
-    /// Queue indices currently loaded in MPV's prefetch window.
-    ///
-    /// When play_position(5) is called with shuffle enabled, this might
-    /// contain: [5, 2, 8] - meaning MPV playlist[0]=queue[5],
-    /// playlist[1]=queue[2], etc.
-    ///
-    /// This allows handle_within_window_advance to correctly map mpv_pos to
-    /// queue_idx.
-    prefetch_indices: Mutex<Vec<usize>>,
 }
 
 impl QueueService {
@@ -73,14 +58,12 @@ impl QueueService {
     pub fn new() -> Self {
         Self {
             queue: Mutex::new(VecDeque::new()),
-            current_idx: Mutex::new(None),
+            playback_window: Mutex::new(PlaybackWindowState::default()),
             next_id: Mutex::new(1),
             repeat_mode: Mutex::new(RepeatMode::Off),
             shuffle_enabled: Mutex::new(false),
             shuffle_history: Mutex::new(Vec::new()),
             shuffle_order: Mutex::new(None),
-            playback_base_index: Mutex::new(0),
-            prefetch_indices: Mutex::new(Vec::new()),
         }
     }
 
@@ -97,13 +80,27 @@ impl QueueService {
 
         let item = QueueItem { id, song };
 
-        match position {
+        let insert_pos = match position {
             Some(pos) => {
                 let insert_pos = (pos as usize).min(queue.len());
                 queue.insert(insert_pos, item);
+                insert_pos
             }
             None => {
+                let insert_pos = queue.len();
                 queue.push_back(item);
+                insert_pos
+            }
+        };
+
+        let mut playback_window = self.playback_window.lock();
+        if let Some(current) = playback_window.current_idx {
+            if insert_pos <= current {
+                playback_window.current_idx = Some(current + 1);
+            }
+
+            if insert_pos <= playback_window.playback_base_index {
+                playback_window.playback_base_index += 1;
             }
         }
 
@@ -120,28 +117,17 @@ impl QueueService {
         let item = queue.remove(pos).ok_or_else(|| anyhow::anyhow!("Failed to remove song"))?;
 
         // Update current_idx if needed
-        let mut current_idx = self.current_idx.lock();
-        if let Some(curr) = *current_idx {
+        let mut playback_window = self.playback_window.lock();
+        if let Some(curr) = playback_window.current_idx {
             if pos < curr {
-                // Removed before current - shift index down
-                *current_idx = Some(curr - 1);
+                playback_window.current_idx = Some(curr - 1);
             } else if pos == curr {
-                // Removed current - clear it (MPV will handle stopping)
-                *current_idx = None;
+                playback_window.current_idx = None;
             }
         }
 
-        // Also adjust playback_base_index if needed
-        {
-            let mut base_index = self.playback_base_index.lock();
-            let bi = *base_index;
-            if pos < bi {
-                // Removed before base - shift base down
-                *base_index = bi.saturating_sub(1);
-            }
-            // Note: We don't need to handle pos == bi specially here because
-            // when the currently playing track is removed, playback stops and
-            // a new play_position will be called to reset the base
+        if pos < playback_window.playback_base_index {
+            playback_window.playback_base_index = playback_window.playback_base_index.saturating_sub(1);
         }
 
         Ok((item, pos))
@@ -150,8 +136,7 @@ impl QueueService {
     /// Clear entire queue
     pub fn clear(&self) {
         self.queue.lock().clear();
-        *self.current_idx.lock() = None;
-        *self.playback_base_index.lock() = 0;
+        *self.playback_window.lock() = PlaybackWindowState::default();
     }
 
     /// Get song by ID
@@ -185,13 +170,13 @@ impl QueueService {
 
     /// Get current playing index
     pub fn current_index(&self) -> Option<usize> {
-        *self.current_idx.lock()
+        self.playback_window.lock().current_idx
     }
 
     /// Set current playing index
     /// In shuffle mode, also updates the shuffle history
     pub fn set_current(&self, idx: Option<usize>) {
-        *self.current_idx.lock() = idx;
+        self.playback_window.lock().current_idx = idx;
 
         // Update shuffle history if enabled and we have a valid index
         if let Some(new_idx) = idx {
@@ -217,7 +202,7 @@ impl QueueService {
     /// Use this (not current_index) when calculating positions from
     /// mpv_playlist_pos.
     pub fn playback_base_index(&self) -> usize {
-        *self.playback_base_index.lock()
+        self.playback_window.lock().playback_base_index
     }
 
     /// Set playback base index
@@ -226,14 +211,26 @@ impl QueueService {
     /// The position should be the queue index of the first track loaded into
     /// MPV.
     pub fn set_playback_base_index(&self, pos: usize) {
-        *self.playback_base_index.lock() = pos;
+        self.playback_window.lock().playback_base_index = pos;
+    }
+
+    pub fn set_playback_window_state(&self, current_idx: Option<usize>, playback_base_index: usize, prefetch_indices: Vec<usize>) {
+        *self.playback_window.lock() = PlaybackWindowState {
+            current_idx,
+            playback_base_index,
+            prefetch_indices,
+        };
+    }
+
+    pub fn playback_window_state(&self) -> PlaybackWindowState {
+        self.playback_window.lock().clone()
     }
 
     /// Get next song index (if exists)
     /// In shuffle mode, returns a random unplayed or least-recently-played
     /// track
     pub fn next_index(&self) -> Option<usize> {
-        let current = *self.current_idx.lock();
+        let current = self.playback_window.lock().current_idx;
         let len = self.queue.lock().len();
 
         if len == 0 {
@@ -304,7 +301,7 @@ impl QueueService {
             }
         } else {
             // Sequential mode
-            self.current_idx.lock().and_then(|idx| if idx > 0 { Some(idx - 1) } else { None })
+            self.playback_window.lock().current_idx.and_then(|idx| if idx > 0 { Some(idx - 1) } else { None })
         }
     }
 
@@ -353,7 +350,7 @@ impl QueueService {
 
         if enabled {
             // Start fresh history with current track if playing
-            let current = *self.current_idx.lock();
+            let current = self.playback_window.lock().current_idx;
             let mut history = self.shuffle_history.lock();
             history.clear();
             if let Some(idx) = current {
@@ -368,14 +365,14 @@ impl QueueService {
             }
 
             // Clear stale prefetch indices so next prefetch uses new shuffle order
-            self.prefetch_indices.lock().clear();
+            self.playback_window.lock().prefetch_indices.clear();
         } else {
             // Clear history when disabling shuffle
             self.shuffle_history.lock().clear();
             // Clear shuffle order
             *self.shuffle_order.lock() = None;
             // Clear stale prefetch indices so next prefetch uses sequential order
-            self.prefetch_indices.lock().clear();
+            self.playback_window.lock().prefetch_indices.clear();
         }
     }
 
@@ -408,8 +405,8 @@ impl QueueService {
                 }
 
                 // Check if we're moving the current track
-                let mut current_idx = self.current_idx.lock();
-                let was_current = *current_idx == Some(from);
+                let mut playback_window = self.playback_window.lock();
+                let was_current = playback_window.current_idx == Some(from);
 
                 if let Some(item) = queue.remove(from) {
                     // After removal, positions shift:
@@ -421,31 +418,23 @@ impl QueueService {
 
                     // Update current_idx if the currently playing track moved
                     if was_current {
-                        *current_idx = Some(insert_pos);
-                    } else if let Some(curr) = *current_idx {
+                        playback_window.current_idx = Some(insert_pos);
+                    } else if let Some(curr) = playback_window.current_idx {
                         // Adjust current_idx if tracks shifted around it
                         if from < curr && to >= curr {
-                            *current_idx = Some(curr - 1);
+                            playback_window.current_idx = Some(curr - 1);
                         } else if from > curr && to <= curr {
-                            *current_idx = Some(curr + 1);
+                            playback_window.current_idx = Some(curr + 1);
                         }
                     }
 
-                    // Also adjust playback_base_index if tracks shifted around it
-                    // This keeps the base position in sync with queue reordering
-                    {
-                        let mut base_index = self.playback_base_index.lock();
-                        let bi = *base_index;
-                        if from == bi {
-                            // The base track itself moved
-                            *base_index = insert_pos;
-                        } else if from < bi && insert_pos >= bi {
-                            // Moved from before base to at/after base → base shifts down
-                            *base_index = bi.saturating_sub(1);
-                        } else if from > bi && insert_pos <= bi {
-                            // Moved from after base to at/before base → base shifts up
-                            *base_index = bi + 1;
-                        }
+                    let bi = playback_window.playback_base_index;
+                    if from == bi {
+                        playback_window.playback_base_index = insert_pos;
+                    } else if from < bi && insert_pos >= bi {
+                        playback_window.playback_base_index = bi.saturating_sub(1);
+                    } else if from > bi && insert_pos <= bi {
+                        playback_window.playback_base_index = bi + 1;
                     }
 
                     Ok((from, insert_pos))
@@ -468,38 +457,48 @@ impl QueueService {
     ///
     /// If shuffle is enabled but shuffle_order doesn't exist, generates it.
     pub fn build_prefetch_window(&self, start_idx: usize, count: usize) -> Vec<usize> {
+        self.ensure_shuffle_order(start_idx);
+        let indices = self.compute_prefetch_window(start_idx, count);
+        self.set_prefetch_indices(indices.clone());
+        indices
+    }
+
+    pub fn ensure_shuffle_order(&self, start_idx: usize) {
+        let len = self.len();
+        if len == 0 || !*self.shuffle_enabled.lock() {
+            return;
+        }
+
+        let mut order = self.shuffle_order.lock();
+        if order.is_none() || order.as_ref().map(|o| o.len()) != Some(len) {
+            *order = Some(self.generate_shuffle_order_internal(len, Some(start_idx)));
+        }
+    }
+
+    pub fn compute_prefetch_window(&self, start_idx: usize, count: usize) -> Vec<usize> {
         let len = self.len();
         if len == 0 {
             return Vec::new();
         }
 
-        // Ensure shuffle order exists if shuffle is enabled
-        if *self.shuffle_enabled.lock() {
-            let mut order = self.shuffle_order.lock();
-            if order.is_none() || order.as_ref().map(|o| o.len()) != Some(len) {
-                *order = Some(self.generate_shuffle_order_internal(len, Some(start_idx)));
-            }
-        }
-
         let mut indices = Vec::with_capacity(count);
         let repeat_mode = *self.repeat_mode.lock();
 
-        // First index is always the start position
         indices.push(start_idx);
 
-        // Get subsequent indices from playback order
         for i in 1..count {
             if let Some(next_idx) = self.get_next_in_playback_order(start_idx, i, repeat_mode) {
                 indices.push(next_idx);
             } else {
-                break; // No more tracks
+                break;
             }
         }
 
-        // Store for later lookup by handle_within_window_advance
-        *self.prefetch_indices.lock() = indices.clone();
-
         indices
+    }
+
+    pub fn set_prefetch_indices(&self, indices: Vec<usize>) {
+        self.playback_window.lock().prefetch_indices = indices;
     }
 
     /// Get the queue index at a given position in the current prefetch window.
@@ -507,24 +506,22 @@ impl QueueService {
     /// This is the KEY method that fixes the shuffle bug:
     /// Instead of `base_index + mpv_pos`, we look up from stored indices.
     pub fn get_prefetched_at(&self, mpv_pos: usize) -> Option<usize> {
-        self.prefetch_indices.lock().get(mpv_pos).copied()
+        self.playback_window.lock().prefetch_indices.get(mpv_pos).copied()
     }
 
     /// Extend the prefetch window by one track and return the new queue index.
     ///
     /// Called after auto-advance to maintain the rolling window.
     pub fn extend_prefetch_window(&self) -> Option<usize> {
-        let mut indices = self.prefetch_indices.lock();
-        let window_len = indices.len();
+        let mut playback_window = self.playback_window.lock();
+        let window_len = playback_window.prefetch_indices.len();
         let repeat_mode = *self.repeat_mode.lock();
 
-        // Get the starting position (first in current window)
-        let start_idx = *indices.first()?;
+        let start_idx = *playback_window.prefetch_indices.first()?;
 
-        // Get next index based on where we are in playback order
         if let Some(next_idx) = self.get_next_in_playback_order(start_idx, window_len, repeat_mode)
         {
-            indices.push(next_idx);
+            playback_window.prefetch_indices.push(next_idx);
             Some(next_idx)
         } else {
             None
@@ -603,7 +600,7 @@ impl QueueService {
 
     /// Clear the prefetch tracking (called when rebuilding MPV playlist)
     pub fn clear_prefetch(&self) {
-        self.prefetch_indices.lock().clear();
+        self.playback_window.lock().prefetch_indices.clear();
     }
 
     /// Regenerate shuffle order (called when queue changes significantly)
@@ -652,6 +649,22 @@ mod tests {
         assert_eq!(queue.len(), 3);
         let song = queue.get_by_index(1).unwrap();
         assert_eq!(song.metadata.get("title").unwrap()[0], "inserted");
+    }
+
+    #[test]
+    fn test_add_before_current_shifts_current_and_playback_base() {
+        let queue = QueueService::new();
+
+        queue.add(create_test_song("first"), None);
+        queue.add(create_test_song("second"), None);
+        queue.add(create_test_song("third"), None);
+        queue.set_current(Some(1));
+        queue.set_playback_base_index(1);
+
+        queue.add(create_test_song("inserted"), Some(0));
+
+        assert_eq!(queue.current_index(), Some(2));
+        assert_eq!(queue.playback_base_index(), 2);
     }
 
     #[test]
@@ -897,5 +910,34 @@ mod tests {
 
         let song = queue.get_by_id(id).unwrap();
         assert_eq!(song.id, Some(id));
+    }
+
+    #[test]
+    fn compute_prefetch_window_is_pure() {
+        let queue = QueueService::new();
+        queue.add(create_test_song("one"), None);
+        queue.add(create_test_song("two"), None);
+        queue.add(create_test_song("three"), None);
+
+        let indices = queue.compute_prefetch_window(0, 3);
+
+        assert_eq!(indices, vec![0, 1, 2]);
+        assert_eq!(queue.get_prefetched_at(0), None);
+    }
+
+    #[test]
+    fn set_playback_window_state_updates_related_fields_together() {
+        let queue = QueueService::new();
+
+        queue.set_playback_window_state(Some(2), 1, vec![1, 2, 3]);
+
+        assert_eq!(
+            queue.playback_window_state(),
+            PlaybackWindowState {
+                current_idx: Some(2),
+                playback_base_index: 1,
+                prefetch_indices: vec![1, 2, 3],
+            }
+        );
     }
 }

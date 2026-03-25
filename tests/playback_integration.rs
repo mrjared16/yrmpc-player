@@ -22,10 +22,10 @@ use std::{
 use async_trait::async_trait;
 use crossbeam::channel::{self, Receiver};
 use rmpc::backends::youtube::{
-    audio::{AudioSourcePlanner, sources::concat::FfmpegConcatSource},
+    audio::{AudioDeliveryPlanner, sources::concat::PreparedMediaInputAdapter},
     config::AudioDeliveryMode,
     media::{MediaPreparer, PreparedMedia, PreloadTier},
-    server::orchestrator,
+    server::orchestrator::Orchestrator,
     services::{InternalEvent, PlaybackService, PlaybackState, PlaybackStateTracker, QueueService},
     url_resolver::UrlResolver,
 };
@@ -118,7 +118,7 @@ fn build_playback_service(
         &socket_path,
         Arc::new(UrlResolver::default()),
         None,
-        AudioSourcePlanner.plan(mode),
+        AudioDeliveryPlanner.plan(mode),
         None,
     )
     .map_err(|e| format!("playback service failed: {e}"))?;
@@ -585,7 +585,7 @@ fn test_runtime_direct_builder_path_starts_fixture_playback() {
         build_playback_service(AudioDeliveryMode::Direct).expect("playback service should start");
 
     let prepared = PreparedMedia::Direct { url: server.url() };
-    let input = FfmpegConcatSource::build_from_prepared(&prepared).expect("builder should succeed");
+    let input = PreparedMediaInputAdapter::build_from_prepared(&prepared).expect("builder should succeed");
 
     assert_eq!(input.url, server.url());
     assert!(input.mpv_args.is_empty());
@@ -615,7 +615,7 @@ fn test_runtime_combined_builder_path_starts_fixture_playback() {
     fs::write(&prefix_path, &fixture_bytes[..prefix_len]).expect("prefix should be written");
 
     let server = StaticAudioServer::start(fixture_bytes).expect("fixture server should start");
-    let (_temp_dir, playback) = build_playback_service(AudioDeliveryMode::Combined)
+    let (_temp_dir, playback) = build_playback_service(AudioDeliveryMode::Staged)
         .expect("combined playback service should start");
 
     let prepared = PreparedMedia::StagedPrefix {
@@ -624,7 +624,7 @@ fn test_runtime_combined_builder_path_starts_fixture_playback() {
         url: server.url(),
         content_length: fixture_len,
     };
-    let input = FfmpegConcatSource::build_from_prepared(&prepared).expect("builder should succeed");
+    let input = PreparedMediaInputAdapter::build_from_prepared(&prepared).expect("builder should succeed");
 
     assert!(input.url.starts_with("lavf://concat:"));
     assert_eq!(
@@ -689,13 +689,13 @@ fn test_runtime_direct_truncated_fixture_triggers_eof_recovery_diagnostic() {
         .start_event_loop(&socket_path, event_tx, internal_event_tx)
         .expect("event loop should start");
 
-    let response = orchestrator::play_position_sync(
-        &playback,
-        &queue,
-        0,
-        &state_tracker,
-        &media_preparer,
+    let orch = Orchestrator::new(
+        Arc::clone(&playback),
+        Arc::clone(&queue),
+        Arc::clone(&state_tracker),
+        Arc::clone(&media_preparer),
     );
+    let response = orch.play_position_sync(0);
     assert!(matches!(response, rmpc::backends::youtube::protocol::ServerResponse::Ok));
 
     wait_for_first_audio(playback.as_ref(), Duration::from_secs(5))
@@ -733,7 +733,7 @@ fn test_runtime_direct_truncated_fixture_triggers_eof_recovery_diagnostic() {
         "expected explicit EOF cause, got: {eof_position_err}"
     );
 
-    orchestrator::handle_track_ended(&playback, &queue, &state_tracker, &media_preparer, &reason);
+    orch.handle_track_ended(&reason);
 
     let calls = prepare_calls.load(Ordering::SeqCst);
     let state = state_tracker.get();

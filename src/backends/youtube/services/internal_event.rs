@@ -3,5 +3,5 @@ pub enum InternalEvent {
     TrackChanged { position: i32 },
     IdleChanged { idle: bool },
     EndFile { reason: String },
-    TimeRemaining { seconds: f64 },
+    PlaybackStarted,
 }

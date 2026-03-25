@@ -50,8 +50,8 @@ use std::sync::Arc;
 use anyhow::Result;
 
 use crate::backends::youtube::{
-    audio::{AudioSourcePlan, CacheConfig, cache::AudioCache},
-    config::ExtractorType,
+    audio::{AudioDeliveryPlan, CacheConfig, cache::AudioCache},
+    config::{ExtractorType, YtDlpExtractorConfig},
     media::{MediaPreparer, YouTubeMediaPreparer, YouTubeMediaPreparerHandle},
     url_resolver::UrlResolver,
 };
@@ -66,10 +66,11 @@ pub struct YouTubeServices {
 impl YouTubeServices {
     pub fn new(
         extractor_type: ExtractorType,
-        audio_source_plan: AudioSourcePlan,
+        ytdlp_config: YtDlpExtractorConfig,
+        audio_source_plan: AudioDeliveryPlan,
         cache_config: CacheConfig,
     ) -> Result<Self> {
-        let url_resolver = Arc::new(UrlResolver::new(extractor_type));
+        let url_resolver = Arc::new(UrlResolver::with_ytdlp_config(extractor_type, ytdlp_config));
         let audio_cache = Arc::new(AudioCache::new(cache_config)?);
         let media_preparer = YouTubeMediaPreparer::spawn(
             Arc::clone(&url_resolver),

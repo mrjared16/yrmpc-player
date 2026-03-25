@@ -11,13 +11,13 @@ pub mod sources;
 pub use cache::{AudioCache, CacheConfig};
 pub use mpv_source::{MpvAudioSource, MpvInput};
 pub use planner::{
-    AudioSourcePlan,
-    AudioSourcePlanner,
+    AudioDeliveryPlan,
+    AudioDeliveryPlanner,
     AudioTransportTarget,
     PrefetchPolicy,
     PrepareAction,
 };
-pub use sources::{DirectSource, FfmpegConcatSource};
+pub use sources::{DirectSource, PreparedMediaInputAdapter};
 
 #[cfg(test)]
 mod tests;
