@@ -39,20 +39,11 @@ use crate::{
     mpd::mpd_client::Filter,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
-        Enqueue,
-        UiEvent,
+        Enqueue, UiEvent,
         panes::{
             navigator_types::{
-                BackspaceResult,
-                DetailId,
-                EntityRef,
-                EscResult,
-                InputMode,
-                NavigatorPane,
-                PaneAction,
-                PaneId,
-                TabId,
-                TabPane,
+                BackspaceResult, DetailId, EntityRef, EscResult, InputMode, NavigatorPane,
+                PaneAction, PaneId, TabId, TabPane,
             },
             search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
         },
@@ -287,6 +278,22 @@ impl SearchPaneV2 {
                 )))
             },
         );
+    }
+
+    fn apply_autocomplete_suggestions(&mut self, suggestions: Vec<String>) {
+        let current_query = self.get_current_query_string();
+        log::debug!(
+            "SearchPaneV2: received {} suggestions, current='{}', last='{}', match={}",
+            suggestions.len(),
+            current_query,
+            self.autocomplete.last_query,
+            current_query == self.autocomplete.last_query
+        );
+
+        if current_query == self.autocomplete.last_query && !current_query.is_empty() {
+            self.autocomplete.update(current_query, suggestions);
+            log::debug!("SearchPaneV2: autocomplete.showing={}", self.autocomplete.showing);
+        }
     }
 
     // ========== ENQUEUE ==========
@@ -1125,7 +1132,7 @@ impl Pane for SearchPaneV2 {
                 new_query.len()
             );
             if new_query != old_query {
-                self.autocomplete.last_query = new_query.clone();
+                self.autocomplete.set_query(new_query.clone());
                 if !new_query.is_empty() && new_query.len() > 1 {
                     log::debug!("SearchPaneV2: triggering suggestions query for '{}'", new_query);
                     ctx.query()
@@ -1137,8 +1144,7 @@ impl Pane for SearchPaneV2 {
                             Ok(QueryResult::SearchSuggestions(suggestions))
                         });
                 } else {
-                    self.autocomplete.showing = false;
-                    self.autocomplete.suggestions.clear();
+                    self.autocomplete.clear();
                 }
             }
 
@@ -1218,20 +1224,7 @@ impl Pane for SearchPaneV2 {
                 self.view.push(SearchableContent::Artist(details));
             }
             (SUGGESTIONS_ID, QueryResult::SearchSuggestions(suggestions)) => {
-                let current_query = self.get_current_query_string();
-                log::debug!(
-                    "SearchPaneV2: received {} suggestions, current='{}', last='{}', match={}",
-                    suggestions.len(),
-                    current_query,
-                    self.autocomplete.last_query,
-                    current_query == self.autocomplete.last_query
-                );
-                if current_query == self.autocomplete.last_query && !current_query.is_empty() {
-                    self.autocomplete.suggestions = suggestions;
-                    self.autocomplete.showing = !self.autocomplete.suggestions.is_empty();
-                    self.autocomplete.state.select(None);
-                    log::debug!("SearchPaneV2: autocomplete.showing={}", self.autocomplete.showing);
-                }
+                self.apply_autocomplete_suggestions(suggestions);
             }
             _ => {}
         }
@@ -1460,6 +1453,9 @@ impl NavigatorPane for SearchPaneV2 {
             }
             ("fetch_artist_v2", crate::QueryResult::ArtistDetail(details)) => {
                 self.view.push(SearchableContent::Artist(details));
+            }
+            (SUGGESTIONS_ID, crate::QueryResult::SearchSuggestions(suggestions)) => {
+                self.apply_autocomplete_suggestions(suggestions);
             }
             _ => {}
         }

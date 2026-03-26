@@ -35,17 +35,8 @@ use super::{
     artist_detail::ArtistDetailPane,
     library_tab::LibraryTabPane,
     navigator_types::{
-        DetailId,
-        DetailPane,
-        EntityContent,
-        EntityRef,
-        InputMode,
-        MoveDirection,
-        NavigatorPane,
-        PaneAction,
-        PaneId,
-        TabId,
-        TabPane,
+        DetailId, DetailPane, EntityContent, EntityRef, InputMode, MoveDirection, NavigatorPane,
+        PaneAction, PaneId, TabId, TabPane,
     },
     playlist_detail::PlaylistDetailPane,
     queue_pane_v2::QueuePaneV2,
@@ -57,6 +48,10 @@ use crate::{
     domain::DetailItem,
     shared::key_event::KeyEvent,
 };
+
+const NAV_FETCH_PLAYLIST_DETAIL_ID: &str = "navigator_fetch_playlist_detail";
+const NAV_FETCH_ALBUM_DETAIL_ID: &str = "navigator_fetch_album_detail";
+const NAV_FETCH_ARTIST_DETAIL_ID: &str = "navigator_fetch_artist_detail";
 
 // =============================================================================
 // NAVIGATOR
@@ -117,11 +112,7 @@ impl Navigator {
     /// Create the action dispatcher with default handlers.
     fn create_action_dispatcher() -> crate::actions::ActionDispatcher {
         use crate::actions::{
-            ActionDispatcher,
-            PlayHandler,
-            QueueHandler,
-            RadioHandler,
-            SaveHandler,
+            ActionDispatcher, PlayHandler, QueueHandler, RadioHandler, SaveHandler,
             TogglePlaybackHandler,
         };
 
@@ -227,20 +218,6 @@ impl Navigator {
     }
 
     /// Navigate to an entity (artist, album, playlist).
-    ///
-    /// This is called when a pane returns `PaneAction::NavigateTo`.
-    /// The content should be fetched by the source pane before calling this.
-    ///
-    /// # Navigation Flow
-    /// 1. Source pane (e.g., SearchPaneV2) fetches entity content
-    ///    asynchronously
-    /// 2. Source pane receives content via on_query_finished
-    /// 3. Source pane calls Navigator::push_content() with the fetched content
-    /// 4. Source pane returns PaneAction::NavigateTo
-    /// 5. Navigator switches to the detail pane (content already pushed)
-    ///
-    /// This approach keeps async handling in panes that implement
-    /// on_query_finished, while Navigator remains a synchronous controller.
     pub fn navigate_to(&mut self, entity: EntityRef, _ctx: &Ctx) {
         log::info!(
             "Navigator::navigate_to: {:?} id={} name={}",
@@ -279,6 +256,45 @@ impl Navigator {
         }
     }
 
+    /// Request entity details, then route the result into the owning detail pane.
+    pub(crate) fn request_navigation(&mut self, entity: EntityRef, ctx: &Ctx) -> Result<()> {
+        use crate::{
+            QueryResult,
+            backends::api::{ContentType, Discovery, Item},
+            config::tabs::PaneType,
+            domain::content::ContentDetails,
+        };
+
+        let (query_id, content_type) = match entity.entity_type {
+            DetailId::Artist => (NAV_FETCH_ARTIST_DETAIL_ID, ContentType::Artist),
+            DetailId::Album => (NAV_FETCH_ALBUM_DETAIL_ID, ContentType::Album),
+            DetailId::Playlist => (NAV_FETCH_PLAYLIST_DETAIL_ID, ContentType::Playlist),
+        };
+
+        let item = Item {
+            id: entity.id,
+            content_type,
+            title: entity.name,
+            subtitle: None,
+            thumbnail: None,
+            duration: None,
+            queue_id: None,
+        };
+
+        ctx.query().id(query_id).replace_id(query_id).target(PaneType::Search).query(
+            move |client| match client.details(&item)? {
+                ContentDetails::Playlist(details) => Ok(QueryResult::PlaylistDetail(details)),
+                ContentDetails::Album(details) => Ok(QueryResult::AlbumDetail(details)),
+                ContentDetails::Artist(details) => Ok(QueryResult::ArtistDetail(details)),
+                other => {
+                    anyhow::bail!("Unexpected detail payload for navigator navigation: {other:?}")
+                }
+            },
+        );
+
+        Ok(())
+    }
+
     /// Push content to a detail pane.
     pub fn push_content(&mut self, content: EntityContent) {
         let detail_id = content.detail_id();
@@ -289,6 +305,9 @@ impl Navigator {
         let target = PaneId::Detail(detail_id);
         if self.active != target {
             self.history.push(self.active);
+            if self.history.len() > self.max_history {
+                self.history.remove(0);
+            }
             self.active = target;
         }
     }
@@ -313,8 +332,7 @@ impl Navigator {
                 ctx.render()?;
             }
             PaneAction::NavigateTo(entity) => {
-                self.navigate_to(entity, ctx);
-                ctx.render()?;
+                self.request_navigation(entity, ctx)?;
             }
             PaneAction::Play(song) => {
                 let executor = PaneActionExecutor::new(&self.action_dispatcher);
@@ -467,9 +485,21 @@ impl Navigator {
     ) -> Result<()> {
         use crate::config::tabs::PaneType;
 
-        match target {
-            PaneType::Search => self.search_pane.on_query_finished(id, data, ctx),
-            PaneType::Queue => self.queue_pane.on_query_finished(id, data, ctx),
+        match (id, data, target) {
+            (NAV_FETCH_PLAYLIST_DETAIL_ID, crate::QueryResult::PlaylistDetail(details), _) => {
+                self.push_content(EntityContent::Playlist(details));
+                Ok(())
+            }
+            (NAV_FETCH_ALBUM_DETAIL_ID, crate::QueryResult::AlbumDetail(details), _) => {
+                self.push_content(EntityContent::Album(details));
+                Ok(())
+            }
+            (NAV_FETCH_ARTIST_DETAIL_ID, crate::QueryResult::ArtistDetail(details), _) => {
+                self.push_content(EntityContent::Artist(details));
+                Ok(())
+            }
+            (_, data, PaneType::Search) => self.search_pane.on_query_finished(id, data, ctx),
+            (_, data, PaneType::Queue) => self.queue_pane.on_query_finished(id, data, ctx),
             _ => Ok(()),
         }
     }
@@ -608,6 +638,76 @@ mod tests {
             navigator.active,
             PaneId::Tab(TabId::Queue),
             "Navigator should sync to Queue via TabChanged event"
+        );
+    }
+
+    fn make_test_artist() -> crate::domain::ArtistContent {
+        crate::domain::ArtistContent {
+            id: "artist123".to_string(),
+            name: "Test Artist".to_string(),
+            top_songs: vec![],
+            thumbnail: None,
+            bio: None,
+            extensions: crate::domain::content::Extensions::default(),
+        }
+    }
+
+    fn make_test_playlist() -> crate::domain::PlaylistContent {
+        crate::domain::PlaylistContent {
+            id: "playlist123".to_string(),
+            title: "Test Playlist".to_string(),
+            tracks: vec![],
+            author: None,
+            thumbnail: None,
+            description: None,
+            track_count: None,
+            duration_text: None,
+            extensions: crate::domain::content::Extensions::default(),
+        }
+    }
+
+    #[test]
+    fn navigator_routes_artist_detail_results_into_artist_pane() {
+        let ctx = create_test_ctx();
+        let mut navigator = Navigator::new(&ctx);
+
+        navigator
+            .on_query_finished(
+                NAV_FETCH_ARTIST_DETAIL_ID,
+                crate::QueryResult::ArtistDetail(make_test_artist()),
+                crate::config::tabs::PaneType::Search,
+                &ctx,
+            )
+            .unwrap();
+
+        assert_eq!(navigator.active, PaneId::Detail(DetailId::Artist));
+        assert!(navigator.artist_pane.has_content());
+        assert_eq!(navigator.artist_pane.current_title(), Some("Test Artist"));
+        assert_eq!(navigator.history, vec![PaneId::Tab(TabId::Search)]);
+    }
+
+    #[test]
+    fn navigator_routes_playlist_detail_results_into_playlist_pane() {
+        let ctx = create_test_ctx();
+        let mut navigator = Navigator::new(&ctx);
+
+        navigator.switch_to_tab(TabId::Library);
+
+        navigator
+            .on_query_finished(
+                NAV_FETCH_PLAYLIST_DETAIL_ID,
+                crate::QueryResult::PlaylistDetail(make_test_playlist()),
+                crate::config::tabs::PaneType::Search,
+                &ctx,
+            )
+            .unwrap();
+
+        assert_eq!(navigator.active, PaneId::Detail(DetailId::Playlist));
+        assert!(navigator.playlist_pane.has_content());
+        assert_eq!(navigator.playlist_pane.current_title(), Some("Test Playlist"));
+        assert_eq!(
+            navigator.history,
+            vec![PaneId::Tab(TabId::Search), PaneId::Tab(TabId::Library)]
         );
     }
 }

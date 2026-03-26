@@ -3,12 +3,8 @@ use std::collections::HashMap;
 use anyhow::{Context, Result, anyhow};
 use itertools::Itertools;
 use modals::{
-    add_random_modal::AddRandomModal,
-    decoders::DecodersModal,
-    info_list_modal::InfoListModal,
-    input_modal::InputModal,
-    keybinds::KeybindsModal,
-    menu::modal::MenuModal,
+    add_random_modal::AddRandomModal, decoders::DecodersModal, info_list_modal::InfoListModal,
+    input_modal::InputModal, keybinds::KeybindsModal, menu::modal::MenuModal,
     outputs::OutputsModal,
 };
 use panes::{PaneContainer, Panes, navigator::Navigator, pane_call};
@@ -1122,29 +1118,46 @@ impl<'ui> Ui<'ui> {
                     self.on_event(UiEvent::ModalClosed, ctx)?;
                 }
 
-                // 2. Find the Search tab and switch to it
-                let search_tab_name = ctx
-                    .config
-                    .tabs
-                    .tabs
-                    .iter()
-                    .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Search))
-                    .map(|(name, _)| name.clone());
+                let title_hint = title.unwrap_or_else(|| match kind {
+                    ContentType::Artist => "Artist".to_string(),
+                    ContentType::Album => "Album".to_string(),
+                    ContentType::Playlist => "Playlist".to_string(),
+                    _ => "Content".to_string(),
+                });
 
-                if let Some(tab_name) = search_tab_name {
-                    self.change_tab(tab_name, ctx)?;
+                if let Some(ref mut navigator) = self.navigator {
+                    let entity_type = match kind {
+                        ContentType::Artist => panes::navigator_types::DetailId::Artist,
+                        ContentType::Album => panes::navigator_types::DetailId::Album,
+                        ContentType::Playlist => panes::navigator_types::DetailId::Playlist,
+                        _ => {
+                            ctx.render()?;
+                            return Ok(());
+                        }
+                    };
 
-                    // 3. Tell SearchPaneV2 to navigate to this content
-                    if let Ok(Panes::SearchV2(search_pane)) =
-                        self.panes.get_mut(&PaneType::Search, ctx)
-                    {
-                        let title_hint = title.unwrap_or_else(|| match kind {
-                            ContentType::Artist => "Artist".to_string(),
-                            ContentType::Album => "Album".to_string(),
-                            ContentType::Playlist => "Playlist".to_string(),
-                            _ => "Content".to_string(),
-                        });
-                        search_pane.navigate_to(id, kind, title_hint, ctx);
+                    navigator.request_navigation(
+                        panes::navigator_types::EntityRef { entity_type, id, name: title_hint },
+                        ctx,
+                    )?;
+                } else {
+                    // Legacy path: switch to Search tab and let SearchPaneV2 own the content stack.
+                    let search_tab_name = ctx
+                        .config
+                        .tabs
+                        .tabs
+                        .iter()
+                        .find(|(_, tab)| tab.panes.panes_iter().any(|p| p.pane == PaneType::Search))
+                        .map(|(name, _)| name.clone());
+
+                    if let Some(tab_name) = search_tab_name {
+                        self.change_tab(tab_name, ctx)?;
+
+                        if let Ok(Panes::SearchV2(search_pane)) =
+                            self.panes.get_mut(&PaneType::Search, ctx)
+                        {
+                            search_pane.navigate_to(id, kind, title_hint, ctx);
+                        }
                     }
                 }
                 ctx.render()?;
