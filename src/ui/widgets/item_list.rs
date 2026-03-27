@@ -269,11 +269,6 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
             ""
         };
         let thumb_url = item.thumbnail_url();
-        log::trace!(
-            "[DIAG-IMG] build_rich_row: title={} thumbnail_url={:?}",
-            item.primary_text(),
-            thumb_url
-        );
 
         // Primary line: [prefix][icon] [title]
         let primary = format!("{}{} {}", prefix, icon, item.primary_text());
@@ -329,12 +324,6 @@ impl<'a, T: ListItemDisplay> StatefulWidget for ItemListWidget<'a, T> {
 
     fn render(self, area: Rect, buf: &mut Buffer, state: &mut Self::State) {
         let mode = self.effective_mode(area);
-        log::trace!(
-            "[DIAG-IMG] ItemListWidget::render mode={:?} area_width={} items={}",
-            mode,
-            area.width,
-            self.items.len()
-        );
         match mode {
             ListRenderMode::Compact => self.render_compact(area, buf, state),
             ListRenderMode::Rich => self.render_rich(area, buf, state),

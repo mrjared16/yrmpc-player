@@ -12,14 +12,8 @@ use super::command::{create_env, run_external};
 use crate::{
     WorkRequest,
     backends::{
-        BackendActions,
-        EXTERNAL_COMMAND,
-        GLOBAL_QUEUE_UPDATE,
-        GLOBAL_STATUS_UPDATE,
-        GLOBAL_STICKERS_UPDATE,
-        GLOBAL_VOLUME_UPDATE,
-        QueryResult,
-        run_status_update,
+        BackendActions, EXTERNAL_COMMAND, GLOBAL_QUEUE_UPDATE, GLOBAL_STATUS_UPDATE,
+        GLOBAL_STICKERS_UPDATE, GLOBAL_VOLUME_UPDATE, QueryResult, run_status_update,
     },
     config::{
         Config,
@@ -38,11 +32,7 @@ use crate::{
         macros::{status_error, status_warn},
     },
     ui::{
-        KeyHandleResult,
-        StatusMessage,
-        Ui,
-        UiAppEvent,
-        UiEvent,
+        KeyHandleResult, StatusMessage, Ui, UiAppEvent, UiEvent,
         modals::{info_modal::InfoModal, select_modal::SelectModal},
     },
 };
@@ -289,7 +279,6 @@ fn main_task<B: Backend + std::io::Write>(
                     }
                 }
                 AppEvent::IdleEvent(event) => {
-                    log::debug!("Event: IdleEvent({:?}) -> render_wanted", event);
                     handle_idle_event(event, &ctx, &mut additional_evs);
                     for ev in additional_evs.drain() {
                         if let Err(err) = ui.on_event(ev, &mut ctx) {
@@ -299,7 +288,6 @@ fn main_task<B: Backend + std::io::Write>(
                     render_wanted = true;
                 }
                 AppEvent::RequestRender => {
-                    log::debug!("Event: RequestRender -> render_wanted");
                     render_wanted = true;
                 }
                 AppEvent::WorkDone(Ok(result)) => match result {

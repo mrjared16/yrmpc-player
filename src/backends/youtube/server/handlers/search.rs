@@ -5,11 +5,7 @@ use std::sync::Arc;
 use crate::{
     backends::youtube::{
         protocol::{
-            AlbumDetailsData,
-            ArtistDetailsData,
-            BrowseEntry,
-            PlaylistDetailsData,
-            ServerResponse,
+            AlbumDetailsData, ArtistDetailsData, BrowseEntry, PlaylistDetailsData, ServerResponse,
             SongData,
         },
         services::ApiService,
@@ -32,13 +28,6 @@ pub fn handle_search(api: &Arc<ApiService>, query: &str) -> ServerResponse {
 
                 // Add all items in this section (preserving their types for correct actions)
                 for item in section.items {
-                    use crate::domain::search::Displayable;
-                    log::trace!(
-                        "[DIAG-IMG] handle_search: section='{}' item='{}' thumbnail={:?}",
-                        section.title,
-                        item.primary_line(),
-                        item.thumbnail()
-                    );
                     items.push(MediaItem::from(item));
                 }
             }

@@ -21,15 +21,8 @@ use crate::{
     domain::{MediaItem, PlaybackState, QueuePosition, Song, Status},
     mpd::{
         commands::{
-            Decoder,
-            LsInfoEntry,
-            Output,
-            Playlist,
-            SaveMode,
-            SeekPosition,
-            ValueChange,
-            lsinfo::Dir,
-            status::OnOffOneshot,
+            Decoder, LsInfoEntry, Output, Playlist, SaveMode, SeekPosition, ValueChange,
+            lsinfo::Dir, status::OnOffOneshot,
         },
         mpd_client::{Filter, SingleOrRange, Tag},
         version::Version,
@@ -531,14 +524,6 @@ impl MusicBackend for YouTubeProxy {
 
         match self.request(ServerCommand::Search { query: query.to_string() })? {
             ServerResponse::SearchResults(items) => {
-                // [DIAG-IMG] Log first item to verify thumbnails in received IPC data
-                if !items.is_empty() {
-                    log::info!(
-                        "[DIAG-IMG] client.search: received {} MediaItem entries, first = {:?}",
-                        items.len(),
-                        &items[0]
-                    );
-                }
                 // Convert MediaItem to Song for legacy UI compatibility (skip headers)
                 Ok(items
                     .into_iter()
@@ -548,14 +533,6 @@ impl MusicBackend for YouTubeProxy {
                             MediaItem::Header { .. } => None, // Skip headers in legacy search
                             _ => {
                                 let song = Song::from(item.clone());
-                                log::info!(
-                                    "[DIAG-IMG] client.search: converted '{}' thumbnail={:?}",
-                                    song.metadata
-                                        .get("title")
-                                        .and_then(|v| v.first())
-                                        .unwrap_or(&"?".to_string()),
-                                    song.metadata.get("thumbnail")
-                                );
                                 Some(song)
                             }
                         }
@@ -665,13 +642,7 @@ impl MusicBackend for YouTubeProxy {
 // They wrap the existing MusicBackend methods with simpler types.
 
 use crate::backends::api::{
-    self,
-    AfterAdd,
-    BrowseResult,
-    Capability,
-    InsertAt,
-    SearchQuery,
-    SearchResults,
+    self, AfterAdd, BrowseResult, Capability, InsertAt, SearchQuery, SearchResults,
 };
 
 impl api::Playback for YouTubeProxy {
@@ -936,14 +907,8 @@ impl api::Discovery for YouTubeProxy {
 
     fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
         use crate::domain::content::{
-            Action,
-            AlbumContent,
-            ArtistContent,
-            ContentDetails,
-            ContentRef,
-            Extensions,
-            PlaylistContent,
-            Stat,
+            Action, AlbumContent, ArtistContent, ContentDetails, ContentRef, Extensions,
+            PlaylistContent, Stat,
         };
 
         match item.content_type {

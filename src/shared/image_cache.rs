@@ -91,13 +91,11 @@ impl ImageCache {
 
             // 1. Check Protocol cache (fast path)
             if let Some(protocol) = inner.protocols.get(&key) {
-                log::trace!("[DIAG-IMG] get_protocol: HIT url={url} size={size:?}");
                 return Some(protocol.clone());
             }
 
             // 2. If raw image exists, spawn async Protocol creation
             if inner.raw.contains(&url.to_string()) {
-                log::trace!("[DIAG-IMG] get_protocol: raw exists, creating protocol url={url}");
                 drop(inner); // Release lock
                 self.spawn_protocol_creation(url.to_string(), size);
                 return None;
@@ -120,7 +118,6 @@ impl ImageCache {
         {
             let mut pending = self.pending_fetch.lock().unwrap();
             if pending.contains(&url) {
-                log::trace!("[DIAG-IMG] spawn_fetch: fetch already pending url={url}");
                 return;
             }
             pending.insert(url.clone());
@@ -132,12 +129,10 @@ impl ImageCache {
         let pending_fetch = self.pending_fetch.clone();
 
         std::thread::spawn(move || {
-            log::trace!("[DIAG-IMG] spawn_fetch: fetching url={url}");
             let result = fetch_image_sync(&url);
 
             match result {
                 Ok(img) => {
-                    log::trace!("[DIAG-IMG] spawn_fetch: SUCCESS url={url}");
                     let img = Arc::new(img);
 
                     // Pre-create Protocol for ListItem (most common size)
@@ -162,7 +157,6 @@ impl ImageCache {
                     let _ = sender.send(AppEvent::UiEvent(crate::ui::UiAppEvent::Redraw));
                 }
                 Err(e) => {
-                    log::warn!("[DIAG-IMG] spawn_fetch: FAILED url={url} error={e}");
                     log::warn!("Failed to fetch image {url}: {e}");
                 }
             }
