@@ -249,8 +249,6 @@ impl SearchPaneV2 {
 
     /// Trigger search query using sectioned API (ADR-section-as-container)
     fn search(&self, ctx: &Ctx) {
-        log::debug!("SearchPaneV2::search() called");
-
         // Get search text from primary input
         let search_text = self.inputs.inputs.iter().find_map(|input| match input {
             InputType::Textbox(TextboxInput { value, filter_key: Some(_), .. })
@@ -262,11 +260,8 @@ impl SearchPaneV2 {
         });
 
         let Some(query_text) = search_text else {
-            log::debug!("SearchPaneV2::search() early return - no search text");
             return;
         };
-
-        log::debug!("SearchPaneV2::search() query_text={}", query_text);
 
         ctx.query().id(SEARCH_ID).replace_id(SEARCH_ID).target(PaneType::Search).query(
             move |client| {
@@ -282,17 +277,9 @@ impl SearchPaneV2 {
 
     fn apply_autocomplete_suggestions(&mut self, suggestions: Vec<String>) {
         let current_query = self.get_current_query_string();
-        log::debug!(
-            "SearchPaneV2: received {} suggestions, current='{}', last='{}', match={}",
-            suggestions.len(),
-            current_query,
-            self.autocomplete.last_query,
-            current_query == self.autocomplete.last_query
-        );
 
         if current_query == self.autocomplete.last_query && !current_query.is_empty() {
             self.autocomplete.update(current_query, suggestions);
-            log::debug!("SearchPaneV2: autocomplete.showing={}", self.autocomplete.showing);
         }
     }
 
@@ -1123,18 +1110,9 @@ impl Pane for SearchPaneV2 {
 
             // Check if query changed and trigger suggestions
             let new_query = self.get_current_query_string();
-            log::debug!(
-                "SearchPaneV2: phase={:?}, insert_mode={}, query changed: '{}' -> '{}' (len={})",
-                self.phase,
-                self.inputs.insert_mode,
-                old_query,
-                new_query,
-                new_query.len()
-            );
             if new_query != old_query {
                 self.autocomplete.set_query(new_query.clone());
                 if !new_query.is_empty() && new_query.len() > 1 {
-                    log::debug!("SearchPaneV2: triggering suggestions query for '{}'", new_query);
                     ctx.query()
                         .id(SUGGESTIONS_ID)
                         .replace_id(SUGGESTIONS_ID)
@@ -1172,11 +1150,6 @@ impl Pane for SearchPaneV2 {
         match (id, data) {
             // NEW: Handle sectioned search results (ADR-section-as-container)
             (SEARCH_ID, QueryResult::SearchResultSectioned(results)) => {
-                log::debug!(
-                    "SearchPaneV2::on_query_finished received sectioned results with {} sections",
-                    results.sections.len()
-                );
-
                 // Apply config ordering (presentation concern - UI layer only)
                 let ordered_sections =
                     Self::apply_config_order(results.sections, &ctx.config.search.sections);
@@ -1192,16 +1165,6 @@ impl Pane for SearchPaneV2 {
             }
             // LEGACY: Handle flat search results (backward compatibility)
             ("search_v2", QueryResult::SearchResult { data }) => {
-                log::debug!("SearchPaneV2::on_query_finished received {} flat results", data.len());
-                if let Some(first) = data.first() {
-                    use crate::domain::media_item::Displayable;
-                    log::info!(
-                        "[DIAG-IMG] on_query_finished: first item '{}' type={:?} thumbnail={:?}",
-                        first.title(),
-                        first.content_type(),
-                        first.thumbnail_url()
-                    );
-                }
                 // Reorder by config sections (top_results first, then songs, artists, etc.)
                 let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);
 
@@ -1284,10 +1247,7 @@ impl NavigatorPane for SearchPaneV2 {
                 // Find mode is handled by ContentView
                 use crate::ui::widgets::content_view::ContentAction;
                 match self.view.handle_key(key, ctx) {
-                    ContentAction::Handled => {
-                        ctx.render()?;
-                        return Ok(PaneAction::Handled);
-                    }
+                    ContentAction::Handled => return Ok(PaneAction::Handled),
                     _ => {
                         // Shouldn't happen in find mode
                         return Ok(PaneAction::Handled);
@@ -1323,20 +1283,15 @@ impl NavigatorPane for SearchPaneV2 {
                         if matches!(key.code(), KeyCode::Esc) {
                             // Try to let ContentView handle it first (clear filter)
                             match self.view.handle_key(key, ctx) {
-                                ContentAction::Handled => {
-                                    ctx.render()?;
-                                    return Ok(PaneAction::Handled);
-                                }
+                                ContentAction::Handled => return Ok(PaneAction::Handled),
                                 ContentAction::Back => {
                                     // At root of content stack - return to Search phase
                                     if self.view.stack_depth() <= 1 {
                                         self.phase = Phase::Search;
                                         key.stop_propagation();
-                                        ctx.render()?;
                                         return Ok(PaneAction::Handled);
                                     } else {
                                         // Should have popped stack internally
-                                        ctx.render()?;
                                         return Ok(PaneAction::Handled);
                                     }
                                 }
@@ -1346,20 +1301,15 @@ impl NavigatorPane for SearchPaneV2 {
 
                         // Handle other keys
                         match self.view.handle_key(key, ctx) {
-                            ContentAction::Handled => {
-                                ctx.render()?;
-                                return Ok(PaneAction::Handled);
-                            }
+                            ContentAction::Handled => return Ok(PaneAction::Handled),
                             ContentAction::Back => {
                                 // If at root of content stack, return to Search phase
                                 if self.view.stack_depth() <= 1 {
                                     self.phase = Phase::Search;
                                     key.stop_propagation();
-                                    ctx.render()?;
                                     return Ok(PaneAction::Handled);
                                 } else {
                                     // Should have popped stack internally
-                                    ctx.render()?;
                                     return Ok(PaneAction::Handled);
                                 }
                             }
@@ -1367,10 +1317,7 @@ impl NavigatorPane for SearchPaneV2 {
                                 // Interpret activation in pane context
                                 return Ok(self.action_for_item(item));
                             }
-                            ContentAction::Mark(_) => {
-                                ctx.render()?;
-                                return Ok(PaneAction::Handled);
-                            }
+                            ContentAction::Mark(_) => return Ok(PaneAction::Handled),
                             ContentAction::MoveUp(_)
                             | ContentAction::MoveDown(_)
                             | ContentAction::Delete(_) => {
@@ -1407,11 +1354,6 @@ impl NavigatorPane for SearchPaneV2 {
         match (id, data) {
             // NEW: Handle sectioned search results (ADR-section-as-container)
             (SEARCH_ID, crate::QueryResult::SearchResultSectioned(results)) => {
-                log::debug!(
-                    "NavigatorPane::on_query_finished received sectioned results with {} sections",
-                    results.sections.len()
-                );
-
                 // Apply config ordering (presentation concern - UI layer only)
                 let ordered_sections =
                     Self::apply_config_order(results.sections, &ctx.config.search.sections);
@@ -1425,19 +1367,6 @@ impl NavigatorPane for SearchPaneV2 {
             }
             // LEGACY: Handle flat search results (backward compatibility)
             ("search_v2", crate::QueryResult::SearchResult { data }) => {
-                log::debug!(
-                    "NavigatorPane::on_query_finished received {} flat results",
-                    data.len()
-                );
-                if let Some(first) = data.first() {
-                    use crate::domain::media_item::Displayable;
-                    log::info!(
-                        "[DIAG-IMG] NavigatorPane::on_query_finished: first item '{}' type={:?} thumbnail={:?}",
-                        first.title(),
-                        first.content_type(),
-                        first.thumbnail_url()
-                    );
-                }
                 // Reorder by config sections (top_results first, then songs, artists, etc.)
                 let items = Self::reorder_by_config_sections(data, &ctx.config.search.sections);
 

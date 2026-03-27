@@ -402,10 +402,15 @@ impl Navigator {
 
         // Route to active pane
         let action = self.active_pane_mut().handle_key(key, ctx)?;
+        let key_consumed = key.is_propagation_stopped();
 
         // Process returned action
         match action {
-            PaneAction::Handled => {}
+            PaneAction::Handled => {
+                if key_consumed {
+                    ctx.render()?;
+                }
+            }
             PaneAction::BackPane => {
                 if !self.go_back() {
                     // No history - stay on current pane
@@ -666,19 +671,23 @@ mod tests {
         sync::{Arc, RwLock},
     };
 
-    use crossbeam::channel::unbounded;
+    use crossbeam::channel::{Receiver, unbounded};
     use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
 
     use crate::{
         config::Config,
         ctx::Ctx,
-        domain::Status,
+        domain::{Song, Status},
         mpd::version::Version,
-        shared::{image_cache::ImageCache, ring_vec::RingVec},
+        shared::{events::AppEvent, image_cache::ImageCache, ring_vec::RingVec},
     };
 
     fn create_test_ctx() -> Ctx {
-        let (tx, _rx) = unbounded();
+        create_test_ctx_with_render_rx().0
+    }
+
+    fn create_test_ctx_with_render_rx() -> (Ctx, Receiver<AppEvent>) {
+        let (tx, rx) = unbounded();
         let (work_tx, _work_rx) = unbounded();
         let (client_tx, _client_rx) = unbounded();
 
@@ -687,39 +696,42 @@ mod tests {
         let config = Config::default();
         let config_with_keybinds = Config { keybinds: key_config, ..config };
 
-        Ctx {
-            backend_version: Version::new(0, 0, 0),
-            config: Arc::new(config_with_keybinds),
-            status: Status::default(),
-            image_cache: ImageCache::new(tx.clone()),
-            app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
-            controllers: crate::core::controllers::Controllers::new(
-                vec![],
-                tx.clone(),
-                client_tx.clone(),
-            ),
-            stickers: HashMap::new(),
-            // Start with Search tab active
-            active_tab: crate::config::tabs::TabName::from("Search"),
-            supported_commands: HashSet::new(),
-            capabilities: &[],
-            db_update_start: None,
-            app_event_sender: tx.clone(),
-            work_sender: work_tx,
-            client_request_sender: client_tx.clone(),
-            needs_render: Cell::new(false),
-            stickers_to_fetch: RefCell::new(HashSet::new()),
-            lrc_index: Default::default(),
-            rendered_frames: 0,
-            messages: RingVec::default(),
-            last_status_update: std::time::Instant::now(),
-            song_played: None,
-            stickers_supported: crate::ctx::StickersSupport::Unsupported,
-            scheduler: crate::core::scheduler::Scheduler::new((tx, client_tx)),
-            debug_ui_log: None,
-            queue_panel_visible: false,
-            previous_tab: None,
-        }
+        (
+            Ctx {
+                backend_version: Version::new(0, 0, 0),
+                config: Arc::new(config_with_keybinds),
+                status: Status::default(),
+                image_cache: ImageCache::new(tx.clone()),
+                app_state: Arc::new(RwLock::new(crate::app_state::AppState::default())),
+                controllers: crate::core::controllers::Controllers::new(
+                    vec![],
+                    tx.clone(),
+                    client_tx.clone(),
+                ),
+                stickers: HashMap::new(),
+                // Start with Search tab active
+                active_tab: crate::config::tabs::TabName::from("Search"),
+                supported_commands: HashSet::new(),
+                capabilities: &[],
+                db_update_start: None,
+                app_event_sender: tx.clone(),
+                work_sender: work_tx,
+                client_request_sender: client_tx.clone(),
+                needs_render: Cell::new(false),
+                stickers_to_fetch: RefCell::new(HashSet::new()),
+                lrc_index: Default::default(),
+                rendered_frames: 0,
+                messages: RingVec::default(),
+                last_status_update: std::time::Instant::now(),
+                song_played: None,
+                stickers_supported: crate::ctx::StickersSupport::Unsupported,
+                scheduler: crate::core::scheduler::Scheduler::new((tx, client_tx)),
+                debug_ui_log: None,
+                queue_panel_visible: false,
+                previous_tab: None,
+            },
+            rx,
+        )
     }
 
     /// Test: Navigator syncs with ctx.active_tab via UiEvent::TabChanged
@@ -756,6 +768,23 @@ mod tests {
             id: "artist123".to_string(),
             name: "Test Artist".to_string(),
             top_songs: vec![],
+            thumbnail: None,
+            bio: None,
+            extensions: crate::domain::content::Extensions::default(),
+        }
+    }
+
+    fn make_test_song(id: u32, title: &str) -> Song {
+        let mut song = Song { id: Some(id), uri: format!("song:{id}"), ..Song::default() };
+        song.metadata.insert("title".to_string(), vec![title.to_string()]);
+        song
+    }
+
+    fn make_test_artist_with_songs() -> crate::domain::ArtistContent {
+        crate::domain::ArtistContent {
+            id: "artist123".to_string(),
+            name: "Test Artist".to_string(),
+            top_songs: vec![make_test_song(1, "Song A"), make_test_song(2, "Song B")],
             thumbnail: None,
             bio: None,
             extensions: crate::domain::content::Extensions::default(),
@@ -849,5 +878,65 @@ mod tests {
 
         assert!(!navigator.artist_pane.has_content());
         assert_eq!(navigator.active, PaneId::Tab(TabId::Search));
+    }
+
+    #[test]
+    fn navigator_schedules_render_for_consumed_handled_key_in_detail_pane() {
+        let (mut ctx, rx) = create_test_ctx_with_render_rx();
+        let mut navigator = Navigator::new(&ctx);
+        navigator.push_content(EntityContent::Artist(make_test_artist_with_songs()));
+
+        assert!(!ctx.needs_render.get());
+
+        let mut key = crate::shared::key_event::KeyEvent::from(CKeyEvent::new(
+            KeyCode::Down,
+            KeyModifiers::NONE,
+        ));
+
+        navigator.handle_key(&mut key, &mut ctx).unwrap();
+
+        assert!(key.is_propagation_stopped());
+        assert!(ctx.needs_render.get());
+        assert!(matches!(rx.try_recv(), Ok(AppEvent::RequestRender)));
+    }
+
+    #[test]
+    fn navigator_schedules_render_for_consumed_handled_key_in_library_tab() {
+        let (mut ctx, rx) = create_test_ctx_with_render_rx();
+        let mut navigator = Navigator::new(&ctx);
+        navigator.switch_to_tab(TabId::Library);
+        navigator.library_pane.set_playlists(vec![crate::domain::content::ContentRef::playlist(
+            "pl-1",
+            "Playlist 1",
+        )]);
+
+        let mut key = crate::shared::key_event::KeyEvent::from(CKeyEvent::new(
+            KeyCode::Char('/'),
+            KeyModifiers::NONE,
+        ));
+
+        navigator.handle_key(&mut key, &mut ctx).unwrap();
+
+        assert!(key.is_propagation_stopped());
+        assert!(ctx.needs_render.get());
+        assert!(matches!(rx.try_recv(), Ok(AppEvent::RequestRender)));
+    }
+
+    #[test]
+    fn navigator_does_not_render_for_unconsumed_handled_key() {
+        let (mut ctx, rx) = create_test_ctx_with_render_rx();
+        let mut navigator = Navigator::new(&ctx);
+        navigator.push_content(EntityContent::Artist(make_test_artist_with_songs()));
+
+        let mut key = crate::shared::key_event::KeyEvent::from(CKeyEvent::new(
+            KeyCode::Char('x'),
+            KeyModifiers::NONE,
+        ));
+
+        navigator.handle_key(&mut key, &mut ctx).unwrap();
+
+        assert!(!key.is_propagation_stopped());
+        assert!(!ctx.needs_render.get());
+        assert!(rx.try_recv().is_err());
     }
 }

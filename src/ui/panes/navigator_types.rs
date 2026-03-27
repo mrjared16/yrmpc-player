@@ -25,11 +25,7 @@ use super::UiEvent;
 // Re-export MoveDirection for unified queue move operations
 pub use crate::ui::list_ops::MoveDirection;
 use crate::{
-    QueryResult,
-    actions::intent::Intent,
-    ctx::Ctx,
-    domain::Song,
-    shared::key_event::KeyEvent,
+    QueryResult, actions::intent::Intent, ctx::Ctx, domain::Song, shared::key_event::KeyEvent,
 };
 
 // ============================================================================
@@ -154,7 +150,12 @@ pub enum ContentAction {
 /// Actions returned from pane key handling
 #[derive(Debug, Clone)]
 pub enum PaneAction {
-    /// Key was handled internally, no further action needed
+    /// Key was handled internally, no further action needed.
+    ///
+    /// In Navigator mode, the navigator schedules redraws for consumed keys that
+    /// only mutate pane-local view state (for example j/k selection movement
+    /// inside `ContentView`). Navigator-owned panes should treat `Handled` as a
+    /// semantic outcome, not a signal to call `ctx.render()` directly.
     Handled,
 
     /// Navigate to an entity (push onto current pane's stack or switch pane)
@@ -236,7 +237,16 @@ pub(crate) trait NavigatorPane {
     /// Render the pane
     fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()>;
 
-    /// Handle a key event, returning an action for the navigator
+    /// Handle a key event, returning an action for the navigator.
+    ///
+    /// Contract:
+    /// - return a richer `PaneAction` when the navigator must orchestrate work
+    ///   (navigation, playback, queue mutations, etc.)
+    /// - return `PaneAction::Handled` for pane-local state changes
+    /// - navigator-owned panes should NOT call `ctx.render()` directly for synchronous
+    ///   key handling; the navigator owns redraw scheduling for that path
+    /// - if the pane mutates local state, it must consume the key so the navigator
+    ///   can schedule a redraw when `PaneAction::Handled` is returned
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<PaneAction>;
 
     /// Handle UI events (queue changes, playback state, etc.)

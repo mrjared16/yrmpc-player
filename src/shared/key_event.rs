@@ -47,6 +47,10 @@ impl KeyEvent {
         self.inner.code
     }
 
+    pub fn is_propagation_stopped(&self) -> bool {
+        self.already_handled
+    }
+
     pub fn stop_propagation(&mut self) {
         self.already_handled = true;
     }

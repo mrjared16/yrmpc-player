@@ -33,20 +33,11 @@ use crate::{
         mouse_event::MouseEvent,
     },
     ui::{
-        UiAppEvent,
-        UiEvent,
+        UiAppEvent, UiEvent,
         modals::confirm_modal::{Action, ConfirmModal},
         panes::navigator_types::{
-            ContentAction,
-            DetailId,
-            EntityRef,
-            InputMode,
-            MoveDirection,
-            NavigatorPane,
-            PaneAction,
-            PaneId,
-            TabId,
-            TabPane,
+            ContentAction, DetailId, EntityRef, InputMode, MoveDirection, NavigatorPane,
+            PaneAction, PaneId, TabId, TabPane,
         },
         widgets::content_view::ContentView,
     },
@@ -272,7 +263,6 @@ impl QueuePaneV2 {
             }
             QueueActions::JumpToCurrent => {
                 self.jump_to_current(ctx);
-                ctx.render()?;
                 Ok(PaneAction::Handled)
             }
             QueueActions::Shuffle => {
@@ -295,8 +285,7 @@ impl QueuePaneV2 {
         };
 
         use crate::{
-            domain::display::ListItemDisplay,
-            shared::image_cache::ThumbnailSize,
+            domain::display::ListItemDisplay, shared::image_cache::ThumbnailSize,
             ui::widgets::async_image::AsyncImage,
         };
 
@@ -378,7 +367,27 @@ impl Pane for QueuePaneV2 {
     fn handle_action(&mut self, event: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
         // Queue-specific actions first
         if let Some(action) = event.as_queue_action(ctx) {
-            let _ = self.handle_queue_action(action, ctx)?;
+            let pane_action = self.handle_queue_action(action, ctx)?;
+            match pane_action {
+                PaneAction::Handled => ctx.render()?,
+                PaneAction::Play(song) => {
+                    if let Some(id) = song.id {
+                        ctx.command(move |client| {
+                            client.play_id(id)?;
+                            Ok(())
+                        });
+                    }
+                }
+                PaneAction::QueueDelete(ids) => {
+                    for id in ids {
+                        ctx.command(move |client| {
+                            client.delete_id(id)?;
+                            Ok(())
+                        });
+                    }
+                }
+                _ => {}
+            }
             return Ok(());
         }
 
@@ -466,16 +475,12 @@ impl NavigatorPane for QueuePaneV2 {
         let action = self.view.handle_key(key, ctx);
 
         match action {
-            ContentAction::Handled => {
-                ctx.render()?;
-                Ok(PaneAction::Handled)
-            }
+            ContentAction::Handled => Ok(PaneAction::Handled),
             ContentAction::Back => {
                 // Clear marks first if any
                 if let Some(level) = self.view.current_mut() {
                     if level.section_list.has_marked() {
                         level.section_list.clear_marks();
-                        ctx.render()?;
                         return Ok(PaneAction::Handled);
                     }
                 }
@@ -483,18 +488,13 @@ impl NavigatorPane for QueuePaneV2 {
             }
             ContentAction::Activate(item) => {
                 let pane_action = self.resolve_action(item, ctx);
-                ctx.render()?;
                 Ok(pane_action)
             }
-            ContentAction::Mark(_) => {
-                ctx.render()?;
-                Ok(PaneAction::Handled)
-            }
+            ContentAction::Mark(_) => Ok(PaneAction::Handled),
             ContentAction::Delete(items) => {
                 let ids: Vec<u32> =
                     items.iter().filter_map(|i| i.as_song()).filter_map(|s| s.id).collect();
                 if !ids.is_empty() {
-                    ctx.render()?;
                     Ok(PaneAction::QueueDelete(ids))
                 } else {
                     Ok(PaneAction::Handled)
@@ -504,7 +504,6 @@ impl NavigatorPane for QueuePaneV2 {
                 let ids: Vec<u32> =
                     items.iter().filter_map(|i| i.as_song()).filter_map(|s| s.id).collect();
                 if !ids.is_empty() {
-                    ctx.render()?;
                     Ok(PaneAction::QueueMove { ids, direction: MoveDirection::Up })
                 } else {
                     Ok(PaneAction::Handled)
@@ -514,7 +513,6 @@ impl NavigatorPane for QueuePaneV2 {
                 let ids: Vec<u32> =
                     items.iter().filter_map(|i| i.as_song()).filter_map(|s| s.id).collect();
                 if !ids.is_empty() {
-                    ctx.render()?;
                     Ok(PaneAction::QueueMove { ids, direction: MoveDirection::Down })
                 } else {
                     Ok(PaneAction::Handled)
