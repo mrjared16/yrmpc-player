@@ -26,7 +26,12 @@
 use std::collections::HashMap;
 
 use anyhow::Result;
-use ratatui::{Frame, prelude::Rect};
+use crossterm::event::KeyCode;
+use ratatui::{
+    Frame,
+    prelude::{Alignment, Rect},
+    widgets::{Block, Borders, Paragraph},
+};
 
 use super::{
     UiEvent,
@@ -78,6 +83,9 @@ pub struct Navigator {
     /// Maximum history depth
     max_history: usize,
 
+    /// Pending async navigation request currently being shown as a loading state.
+    pending_navigation: Option<EntityRef>,
+
     /// Action router for Intent dispatch (reused, not recreated)
     action_dispatcher: crate::actions::ActionDispatcher,
 }
@@ -105,6 +113,7 @@ impl Navigator {
             active: PaneId::Tab(TabId::Search),
             history: Vec::new(),
             max_history: 10,
+            pending_navigation: None,
             action_dispatcher: Self::create_action_dispatcher(),
         }
     }
@@ -159,6 +168,44 @@ impl Navigator {
             DetailId::Album => &mut self.album_pane,
             DetailId::Playlist => &mut self.playlist_pane,
         }
+    }
+
+    fn active_pending_navigation(&self) -> Option<&EntityRef> {
+        let pending = self.pending_navigation.as_ref()?;
+        (self.active == PaneId::Detail(pending.entity_type)).then_some(pending)
+    }
+
+    fn clear_pending_navigation_for(&mut self, detail_id: DetailId) {
+        if self.pending_navigation.as_ref().is_some_and(|pending| pending.entity_type == detail_id)
+        {
+            self.pending_navigation = None;
+        }
+    }
+
+    fn render_loading_placeholder(
+        &self,
+        frame: &mut Frame,
+        area: Rect,
+        ctx: &Ctx,
+        pending: &EntityRef,
+    ) {
+        let kind = match pending.entity_type {
+            DetailId::Artist => "artist",
+            DetailId::Album => "album",
+            DetailId::Playlist => "playlist",
+        };
+
+        let block = Block::default()
+            .title(format!(" Loading {} ", pending.name))
+            .borders(Borders::ALL)
+            .border_style(ctx.config.as_border_style());
+        let inner = block.inner(area);
+        frame.render_widget(block, area);
+        frame.render_widget(
+            Paragraph::new(format!("Fetching {kind} details…\n\nPress Esc to go back."))
+                .alignment(Alignment::Center),
+            inner,
+        );
     }
 
     // =========================================================================
@@ -271,6 +318,8 @@ impl Navigator {
             DetailId::Playlist => (NAV_FETCH_PLAYLIST_DETAIL_ID, ContentType::Playlist),
         };
 
+        let pending = entity.clone();
+
         let item = Item {
             id: entity.id,
             content_type,
@@ -280,6 +329,10 @@ impl Navigator {
             duration: None,
             queue_id: None,
         };
+
+        self.pending_navigation = Some(pending.clone());
+        self.navigate_to(pending, ctx);
+        ctx.render()?;
 
         ctx.query().id(query_id).replace_id(query_id).target(PaneType::Search).query(
             move |client| match client.details(&item)? {
@@ -318,6 +371,35 @@ impl Navigator {
 
     /// Handle a key event, routing to active pane and processing actions.
     pub fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
+        if let Some(pending) = self.active_pending_navigation().cloned() {
+            match key.code() {
+                KeyCode::Esc | KeyCode::Backspace => {
+                    self.clear_pending_navigation_for(pending.entity_type);
+                    if !self.go_back() {
+                        self.switch_to_tab(TabId::Search);
+                    }
+                    ctx.render()?;
+                }
+                KeyCode::Char('1') => {
+                    self.clear_pending_navigation_for(pending.entity_type);
+                    self.switch_to_tab(TabId::Search);
+                    ctx.render()?;
+                }
+                KeyCode::Char('2') => {
+                    self.clear_pending_navigation_for(pending.entity_type);
+                    self.switch_to_tab(TabId::Queue);
+                    ctx.render()?;
+                }
+                KeyCode::Char('3') => {
+                    self.clear_pending_navigation_for(pending.entity_type);
+                    self.switch_to_tab(TabId::Library);
+                    ctx.render()?;
+                }
+                _ => {}
+            }
+            return Ok(());
+        }
+
         // Route to active pane
         let action = self.active_pane_mut().handle_key(key, ctx)?;
 
@@ -404,7 +486,12 @@ impl Navigator {
 
     /// Render the currently active pane.
     pub fn render(&mut self, frame: &mut Frame, area: Rect, ctx: &Ctx) -> Result<()> {
-        self.active_pane_mut().render(frame, area, ctx)
+        if let Some(pending) = self.active_pending_navigation() {
+            self.render_loading_placeholder(frame, area, ctx, pending);
+            Ok(())
+        } else {
+            self.active_pane_mut().render(frame, area, ctx)
+        }
     }
 
     // =========================================================================
@@ -426,14 +513,22 @@ impl Navigator {
         match self.active {
             PaneId::Tab(tab) => tab.label().to_string(),
             PaneId::Detail(DetailId::Artist) => {
-                if let Some(title) = self.artist_pane.current_title() {
+                if let Some(pending) = self.active_pending_navigation() {
+                    format!("Artist > {}", pending.name)
+                } else if let Some(title) = self.artist_pane.current_title() {
                     format!("Artist > {}", title)
                 } else {
                     "Artist".to_string()
                 }
             }
-            PaneId::Detail(DetailId::Album) => "Album".to_string(),
-            PaneId::Detail(DetailId::Playlist) => "Playlist".to_string(),
+            PaneId::Detail(DetailId::Album) => self
+                .active_pending_navigation()
+                .map(|pending| format!("Album > {}", pending.name))
+                .unwrap_or_else(|| "Album".to_string()),
+            PaneId::Detail(DetailId::Playlist) => self
+                .active_pending_navigation()
+                .map(|pending| format!("Playlist > {}", pending.name))
+                .unwrap_or_else(|| "Playlist".to_string()),
         }
     }
 
@@ -487,15 +582,30 @@ impl Navigator {
 
         match (id, data, target) {
             (NAV_FETCH_PLAYLIST_DETAIL_ID, crate::QueryResult::PlaylistDetail(details), _) => {
-                self.push_content(EntityContent::Playlist(details));
+                if self.pending_navigation.as_ref().is_some_and(|pending| {
+                    pending.entity_type == DetailId::Playlist && pending.id == details.id
+                }) {
+                    self.pending_navigation = None;
+                    self.push_content(EntityContent::Playlist(details));
+                }
                 Ok(())
             }
             (NAV_FETCH_ALBUM_DETAIL_ID, crate::QueryResult::AlbumDetail(details), _) => {
-                self.push_content(EntityContent::Album(details));
+                if self.pending_navigation.as_ref().is_some_and(|pending| {
+                    pending.entity_type == DetailId::Album && pending.id == details.id
+                }) {
+                    self.pending_navigation = None;
+                    self.push_content(EntityContent::Album(details));
+                }
                 Ok(())
             }
             (NAV_FETCH_ARTIST_DETAIL_ID, crate::QueryResult::ArtistDetail(details), _) => {
-                self.push_content(EntityContent::Artist(details));
+                if self.pending_navigation.as_ref().is_some_and(|pending| {
+                    pending.entity_type == DetailId::Artist && pending.id == details.id
+                }) {
+                    self.pending_navigation = None;
+                    self.push_content(EntityContent::Artist(details));
+                }
                 Ok(())
             }
             (_, data, PaneType::Search) => self.search_pane.on_query_finished(id, data, ctx),
@@ -670,6 +780,11 @@ mod tests {
     fn navigator_routes_artist_detail_results_into_artist_pane() {
         let ctx = create_test_ctx();
         let mut navigator = Navigator::new(&ctx);
+        navigator.pending_navigation = Some(EntityRef {
+            entity_type: DetailId::Artist,
+            id: "artist123".to_string(),
+            name: "Test Artist".to_string(),
+        });
 
         navigator
             .on_query_finished(
@@ -683,6 +798,7 @@ mod tests {
         assert_eq!(navigator.active, PaneId::Detail(DetailId::Artist));
         assert!(navigator.artist_pane.has_content());
         assert_eq!(navigator.artist_pane.current_title(), Some("Test Artist"));
+        assert!(navigator.pending_navigation.is_none());
         assert_eq!(navigator.history, vec![PaneId::Tab(TabId::Search)]);
     }
 
@@ -692,6 +808,11 @@ mod tests {
         let mut navigator = Navigator::new(&ctx);
 
         navigator.switch_to_tab(TabId::Library);
+        navigator.pending_navigation = Some(EntityRef {
+            entity_type: DetailId::Playlist,
+            id: "playlist123".to_string(),
+            name: "Test Playlist".to_string(),
+        });
 
         navigator
             .on_query_finished(
@@ -705,9 +826,28 @@ mod tests {
         assert_eq!(navigator.active, PaneId::Detail(DetailId::Playlist));
         assert!(navigator.playlist_pane.has_content());
         assert_eq!(navigator.playlist_pane.current_title(), Some("Test Playlist"));
+        assert!(navigator.pending_navigation.is_none());
         assert_eq!(
             navigator.history,
             vec![PaneId::Tab(TabId::Search), PaneId::Tab(TabId::Library)]
         );
+    }
+
+    #[test]
+    fn navigator_ignores_stale_detail_results_without_matching_pending_navigation() {
+        let ctx = create_test_ctx();
+        let mut navigator = Navigator::new(&ctx);
+
+        navigator
+            .on_query_finished(
+                NAV_FETCH_ARTIST_DETAIL_ID,
+                crate::QueryResult::ArtistDetail(make_test_artist()),
+                crate::config::tabs::PaneType::Search,
+                &ctx,
+            )
+            .unwrap();
+
+        assert!(!navigator.artist_pane.has_content());
+        assert_eq!(navigator.active, PaneId::Tab(TabId::Search));
     }
 }
