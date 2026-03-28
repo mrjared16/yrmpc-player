@@ -32,26 +32,44 @@ pub enum RepeatMode {
 #[derive(Debug, Clone)]
 pub enum QueueCommand {
     /// Add a single song to the end of the queue
-    Add { song: Song },
-    AddAt { song: Song, position: usize },
+    Add {
+        song: Song,
+    },
+    AddAt {
+        song: Song,
+        position: usize,
+    },
     /// Add multiple songs to the end of the queue
-    AddBatch { songs: Vec<Song> },
+    AddBatch {
+        songs: Vec<Song>,
+    },
     /// Remove a song by its ID
-    Remove { id: QueueId },
+    Remove {
+        id: QueueId,
+    },
     /// Move a song to a new position
-    Move { id: QueueId, to_position: usize },
+    Move {
+        id: QueueId,
+        to_position: usize,
+    },
     /// Clear the entire queue
     Clear,
     /// Play a specific song by ID
-    Play { id: QueueId },
+    Play {
+        id: QueueId,
+    },
     /// Move to next song
     Next,
     /// Move to previous song
     Previous,
     /// Enable/disable shuffle
-    SetShuffle { enabled: bool },
+    SetShuffle {
+        enabled: bool,
+    },
     /// Set repeat mode
-    SetRepeat { mode: RepeatMode },
+    SetRepeat {
+        mode: RepeatMode,
+    },
     /// Advance to next track (called by bridge on track end)
     Advance,
     /// Stop playback

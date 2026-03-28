@@ -21,10 +21,7 @@
 //! - terminal sessions should reject later requests via
 //!   `RelaySessionState::terminal_http_status()`
 
-use std::{
-    net::SocketAddr,
-    path::PathBuf,
-};
+use std::{net::SocketAddr, path::PathBuf};
 
 use super::PreparedMedia;
 
@@ -70,10 +67,7 @@ pub enum RelaySessionState {
 
 impl RelaySessionState {
     pub fn is_terminal(self) -> bool {
-        matches!(
-            self,
-            Self::Completed | Self::Cancelled | Self::Failed | Self::Expired
-        )
+        matches!(self, Self::Completed | Self::Cancelled | Self::Failed | Self::Expired)
     }
 
     pub fn terminal_http_status(self) -> Option<u16> {
@@ -110,9 +104,7 @@ impl RelaySessionId {
         let value = value.into();
 
         if value.is_empty()
-            || !value
-                .chars()
-                .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
+            || !value.chars().all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_'))
         {
             return Err(RelayContractError::InvalidSessionId);
         }
@@ -239,7 +231,10 @@ impl RelaySessionSpec {
                         path: path.clone(),
                         available: RelayByteRange { start: 0, end: *bytes },
                     },
-                    upstream: RelayUpstreamStream { url: url.clone(), content_length: *content_length },
+                    upstream: RelayUpstreamStream {
+                        url: url.clone(),
+                        content_length: *content_length,
+                    },
                     contract: RelayTransportContract::default(),
                     state: RelaySessionState::Registered,
                     tee_prefix: None,
@@ -258,7 +253,10 @@ impl RelaySessionSpec {
                         path: prefix_path.clone(),
                         available: RelayByteRange { start: 0, end: 0 }, // no staged data yet
                     },
-                    upstream: RelayUpstreamStream { url: url.clone(), content_length: *content_length },
+                    upstream: RelayUpstreamStream {
+                        url: url.clone(),
+                        content_length: *content_length,
+                    },
                     contract: RelayTransportContract::default(),
                     state: RelaySessionState::Registered,
                     tee_prefix: Some(RelayTeePrefix {
@@ -279,8 +277,12 @@ impl RelaySessionSpec {
         RelayPlayerEndpoint::new(listen_addr, session_id)
     }
 
-    pub fn plan_response(&self, range_header: Option<&str>) -> Result<RelayResponsePlan, RelayRangeError> {
-        let response = RequestedRange::parse(range_header)?.resolve(self.upstream.content_length)?;
+    pub fn plan_response(
+        &self,
+        range_header: Option<&str>,
+    ) -> Result<RelayResponsePlan, RelayRangeError> {
+        let response =
+            RequestedRange::parse(range_header)?.resolve(self.upstream.content_length)?;
         let staged = self.staged.available.intersection(response);
         let upstream_start = response.start.max(self.staged.available.end);
         let upstream = (upstream_start < response.end)
@@ -328,9 +330,7 @@ impl RequestedRange {
         };
 
         let header = header.trim();
-        let spec = header
-            .strip_prefix("bytes=")
-            .ok_or(RelayRangeError::InvalidRangeHeader)?;
+        let spec = header.strip_prefix("bytes=").ok_or(RelayRangeError::InvalidRangeHeader)?;
 
         if spec.contains(',') {
             return Err(RelayRangeError::MultipleRangesUnsupported);
@@ -396,14 +396,8 @@ mod tests {
     };
 
     use super::{
-        RelayByteRange,
-        RelayContractError,
-        RelayPlayerEndpoint,
-        RelayRangeError,
-        RelaySessionId,
-        RelaySessionSpec,
-        RelaySessionState,
-        RelayTransportContract,
+        RelayByteRange, RelayContractError, RelayPlayerEndpoint, RelayRangeError, RelaySessionId,
+        RelaySessionSpec, RelaySessionState, RelayTransportContract,
     };
     use crate::backends::youtube::media::PreparedMedia;
 
@@ -447,10 +441,7 @@ mod tests {
         assert_eq!(session.state, RelaySessionState::Registered);
         assert_eq!(
             session.tee_prefix,
-            Some(super::RelayTeePrefix {
-                path: PathBuf::from("/tmp/prefix.webm"),
-                size: 2048,
-            })
+            Some(super::RelayTeePrefix { path: PathBuf::from("/tmp/prefix.webm"), size: 2048 })
         );
     }
 

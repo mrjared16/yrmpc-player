@@ -80,7 +80,8 @@ pub fn handle_play_with_intent(
             for (i, song) in tracks.iter().enumerate() {
                 let pos = insert_pos.map(|p| (p + i) as u32);
                 orchestrator.queue().add(song.clone(), pos);
-                let play_queue_position = pos.unwrap_or(orchestrator.queue().len().saturating_sub(1) as u32);
+                let play_queue_position =
+                    pos.unwrap_or(orchestrator.queue().len().saturating_sub(1) as u32);
                 queue_coordinator.apply(QueueCommand::AddAt {
                     song: song.clone(),
                     position: play_queue_position as usize,
@@ -183,8 +184,7 @@ mod tests {
         shared::play_queue::PlayQueue,
     };
 
-    fn setup_orchestrator(
-    ) -> (
+    fn setup_orchestrator() -> (
         MpvTestGuard,
         TempDir,
         Arc<Orchestrator>,
@@ -210,7 +210,8 @@ mod tests {
         let state_tracker = Arc::new(PlaybackStateTracker::new());
         let recording = Arc::new(RecordingMediaPreparer::default());
         let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
-        let orchestrator = Arc::new(Orchestrator::new(playback, queue, state_tracker, media_preparer));
+        let orchestrator =
+            Arc::new(Orchestrator::new(playback, queue, state_tracker, media_preparer));
         let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
         let queue_event_handler = Mutex::new(
             QueueEventHandler::new(
@@ -309,20 +310,12 @@ mod tests {
         orchestrator.queue().set_current(Some(0));
 
         let intent = PlayIntent::Append {
-            tracks: vec![
-                test_song("youtube://new-track-a"),
-                test_song("youtube://new-track-b"),
-            ],
+            tracks: vec![test_song("youtube://new-track-a"), test_song("youtube://new-track-b")],
         };
         let (event_tx, _event_rx) = crossbeam::channel::unbounded();
 
-        let response = handle_play_with_intent(
-            intent,
-            42,
-            &orchestrator,
-            &queue_coordinator,
-            &event_tx,
-        );
+        let response =
+            handle_play_with_intent(intent, 42, &orchestrator, &queue_coordinator, &event_tx);
 
         assert!(matches!(response, ServerResponse::Ok));
         assert!(recording.warmed.lock().is_empty());
@@ -358,7 +351,10 @@ mod tests {
             .filter_map(|id| play_queue.get_song(*id))
             .map(|song| song.uri.clone())
             .collect();
-        assert_eq!(ordered_uris, vec!["youtube://ctx-a".to_string(), "youtube://ctx-b".to_string()]);
+        assert_eq!(
+            ordered_uris,
+            vec!["youtube://ctx-a".to_string(), "youtube://ctx-b".to_string()]
+        );
     }
 
     #[test]
@@ -377,7 +373,9 @@ mod tests {
         }
 
         let response = handle_play_with_intent(
-            PlayIntent::Next { tracks: vec![test_song("youtube://next-a"), test_song("youtube://next-b")] },
+            PlayIntent::Next {
+                tracks: vec![test_song("youtube://next-a"), test_song("youtube://next-b")],
+            },
             8,
             &orchestrator,
             &queue_coordinator,

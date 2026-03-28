@@ -48,7 +48,10 @@ pub fn handle_get_status(playback: &Arc<PlaybackService>, queue: &dyn QueueView)
 }
 
 /// Handle GetCurrentSong command
-pub fn handle_get_current_song(_playback: &Arc<PlaybackService>, queue: &dyn QueueView) -> ServerResponse {
+pub fn handle_get_current_song(
+    _playback: &Arc<PlaybackService>,
+    queue: &dyn QueueView,
+) -> ServerResponse {
     let queue_pos = match queue.current_index() {
         Some(pos) => pos,
         None => return ServerResponse::Song(None),

@@ -16,8 +16,7 @@ use std::time::Instant;
 
 use rmpc::{
     backends::youtube::protocol::{
-        ServerCommand,
-        ServerResponse,
+        ServerCommand, ServerResponse,
         play_intent::{MixType, PlayIntent, RequestId},
     },
     domain::Song,

@@ -32,23 +32,9 @@
 //! ```
 
 use crate::domain::{
-    Action as DomainAction,
-    ActionKind,
-    AlbumContent,
-    ArtistContent,
-    ContentDetails,
-    ContentRef,
-    ContentType,
-    Extensions,
-    PlaylistContent,
-    QueueContent,
-    SearchResultsContent,
-    Section as DomainSection,
-    SectionData,
-    SectionKey,
-    Song,
-    Stat as DomainStat,
-    StatValue,
+    Action as DomainAction, ActionKind, AlbumContent, ArtistContent, ContentDetails, ContentRef,
+    ContentType, Extensions, PlaylistContent, QueueContent, SearchResultsContent,
+    Section as DomainSection, SectionData, SectionKey, Song, Stat as DomainStat, StatValue,
 };
 
 /// Visual identity for the content.

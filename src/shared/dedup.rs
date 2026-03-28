@@ -2,8 +2,7 @@ use std::{
     future::Future,
     hash::Hash,
     sync::{
-        Arc,
-        OnceLock,
+        Arc, OnceLock,
         atomic::{AtomicUsize, Ordering},
     },
     time::Duration,
@@ -57,11 +56,8 @@ impl<V> SyncSlot<V> {
     }
 }
 
-struct SyncGuard<
-    'a,
-    K: Eq + Hash + Clone + Send + Sync + 'static,
-    V: Clone + Send + Sync + 'static,
-> {
+struct SyncGuard<'a, K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'static>
+{
     dedup: &'a Dedup<K, V>,
     key: K,
     slot: Arc<SyncSlot<V>>,
@@ -97,12 +93,7 @@ impl<K: Eq + Hash + Clone + Send + Sync + 'static, V: Clone + Send + Sync + 'sta
 {
     pub fn complete(self, value: V) -> V {
         let _ = self.guard.slot.cell.set(value);
-        self.guard
-            .slot
-            .cell
-            .get()
-            .expect("sync single-flight leader must publish a value")
-            .clone()
+        self.guard.slot.cell.get().expect("sync single-flight leader must publish a value").clone()
     }
 }
 

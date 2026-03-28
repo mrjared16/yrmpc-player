@@ -45,6 +45,27 @@ fn should_replace(existing: &CacheEntry, new_version: u64, new_immediate: bool) 
     new_version > existing.version
 }
 
+fn log_cache_miss(video_id: &str, version: u64) {
+    if log::log_enabled!(log::Level::Trace) {
+        let bt = std::backtrace::Backtrace::force_capture();
+        let bt_summary: String = bt
+            .to_string()
+            .lines()
+            .filter(|line| line.contains("rmpc"))
+            .take(8)
+            .collect::<Vec<_>>()
+            .join(" <- ");
+        log::trace!(
+            "[EXTRACT] cache_miss video_id={} version={} callers=[{}]",
+            video_id,
+            version,
+            bt_summary
+        );
+    } else {
+        log::info!("[EXTRACT] cache_miss video_id={} version={}", video_id, version);
+    }
+}
+
 /// Cache configuration.
 #[derive(Debug, Clone)]
 pub struct CacheConfig {
@@ -132,11 +153,7 @@ impl<E: Extractor> CachedExtractor<E> {
     fn get_cached_if_fresh(&self, video_id: &str) -> Option<String> {
         let mut cache = self.cache.lock();
         cache.get(video_id).and_then(|entry| {
-            if entry.created_at.elapsed() < REFRESH_COOLDOWN {
-                Some(entry.url)
-            } else {
-                None
-            }
+            if entry.created_at.elapsed() < REFRESH_COOLDOWN { Some(entry.url) } else { None }
         })
     }
 
@@ -148,7 +165,10 @@ impl<E: Extractor> CachedExtractor<E> {
         };
 
         if should_write {
-            cache.insert(video_id.to_string(), CacheEntry { url, version, immediate, created_at: Instant::now() });
+            cache.insert(
+                video_id.to_string(),
+                CacheEntry { url, version, immediate, created_at: Instant::now() },
+            );
         }
         should_write
     }
@@ -237,24 +257,16 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         let result = match self.dedup.sync_singleflight(video_id.to_string()) {
             SyncFlight::Leader(leader) => {
                 let version = self.next_version.fetch_add(1, Ordering::Relaxed);
-                let bt = std::backtrace::Backtrace::force_capture();
-                let bt_summary: String = bt.to_string()
-                    .lines()
-                    .filter(|l| l.contains("rmpc"))
-                    .take(8)
-                    .collect::<Vec<_>>()
-                    .join(" <- ");
-                log::info!(
-                    "[EXTRACT] cache_miss video_id={} version={} callers=[{}]",
-                    video_id,
-                    version,
-                    bt_summary
-                );
+                log_cache_miss(video_id, version);
 
                 let leader_result = match self.inner.extract_one(video_id) {
                     Ok(url) => {
                         self.try_cache(video_id, url.clone(), version, true);
-                        log::info!("[EXTRACT] complete video_id={} elapsed={:?}", video_id, start.elapsed());
+                        log::info!(
+                            "[EXTRACT] complete video_id={} elapsed={:?}",
+                            video_id,
+                            start.elapsed()
+                        );
                         Ok(url)
                     }
                     Err(e) => {

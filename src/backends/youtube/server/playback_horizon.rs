@@ -65,11 +65,7 @@ impl ResolvedPlaybackHorizon {
             .unwrap_or(0);
 
         Self::new(
-            track_ids[start_pos..]
-                .iter()
-                .chain(track_ids[..start_pos].iter())
-                .cloned()
-                .collect(),
+            track_ids[start_pos..].iter().chain(track_ids[..start_pos].iter()).cloned().collect(),
         )
     }
 
@@ -106,11 +102,11 @@ impl ResolvedPlaybackHorizon {
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::Song;
     use crate::{
         backends::youtube::services::QueueService,
         shared::play_queue::{PlayQueue, QueueCommand},
     };
-    use crate::domain::Song;
 
     use super::ResolvedPlaybackHorizon;
 
@@ -191,11 +187,8 @@ mod tests {
         }
 
         let play_order = play_queue.get_play_order().to_vec();
-        let horizon = ResolvedPlaybackHorizon::from_play_queue_track_id(
-            &play_queue,
-            &play_order,
-            Some("b"),
-        );
+        let horizon =
+            ResolvedPlaybackHorizon::from_play_queue_track_id(&play_queue, &play_order, Some("b"));
 
         assert_eq!(horizon.track_ids(), ["b", "c", "a"]);
     }

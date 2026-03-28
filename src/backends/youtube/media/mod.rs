@@ -23,12 +23,11 @@ pub use loader::AudioLoader;
 pub use output::{MpvInput, MpvInputBuilder};
 pub use preparer::{CacheRequest, PrepareResult, YouTubeMediaPreparer, YouTubeMediaPreparerHandle};
 pub use relay::{
-    RelayByteRange, RelayContractError, RelayPlayerEndpoint, RelayRangeError,
-    RelayRangePolicy, RelayReconnectOwner, RelayResponsePlan, RelaySessionId, RelaySessionSpec,
-    RelaySessionState, RelayStagedArtifact, RelayTeePrefix, RelayTransportContract,
-    RelayUpstreamStream,
+    RelayByteRange, RelayContractError, RelayPlayerEndpoint, RelayRangeError, RelayRangePolicy,
+    RelayReconnectOwner, RelayResponsePlan, RelaySessionId, RelaySessionSpec, RelaySessionState,
+    RelayStagedArtifact, RelayTeePrefix, RelayTransportContract, RelayUpstreamStream,
 };
-pub use relay_planner::{RelayPlayStrategy, RelayPlanner};
+pub use relay_planner::{RelayPlanner, RelayPlayStrategy};
 pub use relay_runtime::RelayRuntime;
 pub use resolver::{AudioFormat, StreamInfo, StreamResolver};
 pub use upstream_plan::{UpstreamReadPlan, default_upstream_read_plans};
@@ -104,8 +103,12 @@ pub enum PreparedMedia {
         prefix_path: std::path::PathBuf,
         prefix_size: u64,
     },
-    Direct { url: String },
-    LocalFile { path: std::path::PathBuf },
+    Direct {
+        url: String,
+    },
+    LocalFile {
+        path: std::path::PathBuf,
+    },
 }
 
 impl PreparedMedia {

@@ -37,9 +37,7 @@
 
 use super::selectable_list::SelectableList;
 use crate::domain::{
-    ContentDetails,
-    DetailItem,
-    Song,
+    ContentDetails, DetailItem, Song,
     content::{Extensions, Section, SectionData, SectionKey},
 };
 
@@ -636,10 +634,10 @@ mod tests {
             artist: ContentRef::artist("a1", "Artist"),
             tracks: vec![],
             extensions: Extensions::builder()
-                .related_albums("More by Artist", vec![
-                    ContentRef::album("a2", "Album 2"),
-                    ContentRef::album("a3", "Album 3"),
-                ])
+                .related_albums(
+                    "More by Artist",
+                    vec![ContentRef::album("a2", "Album 2"), ContentRef::album("a3", "Album 3")],
+                )
                 .build(),
             ..Default::default()
         });
@@ -657,10 +655,13 @@ mod tests {
             name: "Test Artist".into(),
             top_songs: vec![],
             extensions: Extensions::builder()
-                .albums("Albums", vec![
-                    ContentRef::album("alb1", "Album 1"),
-                    ContentRef::album("alb2", "Album 2"),
-                ])
+                .albums(
+                    "Albums",
+                    vec![
+                        ContentRef::album("alb1", "Album 1"),
+                        ContentRef::album("alb2", "Album 2"),
+                    ],
+                )
                 .singles("Singles", vec![ContentRef::album("sin1", "Single 1")])
                 .build(),
             ..Default::default()

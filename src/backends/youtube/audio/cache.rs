@@ -106,9 +106,7 @@ impl AudioCache {
 
     pub fn get_prefix_metadata(&self, video_id: &str) -> Option<(PathBuf, u64, u64)> {
         let mut entries = self.entries.write().unwrap();
-        entries
-            .get(video_id)
-            .map(|entry| (entry.path.clone(), entry.size, entry.content_length))
+        entries.get(video_id).map(|entry| (entry.path.clone(), entry.size, entry.content_length))
     }
 
     pub fn total_size(&self) -> u64 {
@@ -199,11 +197,8 @@ impl AudioCache {
         let range_end = prefix_size.saturating_sub(1);
         let ranged_url = format!("{stream_url}&range=0-{range_end}");
         log::debug!("[CACHE] HTTP_START video_id={} &range=0-{}", video_id, range_end);
-        let response = client
-            .get(&ranged_url)
-            .send()
-            .await
-            .context("Failed to request audio prefix")?;
+        let response =
+            client.get(&ranged_url).send().await.context("Failed to request audio prefix")?;
         log::debug!("[CACHE] HTTP_DONE video_id={}", video_id);
 
         let status = response.status();
@@ -213,8 +208,8 @@ impl AudioCache {
 
         // Parse content_length from clen= in the stream URL (the &range=
         // response is HTTP 200 with no Content-Range header).
-        let content_length = parse_clen_from_url(stream_url)
-            .context("Missing clen= in stream URL")?;
+        let content_length =
+            parse_clen_from_url(stream_url).context("Missing clen= in stream URL")?;
 
         let bytes = response.bytes().await.context("Failed to download audio prefix")?;
         let size = bytes.len() as u64;

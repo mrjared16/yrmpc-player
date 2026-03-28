@@ -4,9 +4,7 @@ use crossbeam::channel::Sender;
 
 use super::queue_store::QueueDaemon;
 use crate::{
-    AppEvent,
-    Query,
-    QueryResult,
+    AppEvent, Query, QueryResult,
     backends::youtube::protocol::{
         ServerCommand,
         play_intent::{PlayIntent, RequestId},

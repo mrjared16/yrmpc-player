@@ -931,15 +931,14 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
 
         use crate::{
-            shared::key_event::KeyEvent,
-            tests::fixtures::ctx,
+            shared::key_event::KeyEvent, tests::fixtures::ctx,
             ui::panes::navigator_types::ListAction,
         };
 
-        let items = vec![TestItem { name: "Song 1".into(), focusable: true }, TestItem {
-            name: "Song 2".into(),
-            focusable: true,
-        }];
+        let items = vec![
+            TestItem { name: "Song 1".into(), focusable: true },
+            TestItem { name: "Song 2".into(), focusable: true },
+        ];
         let mut view = SelectableList::new();
         view.select(Some(0));
 
@@ -1009,8 +1008,7 @@ mod tests {
         use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
 
         use crate::{
-            shared::key_event::KeyEvent,
-            tests::fixtures::ctx,
+            shared::key_event::KeyEvent, tests::fixtures::ctx,
             ui::panes::navigator_types::ListAction,
         };
 

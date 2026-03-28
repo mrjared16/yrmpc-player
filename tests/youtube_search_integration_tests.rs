@@ -252,13 +252,7 @@ mod search_display_e2e_tests {
         detail_item::DetailItem,
         display::ListItemDisplay,
         search::{
-            AlbumItem,
-            ArtistItem,
-            BrowsableItem,
-            PlayableItem,
-            PlaylistItem,
-            SearchItem,
-            SongItem,
+            AlbumItem, ArtistItem, BrowsableItem, PlayableItem, PlaylistItem, SearchItem, SongItem,
             VideoItem,
         },
     };

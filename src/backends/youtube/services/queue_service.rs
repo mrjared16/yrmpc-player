@@ -127,7 +127,8 @@ impl QueueService {
         }
 
         if pos < playback_window.playback_base_index {
-            playback_window.playback_base_index = playback_window.playback_base_index.saturating_sub(1);
+            playback_window.playback_base_index =
+                playback_window.playback_base_index.saturating_sub(1);
         }
 
         Ok((item, pos))
@@ -214,12 +215,14 @@ impl QueueService {
         self.playback_window.lock().playback_base_index = pos;
     }
 
-    pub fn set_playback_window_state(&self, current_idx: Option<usize>, playback_base_index: usize, prefetch_indices: Vec<usize>) {
-        *self.playback_window.lock() = PlaybackWindowState {
-            current_idx,
-            playback_base_index,
-            prefetch_indices,
-        };
+    pub fn set_playback_window_state(
+        &self,
+        current_idx: Option<usize>,
+        playback_base_index: usize,
+        prefetch_indices: Vec<usize>,
+    ) {
+        *self.playback_window.lock() =
+            PlaybackWindowState { current_idx, playback_base_index, prefetch_indices };
     }
 
     pub fn playback_window_state(&self) -> PlaybackWindowState {
@@ -301,7 +304,10 @@ impl QueueService {
             }
         } else {
             // Sequential mode
-            self.playback_window.lock().current_idx.and_then(|idx| if idx > 0 { Some(idx - 1) } else { None })
+            self.playback_window
+                .lock()
+                .current_idx
+                .and_then(|idx| if idx > 0 { Some(idx - 1) } else { None })
         }
     }
 

@@ -127,11 +127,15 @@ mod tests {
 
     #[test]
     fn planner_does_not_use_tee_miss_for_non_relay_modes() {
-        assert!(!AudioDeliveryPlanner
-            .plan(AudioDeliveryMode::Staged)
-            .streams_immediate_cache_miss_via_relay());
-        assert!(!AudioDeliveryPlanner
-            .plan(AudioDeliveryMode::Direct)
-            .streams_immediate_cache_miss_via_relay());
+        assert!(
+            !AudioDeliveryPlanner
+                .plan(AudioDeliveryMode::Staged)
+                .streams_immediate_cache_miss_via_relay()
+        );
+        assert!(
+            !AudioDeliveryPlanner
+                .plan(AudioDeliveryMode::Direct)
+                .streams_immediate_cache_miss_via_relay()
+        );
     }
 }

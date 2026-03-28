@@ -28,8 +28,7 @@ use crate::{
         key_event::KeyEvent,
         terminal::{TERMINAL, TtyWriter},
     },
-    status_warn,
-    try_skip,
+    status_warn, try_skip,
     ui::{UiEvent, image::clear_area},
 };
 

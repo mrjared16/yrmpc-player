@@ -6,7 +6,7 @@ use anyhow::{Result, bail};
 use async_trait::async_trait;
 use parking_lot::{Mutex, MutexGuard};
 
-use crate::backends::youtube::media::{MediaPreparer, PreparedMedia, PreloadTier};
+use crate::backends::youtube::media::{MediaPreparer, PreloadTier, PreparedMedia};
 
 static MPV_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 

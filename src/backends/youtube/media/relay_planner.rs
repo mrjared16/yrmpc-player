@@ -7,20 +7,9 @@ use super::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RelayPlayStrategy {
-    CacheHitRelay {
-        track_id: String,
-        stream_url: String,
-        prefix: RelayStagedArtifact,
-    },
-    TeeMissRelay {
-        track_id: String,
-        stream_url: String,
-        prefix_target: RelayTeePrefix,
-    },
-    DirectFallback {
-        track_id: String,
-        stream_url: String,
-    },
+    CacheHitRelay { track_id: String, stream_url: String, prefix: RelayStagedArtifact },
+    TeeMissRelay { track_id: String, stream_url: String, prefix_target: RelayTeePrefix },
+    DirectFallback { track_id: String, stream_url: String },
 }
 
 pub struct RelayPlanner;
@@ -69,10 +58,7 @@ impl RelayPlanner {
                 Ok(RelayPlayStrategy::TeeMissRelay {
                     track_id,
                     stream_url: url.clone(),
-                    prefix_target: RelayTeePrefix {
-                        path: prefix_path.clone(),
-                        size: *prefix_size,
-                    },
+                    prefix_target: RelayTeePrefix { path: prefix_path.clone(), size: *prefix_size },
                 })
             }
             PreparedMedia::Direct { .. } | PreparedMedia::LocalFile { .. } => {
@@ -100,10 +86,7 @@ impl RelayPlanner {
 
 impl RelayPlayStrategy {
     pub fn direct_fallback(track_id: impl Into<String>, stream_url: impl Into<String>) -> Self {
-        Self::DirectFallback {
-            track_id: track_id.into(),
-            stream_url: stream_url.into(),
-        }
+        Self::DirectFallback { track_id: track_id.into(), stream_url: stream_url.into() }
     }
 
     pub fn continuation_plans(&self, start: u64, end: u64) -> Vec<UpstreamReadPlan> {

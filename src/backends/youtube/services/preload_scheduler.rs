@@ -111,13 +111,16 @@ impl PreloadScheduler {
 
         match self.jobs.get_mut(&key) {
             None => {
-                self.jobs.insert(key.clone(), PreloadJob {
-                    request_id: request.request_id,
-                    track_id: request.track_id,
-                    artifact: request.artifact,
-                    tier: request.tier,
-                    status: JobStatus::Pending,
-                });
+                self.jobs.insert(
+                    key.clone(),
+                    PreloadJob {
+                        request_id: request.request_id,
+                        track_id: request.track_id,
+                        artifact: request.artifact,
+                        tier: request.tier,
+                        status: JobStatus::Pending,
+                    },
+                );
                 should_enqueue = true;
             }
             Some(job) => {

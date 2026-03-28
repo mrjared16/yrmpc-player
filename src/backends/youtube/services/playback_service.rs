@@ -18,7 +18,10 @@ use parking_lot::Mutex;
 
 use super::{super::url_resolver::UrlResolver, InternalEvent};
 use crate::backends::youtube::{
-    audio::{AudioDeliveryPlan, AudioTransportTarget, MpvAudioSource, MpvInput, sources::concat::PreparedMediaInputAdapter},
+    audio::{
+        AudioDeliveryPlan, AudioTransportTarget, MpvAudioSource, MpvInput,
+        sources::concat::PreparedMediaInputAdapter,
+    },
     media::{PreparedMedia, RelayRuntime},
     mpv::{MpvEvent, MpvIpc},
 };
@@ -72,7 +75,10 @@ fn runtime_input_from_prepared(
 ) -> Result<RuntimeInputDecision> {
     match transport {
         AudioTransportTarget::LocalRelay => {
-            if matches!(prepared, PreparedMedia::StagedPrefix { .. } | PreparedMedia::StreamAndCache { .. }) {
+            if matches!(
+                prepared,
+                PreparedMedia::StagedPrefix { .. } | PreparedMedia::StreamAndCache { .. }
+            ) {
                 if let Some(relay_runtime) = relay_runtime {
                     match relay_runtime.register_session(track_id, prepared) {
                         Ok(input) => {
@@ -113,10 +119,12 @@ fn runtime_input_from_prepared(
                 route: RuntimeInputRoute::Prepared,
             })
         }
-        AudioTransportTarget::DirectUrl | AudioTransportTarget::PreparedInput => Ok(RuntimeInputDecision {
-            input: PreparedMediaInputAdapter::build_from_prepared(prepared)?,
-            route: RuntimeInputRoute::Prepared,
-        }),
+        AudioTransportTarget::DirectUrl | AudioTransportTarget::PreparedInput => {
+            Ok(RuntimeInputDecision {
+                input: PreparedMediaInputAdapter::build_from_prepared(prepared)?,
+                route: RuntimeInputRoute::Prepared,
+            })
+        }
     }
 }
 
@@ -143,7 +151,11 @@ impl PlaybackService {
         })
     }
 
-    pub fn build_runtime_input(&self, track_id: &str, prepared: &PreparedMedia) -> Result<MpvInput> {
+    pub fn build_runtime_input(
+        &self,
+        track_id: &str,
+        prepared: &PreparedMedia,
+    ) -> Result<MpvInput> {
         Ok(self.build_runtime_input_decision(track_id, prepared)?.input)
     }
 

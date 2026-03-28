@@ -35,11 +35,7 @@ impl InFlightJob {
     pub(super) fn new(track_id: String) -> Self {
         let initial_state = JobState::ResolvingUrl { track_id };
         let (signal, _rx) = watch::channel(initial_state.clone());
-        Self {
-            state: Mutex::new(initial_state),
-            task: Mutex::new(None),
-            signal,
-        }
+        Self { state: Mutex::new(initial_state), task: Mutex::new(None), signal }
     }
 
     pub(super) fn snapshot(&self) -> JobState {

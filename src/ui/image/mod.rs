@@ -11,8 +11,7 @@ use ratatui::layout::Rect;
 
 use crate::{
     config::{
-        Config,
-        Size,
+        Config, Size,
         album_art::{HorizontalAlign, VerticalAlign},
     },
     shared::macros::csi_move,

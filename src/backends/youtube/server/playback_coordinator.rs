@@ -146,7 +146,10 @@ impl PlaybackCoordinator {
     }
 
     #[must_use]
-    pub fn should_preserve_pending_current_track(&self, observed_current_track: Option<&str>) -> bool {
+    pub fn should_preserve_pending_current_track(
+        &self,
+        observed_current_track: Option<&str>,
+    ) -> bool {
         self.has_pending_current_track_selection()
             && self.snapshot.current_track.as_deref() != observed_current_track
     }
@@ -201,11 +204,7 @@ impl PlaybackCoordinator {
 
         let still_valid = self.snapshot.playback_started
             && self.snapshot.current_track.as_deref() != Some(track_id)
-            && self
-                .snapshot
-                .next_three_window
-                .iter()
-                .any(|candidate| candidate == track_id);
+            && self.snapshot.next_three_window.iter().any(|candidate| candidate == track_id);
 
         if !still_valid {
             self.snapshot.active_prefix_job = None;
@@ -247,8 +246,8 @@ impl PlaybackCoordinator {
 
     fn recompute_next_three_window(&mut self) {
         let horizon = ResolvedPlaybackHorizon::new(self.snapshot.resolved_horizon.clone());
-        self.snapshot.next_three_window =
-            horizon.next_tracks_after(self.snapshot.current_track.as_deref(), NEXT_THREE_WINDOW_SIZE);
+        self.snapshot.next_three_window = horizon
+            .next_tracks_after(self.snapshot.current_track.as_deref(), NEXT_THREE_WINDOW_SIZE);
     }
 }
 
@@ -258,7 +257,9 @@ mod tests {
     use crate::backends::youtube::server::playback_horizon::ResolvedPlaybackHorizon;
 
     fn horizon(track_ids: &[&str]) -> ResolvedPlaybackHorizon {
-        ResolvedPlaybackHorizon::new(track_ids.iter().map(|track_id| (*track_id).to_string()).collect())
+        ResolvedPlaybackHorizon::new(
+            track_ids.iter().map(|track_id| (*track_id).to_string()).collect(),
+        )
     }
 
     #[test]

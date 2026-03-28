@@ -5,11 +5,7 @@
 use anyhow::Result;
 
 use crate::backends::api::{
-    BrowseResult,
-    Discovery as DiscoveryTrait,
-    Item,
-    SearchQuery,
-    SearchResults,
+    BrowseResult, Discovery as DiscoveryTrait, Item, SearchQuery, SearchResults,
 };
 
 /// Browse and search the music library

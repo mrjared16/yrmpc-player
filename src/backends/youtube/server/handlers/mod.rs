@@ -31,13 +31,14 @@ pub(super) fn extract_video_id(uri: &str) -> Option<String> {
 
     let parsed = url::Url::parse(uri).ok()?;
     match parsed.host_str()? {
-        "youtu.be" => parsed
-            .path_segments()?
-            .find(|segment| !segment.is_empty())
-            .map(ToString::to_string),
+        "youtu.be" => {
+            parsed.path_segments()?.find(|segment| !segment.is_empty()).map(ToString::to_string)
+        }
         "www.youtube.com" | "youtube.com" | "music.youtube.com" => {
             if parsed.path() == "/watch" {
-                parsed.query_pairs().find_map(|(key, value)| (key == "v").then(|| value.into_owned()))
+                parsed
+                    .query_pairs()
+                    .find_map(|(key, value)| (key == "v").then(|| value.into_owned()))
             } else if let Some(id) = parsed.path().strip_prefix("/shorts/") {
                 (!id.is_empty()).then(|| id.to_string())
             } else {

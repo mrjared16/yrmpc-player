@@ -16,15 +16,8 @@ use crate::{
     shared::key_event::KeyEvent,
     ui::{
         panes::navigator_types::{
-            ContentAction,
-            DetailId,
-            DetailPane,
-            EntityContent,
-            EntityRef,
-            InputMode,
-            NavigatorPane,
-            PaneAction,
-            PaneId,
+            ContentAction, DetailId, DetailPane, EntityContent, EntityRef, InputMode,
+            NavigatorPane, PaneAction, PaneId,
         },
         widgets::content_view::ContentView,
     },

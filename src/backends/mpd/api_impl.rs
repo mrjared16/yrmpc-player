@@ -10,16 +10,8 @@ use anyhow::Result;
 use super::{backend::MpdBackend, protocol::mpd_client::MpdClient as MpdClientTrait};
 use crate::{
     backends::api::{
-        self,
-        AfterAdd,
-        BrowseResult,
-        Capability,
-        ContentType,
-        InsertAt,
-        Item,
-        SearchQuery,
-        SearchResults,
-        SearchSection,
+        self, AfterAdd, BrowseResult, Capability, ContentType, InsertAt, Item, SearchQuery,
+        SearchResults, SearchSection,
     },
     mpd::{
         commands::{LsInfoEntry, ValueChange},
@@ -311,14 +303,8 @@ impl api::Discovery for MpdBackend<'_> {
 
     fn details(&mut self, item: &Item) -> Result<crate::domain::content::ContentDetails> {
         use crate::domain::content::{
-            Action,
-            AlbumContent,
-            ArtistContent,
-            ContentDetails,
-            ContentRef,
-            Extensions,
-            PlaylistContent,
-            Stat,
+            Action, AlbumContent, ArtistContent, ContentDetails, ContentRef, Extensions,
+            PlaylistContent, Stat,
         };
 
         match item.content_type {

@@ -5,21 +5,12 @@ pub use actions::LogsActions;
 #[cfg(debug_assertions)]
 use actions::LogsActionsFile;
 pub use actions::{
-    AlbumsActions,
-    ArtistsActions,
-    CommonAction,
-    DirectoriesActions,
-    GlobalAction,
-    QueueActions,
+    AlbumsActions, ArtistsActions, CommonAction, DirectoriesActions, GlobalAction, QueueActions,
     SearchActions,
 };
 use actions::{
-    AlbumsActionsFile,
-    ArtistsActionsFile,
-    CommonActionFile,
-    DirectoriesActionsFile,
-    GlobalActionFile,
-    QueueActionsFile,
+    AlbumsActionsFile, ArtistsActionsFile, CommonActionFile, DirectoriesActionsFile,
+    GlobalActionFile, QueueActionsFile,
 };
 use crossterm::event::{KeyCode, KeyModifiers};
 pub use key::Key;
@@ -191,9 +182,7 @@ mod tests {
     #[cfg(debug_assertions)]
     use crate::config::keys::LogsActionsFile;
     use crate::config::keys::{
-        CommonAction,
-        GlobalAction,
-        QueueActions,
+        CommonAction, GlobalAction, QueueActions,
         actions::{CommonActionFile, GlobalActionFile, QueueActionsFile},
     };
 

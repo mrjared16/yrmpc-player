@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use rmpc::backends::youtube::media::{
-    PreparedMedia, RelayPlayStrategy, RelayPlanner, UpstreamReadPlan,
+    PreparedMedia, RelayPlanner, RelayPlayStrategy, UpstreamReadPlan,
 };
 
 #[test]

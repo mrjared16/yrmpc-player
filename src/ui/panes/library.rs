@@ -11,10 +11,7 @@ use crate::{
     mpd::commands::lsinfo::LsInfoEntry,
     shared::{key_event::KeyEvent, mouse_event::MouseEvent},
     ui::{
-        UiEvent,
-        browser::BrowserPane,
-        dir_or_song::DirOrSong,
-        dirstack::DirStack,
+        UiEvent, browser::BrowserPane, dir_or_song::DirOrSong, dirstack::DirStack,
         widgets::browser::Browser,
     },
 };

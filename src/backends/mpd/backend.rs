@@ -5,19 +5,8 @@ use anyhow::Result;
 use super::protocol::{
     client::Client as MpdClient,
     commands::{
-        Decoder,
-        LsInfoEntry,
-        OnOffOneshot,
-        Output,
-        Playlist,
-        QueuePosition,
-        SaveMode,
-        SeekPosition,
-        Song,
-        Tag,
-        ValueChange,
-        Volume,
-        lsinfo::Dir,
+        Decoder, LsInfoEntry, OnOffOneshot, Output, Playlist, QueuePosition, SaveMode,
+        SeekPosition, Song, Tag, ValueChange, Volume, lsinfo::Dir,
     },
     mpd_client::{Filter, MpdClient as MpdClientTrait, SingleOrRange},
 };
@@ -164,11 +153,13 @@ impl<'name> MusicBackend for MpdBackend<'name> {
     fn add(&mut self, uri: &str, position: Option<crate::domain::QueuePosition>) -> Result<()> {
         let mpd_pos = position.map(|p| match p {
             crate::domain::QueuePosition::Absolute(i) => crate::mpd::QueuePosition::Absolute(i),
-            crate::domain::QueuePosition::Relative(i) => if i >= 0 {
-                crate::mpd::QueuePosition::RelativeAdd(i as usize)
-            } else {
-                crate::mpd::QueuePosition::RelativeSub((-i) as usize)
-            },
+            crate::domain::QueuePosition::Relative(i) => {
+                if i >= 0 {
+                    crate::mpd::QueuePosition::RelativeAdd(i as usize)
+                } else {
+                    crate::mpd::QueuePosition::RelativeSub((-i) as usize)
+                }
+            }
             crate::domain::QueuePosition::End => crate::mpd::QueuePosition::Absolute(usize::MAX), // MPD handles out of bounds as end usually, or we need logic
             crate::domain::QueuePosition::Next => crate::mpd::QueuePosition::RelativeAdd(1), // Rough approximation, MPD doesn't have "Next" directly in add without calc
         });

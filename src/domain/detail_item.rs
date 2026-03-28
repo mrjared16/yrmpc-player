@@ -43,7 +43,7 @@
 //!     ListItem::Content(DetailItem::Song(song2)),
 //! ];
 //! ```
-//! 
+//!
 //! Extract actionable items for Intent/Selection:
 //! ```rust,ignore
 //! let actionable: Vec<DetailItem> = items
@@ -374,11 +374,7 @@ impl From<Song> for DetailItem {
 // =============================================================================
 
 use crate::domain::media_item::{
-    Album as MediaAlbum,
-    Artist as MediaArtist,
-    MediaItem,
-    Playlist as MediaPlaylist,
-    Track,
+    Album as MediaAlbum, Artist as MediaArtist, MediaItem, Playlist as MediaPlaylist, Track,
 };
 
 impl From<MediaItem> for DetailItem {

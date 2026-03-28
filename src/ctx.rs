@@ -11,11 +11,7 @@ use bon::bon;
 use crossbeam::channel::{SendError, Sender, bounded};
 
 use crate::{
-    AppEvent,
-    PlayerCommand,
-    Query,
-    QueryResult,
-    WorkRequest,
+    AppEvent, PlayerCommand, Query, QueryResult, WorkRequest,
     backends::{BackendActions, BackendDispatcher, QuerySync, api::Capability},
     config::{
         Config,

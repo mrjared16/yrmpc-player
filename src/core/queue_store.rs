@@ -22,9 +22,7 @@ use std::{
     collections::HashSet,
     ops::Deref,
     sync::{
-        Arc,
-        RwLock,
-        RwLockReadGuard,
+        Arc, RwLock, RwLockReadGuard,
         atomic::{AtomicU64, Ordering},
     },
 };

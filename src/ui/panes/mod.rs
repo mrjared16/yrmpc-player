@@ -334,16 +334,10 @@ pub(crate) mod browser {
         config::{
             tabs::{Pane as ConfigPane, SizedPaneOrSplit},
             theme::{
-                SymbolsConfig,
-                TagResolutionStrategy,
+                SymbolsConfig, TagResolutionStrategy,
                 properties::{
-                    Property,
-                    PropertyKind,
-                    PropertyKindOrText,
-                    SongProperty,
-                    StatusProperty,
-                    Transform,
-                    WidgetProperty,
+                    Property, PropertyKind, PropertyKindOrText, SongProperty, StatusProperty,
+                    Transform, WidgetProperty,
                 },
             },
         },
@@ -1326,14 +1320,9 @@ pub(crate) mod browser {
 
         use crate::{
             config::theme::{
-                StyleFile,
-                TagResolutionStrategy,
+                StyleFile, TagResolutionStrategy,
                 properties::{
-                    Property,
-                    PropertyKind,
-                    PropertyKindOrText,
-                    SongProperty,
-                    StatusProperty,
+                    Property, PropertyKind, PropertyKindOrText, SongProperty, StatusProperty,
                     StatusPropertyFile,
                 },
             },
@@ -1399,13 +1388,16 @@ pub(crate) mod browser {
                             style: None,
                             default: None,
                         }),
-                        replacements: [(input, Property {
-                            kind: replace_props,
-                            style: None,
-                            default: replace_default.map(|d| {
-                                Box::new(Property { kind: d, style: None, default: None })
-                            }),
-                        })]
+                        replacements: [(
+                            input,
+                            Property {
+                                kind: replace_props,
+                                style: None,
+                                default: replace_default.map(|d| {
+                                    Box::new(Property { kind: d, style: None, default: None })
+                                }),
+                            },
+                        )]
                         .into_iter()
                         .collect(),
                     }),
@@ -1479,13 +1471,16 @@ pub(crate) mod browser {
                             style: None,
                             default: None,
                         }),
-                        replacements: [(input, Property {
-                            kind: replace_props,
-                            style: None,
-                            default: replace_default.map(|d| {
-                                Box::new(Property { kind: d, style: None, default: None })
-                            }),
-                        })]
+                        replacements: [(
+                            input,
+                            Property {
+                                kind: replace_props,
+                                style: None,
+                                default: replace_default.map(|d| {
+                                    Box::new(Property { kind: d, style: None, default: None })
+                                }),
+                            },
+                        )]
                         .into_iter()
                         .collect(),
                     }),
@@ -1552,13 +1547,16 @@ pub(crate) mod browser {
                             style: None,
                             default: None,
                         }),
-                        replacements: [(input, Property {
-                            kind: replace_props,
-                            style: None,
-                            default: replace_default.map(|d| {
-                                Box::new(Property { kind: d, style: None, default: None })
-                            }),
-                        })]
+                        replacements: [(
+                            input,
+                            Property {
+                                kind: replace_props,
+                                style: None,
+                                default: replace_default.map(|d| {
+                                    Box::new(Property { kind: d, style: None, default: None })
+                                }),
+                            },
+                        )]
                         .into_iter()
                         .collect(),
                     }),

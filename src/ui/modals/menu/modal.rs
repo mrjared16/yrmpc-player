@@ -12,10 +12,7 @@ use ratatui::{
 };
 
 use super::{
-    Section,
-    SectionType,
-    input_section::InputSection,
-    list_section::ListSection,
+    Section, SectionType, input_section::InputSection, list_section::ListSection,
     multi_action_section::MultiActionSection,
 };
 use crate::{

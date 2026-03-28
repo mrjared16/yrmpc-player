@@ -14,13 +14,12 @@ use crate::backends::youtube::{
 ///
 /// When in Idle state with items in queue, reloads the track at current
 /// position. Otherwise just unpauses playback.
-pub fn handle_play(
-    orchestrator: &Orchestrator,
-    event_tx: &Sender<String>,
-) -> ServerResponse {
+pub fn handle_play(orchestrator: &Orchestrator, event_tx: &Sender<String>) -> ServerResponse {
     let state = orchestrator.state_tracker().get();
 
-    if matches!(state, PlaybackState::Idle | PlaybackState::Stopped) && orchestrator.queue().len() > 0 {
+    if matches!(state, PlaybackState::Idle | PlaybackState::Stopped)
+        && orchestrator.queue().len() > 0
+    {
         let pos = orchestrator.queue().current_index().unwrap_or(0);
         log::info!("[STATE] play state={:?} pos={}", state, pos);
         return orchestrator.play_position_sync(pos);

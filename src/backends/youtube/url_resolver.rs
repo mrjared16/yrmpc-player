@@ -16,12 +16,7 @@ use async_trait::async_trait;
 use super::{
     config::{ExtractorType, YtDlpExtractorConfig},
     extractor::{
-        CacheConfig,
-        CachedExtractor,
-        Extractor,
-        FallbackExtractor,
-        YtDlpExtractor,
-        YtxExtractor,
+        CacheConfig, CachedExtractor, Extractor, FallbackExtractor, YtDlpExtractor, YtxExtractor,
     },
     media::{AudioFormat, StreamInfo, StreamResolver},
 };
@@ -110,9 +105,7 @@ impl UrlResolver {
                     Arc::new(CachedExtractor::with_config(
                         FallbackExtractor::new(
                             YtxExtractor::new(),
-                            YtDlpExtractor::with_options(
-                                ytdlp_config.cookies_path.clone(),
-                            ),
+                            YtDlpExtractor::with_options(ytdlp_config.cookies_path.clone()),
                         ),
                         cache_config,
                     ))
@@ -295,7 +288,6 @@ impl UrlResolver {
     pub fn refresh_url(&self, video_id: &str) -> Result<String> {
         self.inner.refresh(video_id)
     }
-
 }
 
 #[async_trait]
@@ -359,7 +351,6 @@ impl Extractor for UrlResolver {
     fn refresh(&self, video_id: &str) -> Result<String> {
         self.inner.refresh(video_id)
     }
-
 }
 
 #[cfg(test)]

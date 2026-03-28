@@ -15,14 +15,8 @@ use anyhow::{Context, Result, anyhow};
 use dashmap::DashMap;
 
 use super::{
-    PreparedMedia,
-    RelayPlayStrategy,
-    RelayPlanner,
-    RelayRangeError,
-    RelaySessionId,
-    RelaySessionSpec,
-    RelaySessionState,
-    UpstreamReadPlan,
+    PreparedMedia, RelayPlanner, RelayPlayStrategy, RelayRangeError, RelaySessionId,
+    RelaySessionSpec, RelaySessionState, UpstreamReadPlan,
 };
 use crate::backends::youtube::audio::{MpvInput, cache::AudioCache};
 
@@ -138,15 +132,13 @@ impl RelayRuntime {
 
         let counter = self.session_counter.fetch_add(1, Ordering::Relaxed);
         let raw_id = format!("{}-{counter}", sanitize_for_session_id(track_id));
-        let session_id = RelaySessionId::new(raw_id).map_err(|e| anyhow!("invalid session id: {e:?}"))?;
+        let session_id =
+            RelaySessionId::new(raw_id).map_err(|e| anyhow!("invalid session id: {e:?}"))?;
 
         let endpoint = spec.player_endpoint(self.listen_addr, session_id.clone());
         self.sessions.insert(
             session_id.as_str().to_string(),
-            RelaySessionRecord {
-                spec,
-                expires_at: Instant::now() + SESSION_TTL,
-            },
+            RelaySessionRecord { spec, expires_at: Instant::now() + SESSION_TTL },
         );
 
         Ok(MpvInput::new(endpoint.url()))
@@ -173,11 +165,7 @@ fn sanitize_for_session_id(track_id: &str) -> String {
         }
     }
 
-    if out.is_empty() {
-        "track".to_string()
-    } else {
-        out
-    }
+    if out.is_empty() { "track".to_string() } else { out }
 }
 
 fn handle_connection(
@@ -186,12 +174,8 @@ fn handle_connection(
     http_client: &reqwest::blocking::Client,
     audio_cache: &AudioCache,
 ) -> Result<()> {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(5)))
-        .context("set relay read timeout")?;
-    stream
-        .set_write_timeout(Some(Duration::from_secs(30)))
-        .context("set relay write timeout")?;
+    stream.set_read_timeout(Some(Duration::from_secs(5))).context("set relay read timeout")?;
+    stream.set_write_timeout(Some(Duration::from_secs(30))).context("set relay write timeout")?;
 
     let mut reader = BufReader::new(stream.try_clone().context("clone relay stream")?);
     let request = parse_request(&mut reader)?;
@@ -221,7 +205,12 @@ fn handle_connection(
     }
 
     if let Some(status) = entry.spec.state.terminal_http_status() {
-        write_plain_response(&mut writer, status, reason_phrase(status), b"relay session terminated")?;
+        write_plain_response(
+            &mut writer,
+            status,
+            reason_phrase(status),
+            b"relay session terminated",
+        )?;
         return Ok(());
     }
 
@@ -266,7 +255,9 @@ fn handle_connection(
         context.upstream_host,
     );
 
-    if let Err(err) = stream_strategy_response(&mut writer, &strategy, &spec, &plan, http_client, &context) {
+    if let Err(err) =
+        stream_strategy_response(&mut writer, &strategy, &spec, &plan, http_client, &context)
+    {
         if let Some(mut entry) = sessions.get_mut(&session_key) {
             entry.spec.state = RelaySessionState::Failed;
         }
@@ -312,10 +303,7 @@ fn promote_tee_prefix_to_cache(
         .len();
 
     if prefix_bytes == 0 {
-        return Err(anyhow!(
-            "tee prefix promotion produced empty cache file for {}",
-            track_id
-        ));
+        return Err(anyhow!("tee prefix promotion produced empty cache file for {}", track_id));
     }
 
     audio_cache.register_prefix(
@@ -334,11 +322,7 @@ fn write_planned_response_headers(
     content_length: u64,
 ) -> Result<()> {
     let status = plan.status_code();
-    let reason = if status == 206 {
-        "Partial Content"
-    } else {
-        "OK"
-    };
+    let reason = if status == 206 { "Partial Content" } else { "OK" };
     write!(writer, "HTTP/1.1 {status} {reason}\r\n")?;
     write!(writer, "Accept-Ranges: bytes\r\n")?;
     write!(writer, "Content-Length: {}\r\n", plan.response.len())?;
@@ -424,12 +408,7 @@ fn stream_cache_hit_response(
     Ok(())
 }
 
-fn stream_staged_segment(
-    writer: &mut TcpStream,
-    path: &Path,
-    start: u64,
-    len: u64,
-) -> Result<()> {
+fn stream_staged_segment(writer: &mut TcpStream, path: &Path, start: u64, len: u64) -> Result<()> {
     let mut file = std::fs::File::open(path)
         .with_context(|| format!("open staged artifact {}", path.display()))?;
     file.seek(SeekFrom::Start(start))
@@ -486,8 +465,7 @@ fn stream_tee_upstream(
     let tee_size = tee.size;
 
     loop {
-        let n = response.read(&mut buf)
-            .with_context(|| "read from tee upstream")?;
+        let n = response.read(&mut buf).with_context(|| "read from tee upstream")?;
         if n == 0 {
             break;
         }
@@ -495,8 +473,7 @@ fn stream_tee_upstream(
         // Write to prefix file if we haven't filled it yet
         if prefix_written < tee_size {
             let to_cache = ((tee_size - prefix_written) as usize).min(n);
-            prefix_file.write_all(&buf[..to_cache])
-                .with_context(|| "write to prefix file")?;
+            prefix_file.write_all(&buf[..to_cache]).with_context(|| "write to prefix file")?;
             prefix_written += to_cache as u64;
 
             if prefix_written >= tee_size {
@@ -512,8 +489,7 @@ fn stream_tee_upstream(
         }
 
         // Always write to MPV
-        writer.write_all(&buf[..n])
-            .with_context(|| "write to MPV downstream")?;
+        writer.write_all(&buf[..n]).with_context(|| "write to MPV downstream")?;
         total_written += n as u64;
     }
 
@@ -553,7 +529,15 @@ fn stream_upstream_with_recovery_plans(
 
     for (attempt_idx, plan) in plans.iter().enumerate() {
         let started = Instant::now();
-        match stream_upstream_segment(writer, http_client, upstream_url, *plan, context, attempt_idx + 1, plans.len()) {
+        match stream_upstream_segment(
+            writer,
+            http_client,
+            upstream_url,
+            *plan,
+            context,
+            attempt_idx + 1,
+            plans.len(),
+        ) {
             Ok(()) => return Ok(()),
             Err(err) => {
                 log::warn!(
@@ -675,8 +659,9 @@ fn stream_upstream_query_range_from_zero(
         ));
     }
 
-    discard_exact(&mut response, start)
-        .with_context(|| format!("discard first {start} bytes from anchored query-range response"))?;
+    discard_exact(&mut response, start).with_context(|| {
+        format!("discard first {start} bytes from anchored query-range response")
+    })?;
     copy_exact(&mut response, writer, end.saturating_sub(start))
 }
 
@@ -696,10 +681,7 @@ fn stream_upstream_chunked_range(
     while pos < end {
         let chunk_end = (pos + RANGE_CHUNK_SIZE).min(end).saturating_sub(1);
         let ranged_url = format!("{upstream_url}&range={pos}-{chunk_end}&rn={chunk_num}");
-        log::debug!(
-            "[RELAY] chunked &range={}-{} (chunk {})",
-            pos, chunk_end, chunk_num
-        );
+        log::debug!("[RELAY] chunked &range={}-{} (chunk {})", pos, chunk_end, chunk_num);
 
         let mut response = http_client
             .get(&ranged_url)
@@ -718,8 +700,8 @@ fn stream_upstream_chunked_range(
         let mut buf = [0u8; 64 * 1024];
         while remaining > 0 {
             let to_read = (remaining as usize).min(buf.len());
-            let n = response.read(&mut buf[..to_read])
-                .with_context(|| "read from chunked upstream")?;
+            let n =
+                response.read(&mut buf[..to_read]).with_context(|| "read from chunked upstream")?;
             if n == 0 {
                 return Err(anyhow!(
                     "unexpected EOF from chunked upstream: chunk={} copied={} expected_chunk_bytes={} global_range={}-{}",
@@ -730,8 +712,7 @@ fn stream_upstream_chunked_range(
                     end.saturating_sub(1),
                 ));
             }
-            writer.write_all(&buf[..n])
-                .with_context(|| "write chunked data to MPV")?;
+            writer.write_all(&buf[..n]).with_context(|| "write chunked data to MPV")?;
             remaining -= n as u64;
         }
 
@@ -739,13 +720,9 @@ fn stream_upstream_chunked_range(
         chunk_num += 1;
     }
 
-    log::info!(
-        "[RELAY] chunked &range= complete: {} bytes in {} chunks",
-        total, chunk_num
-    );
+    log::info!("[RELAY] chunked &range= complete: {} bytes in {} chunks", total, chunk_num);
     Ok(())
 }
-
 
 fn prune_expired_sessions(sessions: &DashMap<String, RelaySessionRecord>) {
     let now = Instant::now();
@@ -779,9 +756,7 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
             ));
         }
 
-        writer
-            .write_all(&buf[..read])
-            .context("write relay segment to client")?;
+        writer.write_all(&buf[..read]).context("write relay segment to client")?;
         let read = u64::try_from(read).unwrap_or(0);
         copied += read;
         remaining -= read;
@@ -797,9 +772,7 @@ fn discard_exact(reader: &mut impl Read, len: u64) -> Result<()> {
 
     while remaining > 0 {
         let chunk = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
-        let read = reader
-            .read(&mut buf[..chunk])
-            .context("discard relay prefix bytes")?;
+        let read = reader.read(&mut buf[..chunk]).context("discard relay prefix bytes")?;
         if read == 0 {
             return Err(anyhow!(
                 "unexpected EOF while discarding relay prefix bytes: discarded {} of {} bytes (remaining {})",
@@ -825,9 +798,7 @@ struct ParsedRequest {
 
 impl ParsedRequest {
     fn header(&self, name: &str) -> Option<&str> {
-        self.headers
-            .get(&name.to_ascii_lowercase())
-            .map(std::string::String::as_str)
+        self.headers.get(&name.to_ascii_lowercase()).map(std::string::String::as_str)
     }
 }
 
@@ -855,14 +826,8 @@ fn parse_request(reader: &mut impl BufRead) -> Result<ParsedRequest> {
 
     let request_line = lines.next().ok_or_else(|| anyhow!("missing relay request line"))?;
     let mut request_parts = request_line.split_whitespace();
-    let method = request_parts
-        .next()
-        .ok_or_else(|| anyhow!("missing relay method"))?
-        .to_string();
-    let path = request_parts
-        .next()
-        .ok_or_else(|| anyhow!("missing relay path"))?
-        .to_string();
+    let method = request_parts.next().ok_or_else(|| anyhow!("missing relay method"))?.to_string();
+    let path = request_parts.next().ok_or_else(|| anyhow!("missing relay path"))?.to_string();
 
     let mut headers = HashMap::new();
     for line in lines {
@@ -871,25 +836,14 @@ fn parse_request(reader: &mut impl BufRead) -> Result<ParsedRequest> {
         }
     }
 
-    Ok(ParsedRequest {
-        method,
-        path,
-        headers,
-    })
+    Ok(ParsedRequest { method, path, headers })
 }
 
 fn extract_session_id_from_path(path: &str) -> Option<String> {
     let clean = path.split('?').next().unwrap_or(path);
     let mut parts = clean.split('/');
 
-    match (
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-        parts.next(),
-    ) {
+    match (parts.next(), parts.next(), parts.next(), parts.next(), parts.next(), parts.next()) {
         (Some(""), Some("relay"), Some("sessions"), Some(id), Some("stream"), None) => {
             Some(id.to_string())
         }
@@ -938,14 +892,8 @@ mod tests {
     use tempfile::TempDir;
 
     use super::{
-        RANGE_CHUNK_SIZE,
-        RelayRequestContext,
-        copy_exact,
-        discard_exact,
-        extract_session_id_from_path,
-        promote_tee_prefix_to_cache,
-        RelayRuntime,
-        stream_upstream_segment,
+        RANGE_CHUNK_SIZE, RelayRequestContext, RelayRuntime, copy_exact, discard_exact,
+        extract_session_id_from_path, promote_tee_prefix_to_cache, stream_upstream_segment,
         stream_upstream_with_recovery_plans,
     };
     use crate::backends::youtube::{
@@ -986,9 +934,7 @@ mod tests {
             "HTTP/1.1 {status_line}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
             body.len()
         );
-        stream
-            .write_all(headers.as_bytes())
-            .expect("write response headers");
+        stream.write_all(headers.as_bytes()).expect("write response headers");
         stream.write_all(body).expect("write response body");
     }
 
@@ -1056,10 +1002,7 @@ mod tests {
         let strategy = RelayPlayStrategy::TeeMissRelay {
             track_id: "track-123".to_string(),
             stream_url: "https://example.com/upstream?clen=4096".to_string(),
-            prefix_target: RelayTeePrefix {
-                path: prefix_path.clone(),
-                size: 1024,
-            },
+            prefix_target: RelayTeePrefix { path: prefix_path.clone(), size: 1024 },
         };
         let spec = RelaySessionSpec {
             track_id: "track-123".to_string(),
@@ -1073,10 +1016,7 @@ mod tests {
             },
             contract: RelayTransportContract::default(),
             state: RelaySessionState::AwaitingRequest,
-            tee_prefix: Some(RelayTeePrefix {
-                path: prefix_path.clone(),
-                size: 1024,
-            }),
+            tee_prefix: Some(RelayTeePrefix { path: prefix_path.clone(), size: 1024 }),
         };
 
         promote_tee_prefix_to_cache(&cache, &strategy, &spec).expect("promote tee prefix");
@@ -1116,9 +1056,7 @@ mod tests {
         let request_count_server = Arc::clone(&request_count);
         let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
         let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
-        upstream_listener
-            .set_nonblocking(true)
-            .expect("set upstream listener nonblocking");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
 
         let server = thread::spawn(move || {
             let started = Instant::now();
@@ -1139,19 +1077,14 @@ mod tests {
         });
 
         let upstream_url = format!("http://{upstream_addr}/videoplayback?foo=bar");
-        let client = reqwest::blocking::Client::builder()
-            .build()
-            .expect("build client");
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
         let (mut writer, _reader) = tcp_pair();
 
         let result = stream_upstream_segment(
             &mut writer,
             &client,
             &upstream_url,
-            UpstreamReadPlan::QueryRange {
-                start: 128,
-                end: 256,
-            },
+            UpstreamReadPlan::QueryRange { start: 128, end: 256 },
             &test_request_context(),
             1,
             1,
@@ -1169,9 +1102,7 @@ mod tests {
         let rn_requests_server = Arc::clone(&rn_requests);
         let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
         let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
-        upstream_listener
-            .set_nonblocking(true)
-            .expect("set upstream listener nonblocking");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
 
         let server = thread::spawn(move || {
             let started = Instant::now();
@@ -1190,9 +1121,8 @@ mod tests {
                 };
                 let request = read_http_request(&mut stream);
                 let request_line = request.lines().next().unwrap_or_default().to_string();
-                let has_range_header = request
-                    .lines()
-                    .any(|line| line.to_ascii_lowercase().starts_with("range:"));
+                let has_range_header =
+                    request.lines().any(|line| line.to_ascii_lowercase().starts_with("range:"));
                 let has_rn = request_line.contains("&rn=");
                 handled += 1;
 
@@ -1219,9 +1149,7 @@ mod tests {
         });
 
         let upstream_url = format!("http://{upstream_addr}/videoplayback?foo=bar");
-        let client = reqwest::blocking::Client::builder()
-            .build()
-            .expect("build client");
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
 
         let (mut writer, mut reader) = tcp_pair();
         let start = 204_800u64;
@@ -1261,9 +1189,7 @@ mod tests {
         let header_range_requests_server = Arc::clone(&header_range_requests);
         let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
         let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
-        upstream_listener
-            .set_nonblocking(true)
-            .expect("set upstream listener nonblocking");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
 
         let server = thread::spawn(move || {
             let started = Instant::now();
@@ -1282,9 +1208,8 @@ mod tests {
                 };
                 let request = read_http_request(&mut stream);
                 let request_line = request.lines().next().unwrap_or_default().to_string();
-                let has_range_header = request
-                    .lines()
-                    .any(|line| line.to_ascii_lowercase().starts_with("range:"));
+                let has_range_header =
+                    request.lines().any(|line| line.to_ascii_lowercase().starts_with("range:"));
                 let has_rn = request_line.contains("&rn=");
                 handled += 1;
 
@@ -1316,9 +1241,7 @@ mod tests {
         });
 
         let upstream_url = format!("http://{upstream_addr}/videoplayback?foo=bar");
-        let client = reqwest::blocking::Client::builder()
-            .build()
-            .expect("build client");
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
 
         let (mut writer, mut reader) = tcp_pair();
         let start = 1_253_376u64;
@@ -1335,10 +1258,7 @@ mod tests {
             ],
             &test_request_context(),
         );
-        assert!(
-            result.is_ok(),
-            "expected anchored zero-range recovery to succeed: {result:?}"
-        );
+        assert!(result.is_ok(), "expected anchored zero-range recovery to succeed: {result:?}");
 
         writer.shutdown(Shutdown::Write).expect("shutdown writer");
         let mut streamed = Vec::new();

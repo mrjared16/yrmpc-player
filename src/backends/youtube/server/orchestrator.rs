@@ -8,10 +8,7 @@
 //! This module is used by both the main server and the internal event
 //! processor.
 
-use std::{
-    sync::Arc,
-    thread,
-};
+use std::{sync::Arc, thread};
 
 use anyhow::{Context, Result};
 use crossbeam::channel::Sender;
@@ -21,6 +18,7 @@ use crate::backends::youtube::{
     audio::MpvInput,
     media::{MediaPreparer, PreloadTier, PreparedMedia},
     protocol::{ServerResponse, SongData},
+    server::handlers::stable_track_id,
     server::playback_coordinator::PlaybackCoordinator,
     server::playback_horizon::ResolvedPlaybackHorizon,
     server::playback_prepare::{
@@ -29,15 +27,9 @@ use crate::backends::youtube::{
     },
     server::prefetch_manager::PrefetchManager,
     server::track_ended::TrackEndedHandler,
-    server::handlers::stable_track_id,
     services::{
-        AdvanceIntent,
-        PlaybackService,
-        PlaybackState,
-        PlaybackStateTracker,
-        QueueService,
-        RepeatMode,
-        playback_service::RuntimeInputRoute,
+        AdvanceIntent, PlaybackService, PlaybackState, PlaybackStateTracker, QueueService,
+        RepeatMode, playback_service::RuntimeInputRoute,
     },
 };
 
@@ -101,18 +93,16 @@ impl Orchestrator {
         media_preparer: Arc<dyn MediaPreparer>,
     ) -> Self {
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
-        let prefetch = Arc::new(PrefetchManager::new(
-            Arc::clone(&queue),
-            Arc::clone(&media_preparer),
-        ));
+        let prefetch =
+            Arc::new(PrefetchManager::new(Arc::clone(&queue), Arc::clone(&media_preparer)));
         let (prefix_window_kick, prefix_window_rx) = crossbeam::channel::bounded(1);
         let playback_for_track_ended = Arc::clone(&playback);
         let queue_for_track_ended = Arc::clone(&queue);
         let state_for_track_ended = Arc::clone(&state_tracker);
         let preparer_for_track_ended = Arc::clone(&media_preparer);
         let coordinator_for_track_ended = Arc::clone(&coordinator);
-        let play_position_sync: Arc<dyn Fn(usize) -> ServerResponse + Send + Sync> = Arc::new(
-            move |pos| {
+        let play_position_sync: Arc<dyn Fn(usize) -> ServerResponse + Send + Sync> =
+            Arc::new(move |pos| {
                 play_position_sync_with_services(
                     &playback_for_track_ended,
                     &queue_for_track_ended,
@@ -121,8 +111,7 @@ impl Orchestrator {
                     &coordinator_for_track_ended,
                     pos,
                 )
-            },
-        );
+            });
         let track_ended = Arc::new(TrackEndedHandler::new(
             Arc::clone(&playback),
             Arc::clone(&queue),
@@ -170,15 +159,13 @@ impl Orchestrator {
 
     pub fn previous_track(&self) -> ServerResponse {
         match self.queue.previous_index() {
-            Some(0) => {
-                match self.playback.seek(0.0, "absolute") {
-                    Ok(_) => {
-                        self.state_tracker.force_set(PlaybackState::Playing);
-                        ServerResponse::Ok
-                    }
-                    Err(e) => ServerResponse::Error(e.to_string()),
+            Some(0) => match self.playback.seek(0.0, "absolute") {
+                Ok(_) => {
+                    self.state_tracker.force_set(PlaybackState::Playing);
+                    ServerResponse::Ok
                 }
-            }
+                Err(e) => ServerResponse::Error(e.to_string()),
+            },
             Some(idx) => self.play_position_sync(idx),
             None => ServerResponse::Error("No previous track".into()),
         }
@@ -295,7 +282,8 @@ impl Orchestrator {
             .ok()
             .map(|song| stable_track_id(&song.uri))
             .filter(|track_id| !track_id.is_empty());
-        let new_horizon = ResolvedPlaybackHorizon::from_queue_service(self.queue.as_ref(), current_idx);
+        let new_horizon =
+            ResolvedPlaybackHorizon::from_queue_service(self.queue.as_ref(), current_idx);
 
         let mut coordinator = self.coordinator.lock();
         if coordinator.should_preserve_pending_current_track(current_track.as_deref()) {
@@ -336,10 +324,7 @@ impl Orchestrator {
         let previous_current_window_pos = previous_window
             .current_idx
             .and_then(|window_current_idx| {
-                previous_window
-                    .prefetch_indices
-                    .iter()
-                    .position(|&idx| idx == window_current_idx)
+                previous_window.prefetch_indices.iter().position(|&idx| idx == window_current_idx)
             })
             .unwrap_or(current_mpv_pos);
         let existing_tail: Vec<usize> = previous_window
@@ -350,9 +335,9 @@ impl Orchestrator {
             .collect();
 
         for idx in (0..current_mpv_pos).rev() {
-            self.playback
-                .playlist_remove(idx)
-                .with_context(|| format!("remove stale MPV prefix item {idx} during reconciliation"))?;
+            self.playback.playlist_remove(idx).with_context(|| {
+                format!("remove stale MPV prefix item {idx} during reconciliation")
+            })?;
         }
 
         let active_indices = self.queue.compute_prefetch_window(current_idx, PREFETCH_WINDOW_SIZE);
@@ -368,18 +353,23 @@ impl Orchestrator {
             .get_playlist_count()
             .context("read MPV playlist count during queue reconciliation")?;
         for idx in ((unchanged_tail_len + 1)..playlist_count).rev() {
-            self.playback
-                .playlist_remove(idx)
-                .with_context(|| format!("remove stale MPV tail item {idx} during reconciliation"))?;
+            self.playback.playlist_remove(idx).with_context(|| {
+                format!("remove stale MPV tail item {idx} during reconciliation")
+            })?;
         }
 
-        self.queue
-            .set_playback_window_state(Some(current_idx), current_idx, active_indices.clone());
+        self.queue.set_playback_window_state(
+            Some(current_idx),
+            current_idx,
+            active_indices.clone(),
+        );
         activate_playback_window(&self.media_preparer, &self.queue, &active_indices);
         let playback_started = {
             let mut coordinator = self.coordinator.lock();
-            coordinator
-                .queue_changed(ResolvedPlaybackHorizon::from_queue_service(self.queue.as_ref(), current_idx));
+            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
+                self.queue.as_ref(),
+                current_idx,
+            ));
             coordinator.playback_started()
         };
         if playback_started {
@@ -396,9 +386,13 @@ impl Orchestrator {
                 continue;
             }
 
-            let input = prepare_media_blocking(&self.media_preparer, &track_id, tier_for_window_offset(offset))
-                .and_then(|prepared| build_runtime_mpv_input(&self.playback, &track_id, &prepared))
-                .with_context(|| format!("prepare track {track_id} during queue reconciliation"))?;
+            let input = prepare_media_blocking(
+                &self.media_preparer,
+                &track_id,
+                tier_for_window_offset(offset),
+            )
+            .and_then(|prepared| build_runtime_mpv_input(&self.playback, &track_id, &prepared))
+            .with_context(|| format!("prepare track {track_id} during queue reconciliation"))?;
             self.playback
                 .playlist_append_input(&input)
                 .with_context(|| format!("append track {track_id} during queue reconciliation"))?;
@@ -428,7 +422,6 @@ impl Orchestrator {
     pub fn coordinator(&self) -> &Arc<Mutex<PlaybackCoordinator>> {
         &self.coordinator
     }
-
 }
 
 fn spawn_prefix_window_worker(
@@ -460,11 +453,14 @@ fn spawn_prefix_window_worker(
                     continue;
                 }
 
-                let result = prepare_media_blocking(&media_preparer, &track_id, PreloadTier::Background);
+                let result =
+                    prepare_media_blocking(&media_preparer, &track_id, PreloadTier::Background);
                 let active_window = {
                     let mut coordinator = coordinator.lock();
                     match result {
-                        Ok(PreparedMedia::StagedPrefix { .. } | PreparedMedia::LocalFile { .. }) => {
+                        Ok(
+                            PreparedMedia::StagedPrefix { .. } | PreparedMedia::LocalFile { .. },
+                        ) => {
                             coordinator.finish_prefix_job(&track_id);
                         }
                         Ok(other) => {
@@ -542,11 +538,14 @@ fn play_position_sync_with_services(
 
     let mut appended_prefetch_indices: Vec<usize> = Vec::new();
 
-    let first_url_metadata = match prepare_media_blocking(media_preparer, &track.track_id, track.tier)
-        .and_then(|prepared| {
-            build_current_runtime_input_with_direct_fallback(playback, &track.track_id, &prepared)
-        })
-    {
+    let first_url_metadata = match prepare_media_blocking(
+        media_preparer,
+        &track.track_id,
+        track.tier,
+    )
+    .and_then(|prepared| {
+        build_current_runtime_input_with_direct_fallback(playback, &track.track_id, &prepared)
+    }) {
         Ok(decision) => {
             if matches!(decision.route, RuntimeInputRoute::DirectFallback) {
                 coordinator.lock().swap_current_track_to_direct_fallback(&track.track_id);
@@ -583,8 +582,7 @@ fn play_position_sync_with_services(
         );
     }
 
-    if let Err(e) = playback.set_media_title(&first_url_metadata.0, &first_url_metadata.1)
-    {
+    if let Err(e) = playback.set_media_title(&first_url_metadata.0, &first_url_metadata.1) {
         log::warn!("Failed to set media title: {}", e);
     }
 
@@ -675,16 +673,17 @@ pub fn build_playback_plan(queue: &Arc<QueueService>, pos: usize) -> Result<Play
         return Err(anyhow::anyhow!("No playable tracks found at position {}", pos));
     }
 
-    Ok(PlaybackPlan {
-        position: pos,
-        tracks,
-        prefetch_indices,
-    })
+    Ok(PlaybackPlan { position: pos, tracks, prefetch_indices })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashSet, path::PathBuf, sync::Arc, time::{Duration, Instant}};
+    use std::{
+        collections::HashSet,
+        path::PathBuf,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
 
     use async_trait::async_trait;
     use parking_lot::Mutex;
@@ -702,15 +701,17 @@ mod tests {
         domain::Song,
     };
 
-    fn setup_test_services(
-    ) -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>) {
+    fn setup_test_services()
+    -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>)
+    {
         setup_test_services_with_mode(AudioDeliveryMode::Direct, None)
     }
 
     fn setup_test_services_with_mode(
         mode: AudioDeliveryMode,
         relay_runtime: Option<Arc<RelayRuntime>>,
-    ) -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>) {
+    ) -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>, Arc<PlaybackStateTracker>)
+    {
         let mpv_guard = acquire_mpv_test_guard();
         let temp_dir = TempDir::new().unwrap();
         let socket = temp_dir.path().join("test-mpv.sock");
@@ -740,8 +741,8 @@ mod tests {
     }
 
     /// Create an Orchestrator with a custom RecordingMediaPreparer
-    fn setup_orchestrator_with_preparer(
-    ) -> (MpvTestGuard, TempDir, Orchestrator, Arc<RecordingMediaPreparer>) {
+    fn setup_orchestrator_with_preparer()
+    -> (MpvTestGuard, TempDir, Orchestrator, Arc<RecordingMediaPreparer>) {
         let (mpv_guard, temp_dir, playback, queue, state_tracker) = setup_test_services();
         let recording = Arc::new(RecordingMediaPreparer::default());
         let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
@@ -812,9 +813,7 @@ mod tests {
                 anyhow::bail!("forced prepare failure for {track_id}");
             }
 
-            Ok(PreparedMedia::Direct {
-                url: format!("https://example.invalid/{track_id}"),
-            })
+            Ok(PreparedMedia::Direct { url: format!("https://example.invalid/{track_id}") })
         }
 
         fn prefetch(&self, _track_id: &str, _tier: PreloadTier) {}
@@ -833,9 +832,7 @@ mod tests {
                 anyhow::bail!("forced prepare failure for {track_id}");
             }
 
-            Ok(PreparedMedia::Direct {
-                url: format!("https://example.invalid/{track_id}"),
-            })
+            Ok(PreparedMedia::Direct { url: format!("https://example.invalid/{track_id}") })
         }
 
         fn prefetch(&self, _track_id: &str, _tier: PreloadTier) {}
@@ -916,7 +913,10 @@ mod tests {
         assert!(matches!(response, ServerResponse::Ok));
 
         assert!(orch.coordinator.lock().snapshot().next_three_window.is_empty());
-        assert_eq!(*recording.prepared.lock(), vec![("video123".to_string(), PreloadTier::Immediate)]);
+        assert_eq!(
+            *recording.prepared.lock(),
+            vec![("video123".to_string(), PreloadTier::Immediate)]
+        );
         assert!(recording.prefetched.lock().is_empty());
 
         orch.handle_playback_started_for_current_track();
@@ -936,10 +936,11 @@ mod tests {
                 ("video999".to_string(), PreloadTier::Background),
             ]
         );
-        assert!(recording
-            .activated_windows
-            .lock()
-            .contains(&vec!["video456".to_string(), "video789".to_string(), "video999".to_string()]));
+        assert!(recording.activated_windows.lock().contains(&vec![
+            "video456".to_string(),
+            "video789".to_string(),
+            "video999".to_string()
+        ]));
     }
 
     #[test]
@@ -991,7 +992,12 @@ mod tests {
 
         let snapshot = orch.coordinator.lock().snapshot();
         assert_eq!(snapshot.current_track.as_deref(), Some("song-0"));
-        assert_eq!(snapshot.current_owner, Some(crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback));
+        assert_eq!(
+            snapshot.current_owner,
+            Some(
+                crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback
+            )
+        );
         assert!(!snapshot.playback_started);
         assert!(snapshot.next_three_window.is_empty());
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
@@ -999,7 +1005,12 @@ mod tests {
         orch.handle_playback_started_for_current_track();
 
         let snapshot = orch.coordinator.lock().snapshot();
-        assert_eq!(snapshot.current_owner, Some(crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback));
+        assert_eq!(
+            snapshot.current_owner,
+            Some(
+                crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback
+            )
+        );
         assert_eq!(snapshot.track_states.get("song-0"), Some(&crate::backends::youtube::server::playback_coordinator::TrackJobState::PlayingDirect));
         assert_eq!(snapshot.next_three_window, vec!["song-1", "song-2", "song-3"]);
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
@@ -1010,16 +1021,12 @@ mod tests {
 
     #[test]
     fn suspicious_eof_detects_early_cutoff() {
-        assert!(crate::backends::youtube::server::track_ended::is_suspicious_eof(
-            210.6, 236.98
-        ));
+        assert!(crate::backends::youtube::server::track_ended::is_suspicious_eof(210.6, 236.98));
     }
 
     #[test]
     fn suspicious_eof_ignores_near_end() {
-        assert!(!crate::backends::youtube::server::track_ended::is_suspicious_eof(
-            228.0, 236.98
-        ));
+        assert!(!crate::backends::youtube::server::track_ended::is_suspicious_eof(228.0, 236.98));
     }
 
     #[test]
@@ -1056,7 +1063,10 @@ mod tests {
 
         {
             let mut coordinator = orch.coordinator.lock();
-            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(orch.queue().as_ref(), 0));
+            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
+                orch.queue().as_ref(),
+                0,
+            ));
             coordinator.begin_immediate_play("song-1");
         }
 
@@ -1066,7 +1076,9 @@ mod tests {
         assert_eq!(snapshot.current_track.as_deref(), Some("song-1"));
         assert_eq!(
             snapshot.current_owner,
-            Some(crate::backends::youtube::server::playback_coordinator::TrackOwner::ImmediateRelay)
+            Some(
+                crate::backends::youtube::server::playback_coordinator::TrackOwner::ImmediateRelay
+            )
         );
         assert!(!snapshot.playback_started);
     }
@@ -1080,7 +1092,10 @@ mod tests {
 
         {
             let mut coordinator = orch.coordinator.lock();
-            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(orch.queue().as_ref(), 0));
+            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
+                orch.queue().as_ref(),
+                0,
+            ));
             coordinator.begin_immediate_play("song-1");
             assert!(coordinator.swap_current_track_to_direct_fallback("song-1"));
         }
@@ -1091,7 +1106,9 @@ mod tests {
         assert_eq!(snapshot.current_track.as_deref(), Some("song-1"));
         assert_eq!(
             snapshot.current_owner,
-            Some(crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback)
+            Some(
+                crate::backends::youtube::server::playback_coordinator::TrackOwner::DirectFallback
+            )
         );
         assert!(!snapshot.playback_started);
     }
@@ -1203,8 +1220,10 @@ mod tests {
         queue.set_current(Some(0));
 
         let fail_ids = HashSet::from(["song-1".to_string()]);
-        let media_preparer: Arc<dyn MediaPreparer> = Arc::new(SelectiveFailMediaPreparer { fail_ids });
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker.clone(), media_preparer);
+        let media_preparer: Arc<dyn MediaPreparer> =
+            Arc::new(SelectiveFailMediaPreparer { fail_ids });
+        let orch =
+            Orchestrator::new(playback, queue.clone(), state_tracker.clone(), media_preparer);
 
         orch.handle_end_of_window(RepeatMode::Off);
 
@@ -1478,11 +1497,10 @@ mod tests {
         assert_eq!(orch.queue().current_index(), Some(1));
         assert_eq!(orch.coordinator().lock().current_track_id().as_deref(), Some("song-1"));
         assert!(orch.coordinator().lock().next_three_window().is_empty());
-        assert_eq!(recording.activated_windows.lock().clone(), vec![vec![
-            "song-1".to_string(),
-            "song-2".to_string(),
-            "song-3".to_string(),
-        ]]);
+        assert_eq!(
+            recording.activated_windows.lock().clone(),
+            vec![vec!["song-1".to_string(), "song-2".to_string(), "song-3".to_string(),]]
+        );
         assert_eq!(
             recording.prepared.lock().clone(),
             vec![("song-3".to_string(), PreloadTier::Eager)]
@@ -1614,7 +1632,8 @@ mod tests {
         queue.add(test_song("song-3"), None);
 
         let fail_ids = HashSet::from(["song-3".to_string()]);
-        let media_preparer: Arc<dyn MediaPreparer> = Arc::new(SelectiveFailMediaPreparer { fail_ids });
+        let media_preparer: Arc<dyn MediaPreparer> =
+            Arc::new(SelectiveFailMediaPreparer { fail_ids });
         let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer);
 
         queue.set_current(Some(0));
@@ -1643,7 +1662,8 @@ mod tests {
             fail_ids: HashSet::from(["song-3".to_string()]),
             ..Default::default()
         });
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer.clone());
+        let orch =
+            Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer.clone());
 
         queue.set_current(Some(0));
         queue.set_playback_base_index(0);
@@ -1689,11 +1709,7 @@ mod tests {
         assert_eq!(orch.queue().get_prefetched_at(2), Some(2));
         assert_eq!(
             recording.activated_windows.lock().clone(),
-            vec![vec![
-                "song-0".to_string(),
-                "song-new".to_string(),
-                "song-1".to_string(),
-            ]]
+            vec![vec!["song-0".to_string(), "song-new".to_string(), "song-1".to_string(),]]
         );
         assert_eq!(
             recording.prepared.lock().clone(),

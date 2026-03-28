@@ -10,15 +10,9 @@ use std::time::Duration;
 use ytmapi_rs::{
     common::YoutubeID,
     parse::{
-        BasicSearchResultCommunityPlaylist,
-        SearchResultAlbum,
-        SearchResultArtist,
-        SearchResultCommunityPlaylist,
-        SearchResultFeaturedPlaylist,
-        SearchResultSong,
-        SearchResultVideo,
-        TopResult,
-        TopResultType,
+        BasicSearchResultCommunityPlaylist, SearchResultAlbum, SearchResultArtist,
+        SearchResultCommunityPlaylist, SearchResultFeaturedPlaylist, SearchResultSong,
+        SearchResultVideo, TopResult, TopResultType,
     },
 };
 

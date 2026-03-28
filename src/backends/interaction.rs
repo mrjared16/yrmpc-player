@@ -768,9 +768,10 @@ mod tests {
                 songs.push(Song {
                     id: Some(i),
                     uri: format!("song{i}"),
-                    metadata: HashMap::from([("album".to_owned(), vec![
-                        albums[i as usize].to_owned(),
-                    ])]),
+                    metadata: HashMap::from([(
+                        "album".to_owned(),
+                        vec![albums[i as usize].to_owned()],
+                    )]),
                     ..Default::default()
                 });
             }

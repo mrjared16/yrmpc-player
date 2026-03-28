@@ -228,10 +228,10 @@ mod tests {
 
     #[test]
     fn skips_unfocusable_items() {
-        let items = vec![TestItem { text: "Header: Hello".into(), focusable: false }, TestItem {
-            text: "Hello World".into(),
-            focusable: true,
-        }];
+        let items = vec![
+            TestItem { text: "Header: Hello".into(), focusable: false },
+            TestItem { text: "Hello World".into(), focusable: true },
+        ];
 
         let mut find = FindState::with_text("hello");
         find.apply(&items);

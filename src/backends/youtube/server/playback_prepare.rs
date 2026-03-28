@@ -6,8 +6,8 @@ use tokio::runtime::{Builder, Handle};
 use crate::backends::youtube::{
     audio::MpvInput,
     media::{MediaPreparer, PreparedMedia},
-    services::playback_service::RuntimeInputDecision,
     services::PlaybackService,
+    services::playback_service::RuntimeInputDecision,
 };
 
 pub(crate) fn prepare_media_blocking(

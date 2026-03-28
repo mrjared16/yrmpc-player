@@ -1,7 +1,4 @@
-use std::{
-    collections::HashSet,
-    sync::Arc,
-};
+use std::{collections::HashSet, sync::Arc};
 
 use parking_lot::Mutex;
 
@@ -21,11 +18,7 @@ pub struct PrefetchManager {
 
 impl PrefetchManager {
     pub fn new(queue: Arc<QueueService>, media_preparer: Arc<dyn MediaPreparer>) -> Self {
-        Self {
-            queue,
-            media_preparer,
-            triggered: Arc::new(Mutex::new(HashSet::new())),
-        }
+        Self { queue, media_preparer, triggered: Arc::new(Mutex::new(HashSet::new())) }
     }
 
     pub fn handle_time_remaining(&self, time_remaining_secs: f64) {

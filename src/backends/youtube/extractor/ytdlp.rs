@@ -78,13 +78,7 @@ impl JsRuntime {
         let kind = path
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| {
-                if name.contains("bun") {
-                    JsRuntimeKind::Bun
-                } else {
-                    JsRuntimeKind::Node
-                }
-            })
+            .map(|name| if name.contains("bun") { JsRuntimeKind::Bun } else { JsRuntimeKind::Node })
             .unwrap_or(JsRuntimeKind::Node);
 
         Self { kind, executable: path }
@@ -144,7 +138,8 @@ struct PoTokenProviderManager {
 }
 
 #[cfg(test)]
-pub(crate) static EAGER_BOOTSTRAP_ATTEMPTS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+pub(crate) static EAGER_BOOTSTRAP_ATTEMPTS: std::sync::atomic::AtomicUsize =
+    std::sync::atomic::AtomicUsize::new(0);
 
 impl Default for PoTokenProviderManager {
     fn default() -> Self {
@@ -177,20 +172,14 @@ impl PoTokenProviderManager {
         let runtime = self.resolve_js_runtime()?;
 
         if self.endpoint.is_reachable() {
-            return Ok(PoTokenContext {
-                endpoint: self.endpoint.clone(),
-                runtime,
-            });
+            return Ok(PoTokenContext { endpoint: self.endpoint.clone(), runtime });
         }
 
         let mut child_guard = self.child.lock();
         let stale_child = if let Some(child) = child_guard.as_mut() {
             match child.try_wait().context("Failed checking bgutil provider status")? {
                 None if self.endpoint.is_reachable() => {
-                    return Ok(PoTokenContext {
-                        endpoint: self.endpoint.clone(),
-                        runtime,
-                    });
+                    return Ok(PoTokenContext { endpoint: self.endpoint.clone(), runtime });
                 }
                 None => {
                     log::warn!(
@@ -213,10 +202,7 @@ impl PoTokenProviderManager {
         }
 
         if self.endpoint.is_reachable() {
-            return Ok(PoTokenContext {
-                endpoint: self.endpoint.clone(),
-                runtime,
-            });
+            return Ok(PoTokenContext { endpoint: self.endpoint.clone(), runtime });
         }
 
         let script_path = Self::resolve_script_path()?;
@@ -264,10 +250,7 @@ impl PoTokenProviderManager {
 
         self.wait_until_reachable()?;
 
-        Ok(PoTokenContext {
-            endpoint: self.endpoint.clone(),
-            runtime,
-        })
+        Ok(PoTokenContext { endpoint: self.endpoint.clone(), runtime })
     }
 
     fn wait_until_reachable(&self) -> Result<()> {
@@ -386,7 +369,9 @@ impl YtDlpCommandBuilder {
             "--ignore-errors".to_string(),
         ];
 
-        if let Some(runtime) = po_token.map(|po_token| &po_token.runtime).or(self.js_runtime.as_ref()) {
+        if let Some(runtime) =
+            po_token.map(|po_token| &po_token.runtime).or(self.js_runtime.as_ref())
+        {
             args.push("--js-runtimes".to_string());
             args.push(runtime.yt_dlp_arg());
         }
@@ -405,11 +390,7 @@ impl YtDlpCommandBuilder {
 
         args.push("--print".to_string());
         args.push("%(id)s\t%(url)s".to_string());
-        args.extend(
-            video_ids
-                .iter()
-                .map(|id| format!("https://music.youtube.com/watch?v={id}")),
-        );
+        args.extend(video_ids.iter().map(|id| format!("https://music.youtube.com/watch?v={id}")));
         args
     }
 
@@ -483,7 +464,9 @@ impl YtDlpExtractor {
     }
 
     pub(crate) fn eager_bootstrap_po_token_provider(&self) {
-        self.bootstrap_po_token_provider_best_effort(|| self.provider_manager.ensure_ready().map(|_| ())); 
+        self.bootstrap_po_token_provider_best_effort(|| {
+            self.provider_manager.ensure_ready().map(|_| ())
+        });
     }
 
     #[cfg(test)]
@@ -513,7 +496,11 @@ impl YtDlpExtractor {
         by_id
     }
 
-    fn run_yt_dlp(&self, video_ids: &[String], args: Vec<String>) -> HashMap<String, Result<String>> {
+    fn run_yt_dlp(
+        &self,
+        video_ids: &[String],
+        args: Vec<String>,
+    ) -> HashMap<String, Result<String>> {
         let mut cmd = Command::new("yt-dlp");
         cmd.args(args);
 
@@ -638,8 +625,8 @@ impl Extractor for YtDlpExtractor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::Ordering;
     use std::cell::RefCell;
+    use std::sync::atomic::Ordering;
 
     #[test]
     fn test_empty_batch() {
@@ -689,8 +676,9 @@ mod tests {
 
     #[test]
     fn provider_launcher_requires_node() {
-        let node = PoTokenProviderManager::select_provider_launcher(Some(PathBuf::from("/tmp/node")))
-            .expect("node launcher should be selected");
+        let node =
+            PoTokenProviderManager::select_provider_launcher(Some(PathBuf::from("/tmp/node")))
+                .expect("node launcher should be selected");
         assert_eq!(node, PathBuf::from("/tmp/node"));
         assert!(PoTokenProviderManager::select_provider_launcher(None).is_none());
     }
@@ -715,10 +703,7 @@ mod tests {
     fn test_build_args_includes_cookies_and_repeated_extractor_args() {
         let builder = YtDlpCommandBuilder::new(Some("/tmp/cookies.txt".to_string()), None);
         let endpoint = ProviderEndpoint::default();
-        let context = PoTokenContext {
-            endpoint,
-            runtime: JsRuntime::bun("/tmp/bun"),
-        };
+        let context = PoTokenContext { endpoint, runtime: JsRuntime::bun("/tmp/bun") };
 
         let args = builder.build(
             &["abc123".to_string()],
@@ -795,7 +780,10 @@ mod tests {
             },
         );
 
-        assert_eq!(results.get("abc123").and_then(|r| r.as_ref().ok()), Some(&"https://stream".to_string()));
+        assert_eq!(
+            results.get("abc123").and_then(|r| r.as_ref().ok()),
+            Some(&"https://stream".to_string())
+        );
         let calls = calls.borrow();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].contains(&"774/141/251".to_string()));
@@ -817,7 +805,10 @@ mod tests {
             },
         );
 
-        assert_eq!(results.get("abc123").and_then(|r| r.as_ref().ok()), Some(&"https://fallback".to_string()));
+        assert_eq!(
+            results.get("abc123").and_then(|r| r.as_ref().ok()),
+            Some(&"https://fallback".to_string())
+        );
         let calls = calls.borrow();
         assert_eq!(calls.len(), 1);
         assert!(calls[0].contains(&"251".to_string()));

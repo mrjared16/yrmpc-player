@@ -84,22 +84,8 @@ pub mod youtube;
 
 // === API types (backend-agnostic) ===
 pub use api::{
-    AfterAdd,
-    Backend,
-    BrowseResult,
-    Capability,
-    ContentType,
-    Discovery,
-    InsertAt,
-    Item,
-    Playback,
-    Queue,
-    Repeat,
-    SearchQuery,
-    SearchResults,
-    State,
-    Status as ApiStatus,
-    Volume,
+    AfterAdd, Backend, BrowseResult, Capability, ContentType, Discovery, InsertAt, Item, Playback,
+    Queue, Repeat, SearchQuery, SearchResults, State, Status as ApiStatus, Volume,
 };
 // === Legacy types (MPD-flavored, for migration) ===
 pub use client::BackendDispatcher;
@@ -122,38 +108,18 @@ pub type BackendCapability = api::Capability;
 
 // Re-export controllers for the new organized API
 pub use controllers::{
-    DatabaseController,
-    LibraryBrowser,
-    OutputController,
-    PlaybackController,
-    QueueController,
-    SavedPlaylistController,
-    StatusProvider,
-    StickerController,
-    VolumeController,
+    DatabaseController, LibraryBrowser, OutputController, PlaybackController, QueueController,
+    SavedPlaylistController, StatusProvider, StickerController, VolumeController,
 };
 // Re-export interaction types - using new name BackendActions
 pub use interaction::{
-    BackendActions,
-    DeleteTarget,
-    Enqueue,
-    PartitionedOutput,
-    PartitionedOutputKind,
+    BackendActions, DeleteTarget, Enqueue, PartitionedOutput, PartitionedOutputKind,
 };
 // Re-export messaging types (pub(crate) since they're internal)
 pub(crate) use messaging::{
-    ClientRequest,
-    EXTERNAL_COMMAND,
-    GLOBAL_QUEUE_UPDATE,
-    GLOBAL_STATUS_UPDATE,
-    GLOBAL_STICKERS_UPDATE,
-    GLOBAL_VOLUME_UPDATE,
-    PlayerCommand,
-    PreviewGroup,
-    Query,
-    QueryResult,
-    QuerySync,
-    run_status_update,
+    ClientRequest, EXTERNAL_COMMAND, GLOBAL_QUEUE_UPDATE, GLOBAL_STATUS_UPDATE,
+    GLOBAL_STICKERS_UPDATE, GLOBAL_VOLUME_UPDATE, PlayerCommand, PreviewGroup, Query, QueryResult,
+    QuerySync, run_status_update,
 };
 // Re-export MPV types from YouTube backend for backward compatibility
 // MPV is now internal to the YouTube backend

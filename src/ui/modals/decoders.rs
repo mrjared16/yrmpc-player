@@ -146,11 +146,14 @@ impl Modal for DecodersModal {
         .block(
             Block::default().borders(Borders::BOTTOM).border_style(ctx.config.as_border_style()),
         );
-        let table = Table::new(rows, [
-            Constraint::Percentage(name_col_width),
-            Constraint::Percentage(mime_col_width),
-            Constraint::Percentage(suffix_col_width),
-        ])
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Percentage(name_col_width),
+                Constraint::Percentage(mime_col_width),
+                Constraint::Percentage(suffix_col_width),
+            ],
+        )
         .column_spacing(1)
         .style(ctx.config.as_text_style())
         .row_highlight_style(ctx.config.theme.current_item_style);

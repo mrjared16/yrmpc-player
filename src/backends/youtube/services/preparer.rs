@@ -127,7 +127,11 @@ impl PlaybackPreparer {
                 })
             }
             PrefixRace::Failed(e) => {
-                log::warn!("Prefix download failed for {}, using direct transport: {}", track_id, e);
+                log::warn!(
+                    "Prefix download failed for {}, using direct transport: {}",
+                    track_id,
+                    e
+                );
                 self.build_direct(track_id, stream_url)
             }
             PrefixRace::TimedOut => {
@@ -150,11 +154,7 @@ impl PlaybackPreparer {
         self.cache.touch(track_id);
 
         let input = self.build_concat_input(&prefix_path, content_length, stream_url);
-        Ok(PreparedPlayback {
-            track_id: track_id.to_string(),
-            input,
-            mode: PlaybackMode::Combined,
-        })
+        Ok(PreparedPlayback { track_id: track_id.to_string(), input, mode: PlaybackMode::Combined })
     }
 
     fn build_concat_input(
@@ -181,7 +181,8 @@ impl PlaybackPreparer {
             return MpvInput::new(prefix_path.to_string_lossy().to_string());
         }
 
-        let concat_url = PreparedMediaInputAdapter::build_concat_url(prefix_path, prefix_size, stream_url);
+        let concat_url =
+            PreparedMediaInputAdapter::build_concat_url(prefix_path, prefix_size, stream_url);
         MpvInput::with_args(concat_url, PreparedMediaInputAdapter::protocol_whitelist_args())
     }
 

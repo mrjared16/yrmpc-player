@@ -507,13 +507,16 @@ mod tests {
         let handle = prefetcher.handle();
 
         // Set up play order: a, b, c, d, e with c as current
-        handle.update_context(Some("c".to_string()), vec![
-            "a".to_string(),
-            "b".to_string(),
-            "c".to_string(),
-            "d".to_string(),
-            "e".to_string(),
-        ]);
+        handle.update_context(
+            Some("c".to_string()),
+            vec![
+                "a".to_string(),
+                "b".to_string(),
+                "c".to_string(),
+                "d".to_string(),
+                "e".to_string(),
+            ],
+        );
 
         // Queue d and e (after current), should be prioritized in order
         handle.queue_batch(vec!["d".to_string(), "e".to_string()]);

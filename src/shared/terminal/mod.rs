@@ -3,9 +3,7 @@ use std::sync::LazyLock;
 use anyhow::Result;
 use crossterm::{
     event::{
-        DisableMouseCapture,
-        EnableMouseCapture,
-        KeyboardEnhancementFlags,
+        DisableMouseCapture, EnableMouseCapture, KeyboardEnhancementFlags,
         PushKeyboardEnhancementFlags,
     },
     execute,

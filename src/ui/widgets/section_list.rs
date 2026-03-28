@@ -59,11 +59,7 @@ use crate::{
     shared::key_event::KeyEvent,
     ui::{
         panes::navigator_types::{
-            BackspaceResult,
-            ContentAction,
-            EscResult,
-            InputMode,
-            ListAction,
+            BackspaceResult, ContentAction, EscResult, InputMode, ListAction,
         },
         widgets::{
             detail_stack::SectionView,
@@ -564,14 +560,20 @@ mod tests {
 
     fn make_test_sections() -> Vec<SectionView> {
         vec![
-            SectionView::new(SectionKey::Stats, "Section 1", vec![
-                // Note: No DetailItem::Header here - headers are added by SectionList
-                DetailItem::artist("a1", "Artist 1"),
-                DetailItem::artist("a2", "Artist 2"),
-            ]),
-            SectionView::new(SectionKey::Albums, "Section 2", vec![DetailItem::album(
-                "al1", "Album 1",
-            )]),
+            SectionView::new(
+                SectionKey::Stats,
+                "Section 1",
+                vec![
+                    // Note: No DetailItem::Header here - headers are added by SectionList
+                    DetailItem::artist("a1", "Artist 1"),
+                    DetailItem::artist("a2", "Artist 2"),
+                ],
+            ),
+            SectionView::new(
+                SectionKey::Albums,
+                "Section 2",
+                vec![DetailItem::album("al1", "Album 1")],
+            ),
         ]
     }
 

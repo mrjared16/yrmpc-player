@@ -105,7 +105,8 @@ impl QueueCoordinator {
                     }
                     let _ = self.event_tx.send("player".to_string());
                 } else if had_active_playback && removed_pos < base + PREFETCH_WINDOW_SIZE {
-                    if let Err(e) = self.orchestrator.reconcile_active_window_after_queue_mutation() {
+                    if let Err(e) = self.orchestrator.reconcile_active_window_after_queue_mutation()
+                    {
                         log::warn!("Failed to reconcile active playback window after delete: {e}");
                     }
                 }
@@ -137,9 +138,11 @@ impl QueueCoordinator {
                 self.apply(QueueCommand::Move { id: from as u64, to_position: to_idx });
 
                 if had_active_playback
-                    && (from_idx < base + PREFETCH_WINDOW_SIZE || to_idx < base + PREFETCH_WINDOW_SIZE)
+                    && (from_idx < base + PREFETCH_WINDOW_SIZE
+                        || to_idx < base + PREFETCH_WINDOW_SIZE)
                 {
-                    if let Err(e) = self.orchestrator.reconcile_active_window_after_queue_mutation() {
+                    if let Err(e) = self.orchestrator.reconcile_active_window_after_queue_mutation()
+                    {
                         log::warn!("Failed to reconcile active playback window after move: {e}");
                     }
                 }

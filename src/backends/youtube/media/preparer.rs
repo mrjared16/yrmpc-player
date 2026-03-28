@@ -18,11 +18,7 @@ use super::{
         protocol::play_intent::RequestId,
         url_resolver::UrlResolver,
     },
-    MediaPreparer,
-    PreloadTier,
-    PrepareStatus,
-    PreparedMedia,
-    StreamResolver,
+    MediaPreparer, PreloadTier, PrepareStatus, PreparedMedia, StreamResolver,
 };
 use super::{
     job_registry::{InFlightJob, JobProgress, JobRegistry},
@@ -82,7 +78,9 @@ pub enum PrepareResult {
         prefix_path: PathBuf,
         prefix_size: u64,
     },
-    Direct { stream_url: String },
+    Direct {
+        stream_url: String,
+    },
     Cancelled,
     Failed(String),
 }
@@ -110,7 +108,9 @@ fn decide_url_resolved_action(
     track_id: &str,
     stream_url: &str,
 ) -> UrlResolvedAction {
-    if let Some((prefix_path, prefix_bytes, content_length)) = pipeline.get_prefix_metadata(track_id) {
+    if let Some((prefix_path, prefix_bytes, content_length)) =
+        pipeline.get_prefix_metadata(track_id)
+    {
         log::debug!(
             tier:? = tier,
             prefix_cache_result = "hit",
@@ -176,9 +176,7 @@ fn direct_bypass_for_inflight_prefix(
             "[PREPARE] Immediate tier bypassing in-flight prefix download"
         );
 
-        return Some(PrepareResult::Direct {
-            stream_url: stream_url.to_string(),
-        });
+        return Some(PrepareResult::Direct { stream_url: stream_url.to_string() });
     }
 
     None
@@ -260,11 +258,7 @@ impl YouTubeMediaPreparer {
         let (tx, rx) = mpsc::channel(256);
         let (internal_tx, internal_rx) = mpsc::unbounded_channel();
         let resolver_handle: Arc<dyn StreamResolver> = url_resolver.clone();
-        let pipeline = Arc::new(StagingPipeline::new(
-            url_resolver,
-            audio_cache,
-            audio_source_plan,
-        ));
+        let pipeline = Arc::new(StagingPipeline::new(url_resolver, audio_cache, audio_source_plan));
 
         let mut executor = Self {
             rx,
@@ -679,8 +673,10 @@ impl YouTubeMediaPreparer {
                             return result;
                         }
                         UrlResolvedAction::WaitForPrefixDownload { track_id, stream_url } => {
-                            let should_spawn =
-                                job.transition_from_url_resolved_to_downloading(&track_id, &stream_url);
+                            let should_spawn = job.transition_from_url_resolved_to_downloading(
+                                &track_id,
+                                &stream_url,
+                            );
 
                             if should_spawn {
                                 Self::spawn_prefix_download(
@@ -914,28 +910,22 @@ impl YouTubeMediaPreparerHandle {
 
 fn prepared_media_from_result(result: PrepareResult) -> Result<PreparedMedia> {
     match result {
-        PrepareResult::StagedPrefix {
-            prefix_path,
-            prefix_bytes,
-            stream_url,
-            content_length,
-        } => Ok(PreparedMedia::StagedPrefix {
-            path: prefix_path,
-            bytes: prefix_bytes,
-            url: stream_url,
-            content_length,
-        }),
-        PrepareResult::StreamAndCache {
-            stream_url,
-            content_length,
-            prefix_path,
-            prefix_size,
-        } => Ok(PreparedMedia::StreamAndCache {
-            url: stream_url,
-            content_length,
-            prefix_path,
-            prefix_size,
-        }),
+        PrepareResult::StagedPrefix { prefix_path, prefix_bytes, stream_url, content_length } => {
+            Ok(PreparedMedia::StagedPrefix {
+                path: prefix_path,
+                bytes: prefix_bytes,
+                url: stream_url,
+                content_length,
+            })
+        }
+        PrepareResult::StreamAndCache { stream_url, content_length, prefix_path, prefix_size } => {
+            Ok(PreparedMedia::StreamAndCache {
+                url: stream_url,
+                content_length,
+                prefix_path,
+                prefix_size,
+            })
+        }
         PrepareResult::Direct { stream_url } => Ok(PreparedMedia::Direct { url: stream_url }),
         PrepareResult::Cancelled => Err(anyhow!("Preparation cancelled")),
         PrepareResult::Failed(e) => Err(anyhow!("Preparation failed: {}", e)),
@@ -996,23 +986,16 @@ mod tests {
     use tempfile::TempDir;
     use tokio::sync::mpsc;
 
-    use super::{
-        InFlightJob,
-        JobRegistry,
-        MAX_PENDING_PRELOADS,
-        PrepareResult,
-        PreloadJob,
-        StagingPipeline,
-        TierPermits,
-        YouTubeMediaPreparer,
-        prepared_media_from_result,
-    };
     use super::super::job_registry::JobState;
+    use super::{
+        InFlightJob, JobRegistry, MAX_PENDING_PRELOADS, PreloadJob, PrepareResult, StagingPipeline,
+        TierPermits, YouTubeMediaPreparer, prepared_media_from_result,
+    };
     use crate::backends::youtube::{
         audio::{AudioCache, AudioDeliveryPlanner, CacheConfig},
         config::AudioDeliveryMode,
         extractor::Extractor,
-        media::{PreparedMedia, PreloadTier},
+        media::{PreloadTier, PreparedMedia},
         url_resolver::UrlResolver,
     };
 
@@ -1052,10 +1035,7 @@ mod tests {
     }
 
     fn build_test_preparer_for_mode(mode: AudioDeliveryMode) -> (TempDir, YouTubeMediaPreparer) {
-        build_test_preparer_with_resolver(
-            mode,
-            Arc::new(UrlResolver::default()),
-        )
+        build_test_preparer_with_resolver(mode, Arc::new(UrlResolver::default()))
     }
 
     fn build_test_preparer() -> (TempDir, YouTubeMediaPreparer) {
@@ -1095,10 +1075,7 @@ mod tests {
 
     impl SequenceExtractor {
         fn new(base_url: String) -> Self {
-            Self {
-                base_url,
-                extract_one_count: AtomicUsize::new(0),
-            }
+            Self { base_url, extract_one_count: AtomicUsize::new(0) }
         }
     }
 
@@ -1300,10 +1277,7 @@ mod tests {
         let stream_url = "https://example.com/stream".to_string();
         let prefix_path = temp_dir.path().join("cached-track.webm");
         std::fs::write(&prefix_path, vec![0u8; 512]).unwrap();
-        preparer
-            .pipeline
-            .audio_cache()
-            .register_prefix(track_id, prefix_path.clone(), 512, 4096);
+        preparer.pipeline.audio_cache().register_prefix(track_id, prefix_path.clone(), 512, 4096);
 
         let job = Arc::new(InFlightJob::new(track_id.to_string()));
         job.set_state(JobState::UrlResolved {
@@ -1355,9 +1329,7 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer
-            .job_registry
-            .insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer.job_registry.insert("stale".to_string(), Arc::clone(&stale_job));
         preparer.request_to_track.insert(1, "stale-queued".to_string());
         preparer.request_to_track.insert(2, "keep".to_string());
         preparer.background_queue.push_back(PreloadJob {
@@ -1396,9 +1368,7 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer
-            .job_registry
-            .insert("stale".to_string(), Arc::clone(&stale_job));
+        preparer.job_registry.insert("stale".to_string(), Arc::clone(&stale_job));
         preparer.request_to_track.insert(41, "stale".to_string());
 
         preparer.handle_cancel_request(41);
@@ -1423,9 +1393,7 @@ mod tests {
             let _ = done_tx.send(());
         }));
 
-        preparer
-            .job_registry
-            .insert("shared".to_string(), Arc::clone(&shared_job));
+        preparer.job_registry.insert("shared".to_string(), Arc::clone(&shared_job));
         preparer.request_to_track.insert(41, "shared".to_string());
         preparer.request_to_track.insert(42, "shared".to_string());
 
@@ -1452,19 +1420,14 @@ mod tests {
         let track_id = "queued-track";
         let prefix_path = temp_dir.path().join("queued-track.webm");
         std::fs::write(&prefix_path, vec![0u8; 256]).unwrap();
-        preparer
-            .pipeline
-            .audio_cache()
-            .register_prefix(track_id, prefix_path.clone(), 256, 4096);
+        preparer.pipeline.audio_cache().register_prefix(track_id, prefix_path.clone(), 256, 4096);
 
         let warm_job = Arc::new(InFlightJob::new(track_id.to_string()));
         warm_job.set_state(JobState::UrlResolved {
             track_id: track_id.to_string(),
             stream_url: "https://example.com/stream".to_string(),
         });
-        preparer
-            .job_registry
-            .insert(track_id.to_string(), Arc::clone(&warm_job));
+        preparer.job_registry.insert(track_id.to_string(), Arc::clone(&warm_job));
 
         preparer.handle_preload_request(track_id.to_string(), PreloadTier::Gapless, 7);
 
@@ -1502,14 +1465,10 @@ mod tests {
 
         assert_eq!(preparer.background_queue.len(), MAX_PENDING_PRELOADS);
 
-        let queued: Vec<String> = preparer
-            .background_queue
-            .iter()
-            .map(|job| job.track_id.clone())
-            .collect();
-        let expected: Vec<String> = (3..(MAX_PENDING_PRELOADS + 3))
-            .map(|idx| format!("track-{idx}"))
-            .collect();
+        let queued: Vec<String> =
+            preparer.background_queue.iter().map(|job| job.track_id.clone()).collect();
+        let expected: Vec<String> =
+            (3..(MAX_PENDING_PRELOADS + 3)).map(|idx| format!("track-{idx}")).collect();
 
         assert_eq!(queued, expected);
         assert!(!preparer.request_to_track.contains_key(&1));
@@ -1530,22 +1489,15 @@ mod tests {
             );
         }
 
-        preparer.handle_preload_request(
-            "gapless-priority".to_string(),
-            PreloadTier::Gapless,
-            99,
-        );
+        preparer.handle_preload_request("gapless-priority".to_string(), PreloadTier::Gapless, 99);
         preparer.handle_preload_request(
             "immediate-priority".to_string(),
             PreloadTier::Immediate,
             100,
         );
 
-        let queued: Vec<(String, PreloadTier)> = preparer
-            .background_queue
-            .iter()
-            .map(|job| (job.track_id.clone(), job.tier))
-            .collect();
+        let queued: Vec<(String, PreloadTier)> =
+            preparer.background_queue.iter().map(|job| (job.track_id.clone(), job.tier)).collect();
 
         assert_eq!(preparer.background_queue.len(), MAX_PENDING_PRELOADS);
         assert!(queued.contains(&("gapless-priority".to_string(), PreloadTier::Gapless)));

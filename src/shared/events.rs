@@ -15,8 +15,7 @@ pub(crate) use crate::backends::messaging::ClientRequest;
 use crate::{
     backends::messaging::{PlayerCommand, Query, QueryResult, QuerySync},
     config::{
-        Config,
-        Size,
+        Config, Size,
         cli::{Command, RemoteCommandQuery},
         tabs::PaneType,
         theme::UiConfig,

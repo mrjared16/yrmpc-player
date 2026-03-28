@@ -11,11 +11,7 @@ pub mod sources;
 pub use cache::{AudioCache, CacheConfig};
 pub use mpv_source::{MpvAudioSource, MpvInput};
 pub use planner::{
-    AudioDeliveryPlan,
-    AudioDeliveryPlanner,
-    AudioTransportTarget,
-    PrefetchPolicy,
-    PrepareAction,
+    AudioDeliveryPlan, AudioDeliveryPlanner, AudioTransportTarget, PrefetchPolicy, PrepareAction,
 };
 pub use sources::{DirectSource, PreparedMediaInputAdapter};
 

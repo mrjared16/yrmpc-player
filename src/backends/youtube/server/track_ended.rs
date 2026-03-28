@@ -16,11 +16,7 @@ use crate::backends::youtube::{
         prefetch_manager::PrefetchManager,
     },
     services::{
-        AdvanceIntent,
-        PlaybackService,
-        PlaybackState,
-        PlaybackStateTracker,
-        QueueService,
+        AdvanceIntent, PlaybackService, PlaybackState, PlaybackStateTracker, QueueService,
         RepeatMode,
     },
 };
@@ -408,11 +404,7 @@ impl TrackEndedHandler {
             return false;
         }
 
-        log::info!(
-            "[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}",
-            mpv_pos,
-            new_queue_pos
-        );
+        log::info!("[DIAG-EOF] MPV at playlist-pos {}, queue pos now {}", mpv_pos, new_queue_pos);
         self.queue.set_current(Some(new_queue_pos));
         self.state_tracker.force_set(PlaybackState::Playing);
 
@@ -423,12 +415,8 @@ impl TrackEndedHandler {
                 .and_then(|v| v.first())
                 .cloned()
                 .unwrap_or_else(|| song.uri.clone());
-            let artist = song
-                .metadata
-                .get("artist")
-                .and_then(|v| v.first())
-                .cloned()
-                .unwrap_or_default();
+            let artist =
+                song.metadata.get("artist").and_then(|v| v.first()).cloned().unwrap_or_default();
             let _ = self.playback.set_media_title(&title, &artist);
         }
 
@@ -436,9 +424,8 @@ impl TrackEndedHandler {
         let rollback_active_indices: Vec<usize> =
             prefetch_window_before_extend.iter().skip(mpv_pos).copied().collect();
         if let Some(next_idx) = self.queue.extend_prefetch_window() {
-            let active_indices = self
-                .queue
-                .compute_prefetch_window(new_queue_pos, PREFETCH_WINDOW_SIZE);
+            let active_indices =
+                self.queue.compute_prefetch_window(new_queue_pos, PREFETCH_WINDOW_SIZE);
             activate_playback_window(&self.media_preparer, &self.queue, &active_indices);
 
             if let Ok(song) = self.queue.get_by_index(next_idx) {
@@ -456,8 +443,7 @@ impl TrackEndedHandler {
                     if self.playback.playlist_append_input(&url).is_ok() {
                         log::debug!("Extended prefetch window with queue index {}", next_idx);
                     } else {
-                        self.queue
-                            .set_prefetch_indices(prefetch_window_before_extend.clone());
+                        self.queue.set_prefetch_indices(prefetch_window_before_extend.clone());
                         activate_playback_window(
                             &self.media_preparer,
                             &self.queue,
@@ -465,8 +451,7 @@ impl TrackEndedHandler {
                         );
                     }
                 } else {
-                    self.queue
-                        .set_prefetch_indices(prefetch_window_before_extend.clone());
+                    self.queue.set_prefetch_indices(prefetch_window_before_extend.clone());
                     activate_playback_window(
                         &self.media_preparer,
                         &self.queue,
@@ -474,9 +459,12 @@ impl TrackEndedHandler {
                     );
                 }
             } else {
-                self.queue
-                    .set_prefetch_indices(prefetch_window_before_extend.clone());
-                activate_playback_window(&self.media_preparer, &self.queue, &rollback_active_indices);
+                self.queue.set_prefetch_indices(prefetch_window_before_extend.clone());
+                activate_playback_window(
+                    &self.media_preparer,
+                    &self.queue,
+                    &rollback_active_indices,
+                );
             }
         }
 
@@ -490,10 +478,9 @@ impl TrackEndedHandler {
         let next_pos = match repeat_mode {
             RepeatMode::One => self.queue.current_index(),
             RepeatMode::Off => self.queue.next_index(),
-            RepeatMode::All => self
-                .queue
-                .next_index()
-                .or_else(|| (self.queue.len() > 0).then_some(0)),
+            RepeatMode::All => {
+                self.queue.next_index().or_else(|| (self.queue.len() > 0).then_some(0))
+            }
         };
 
         if let Some(next_pos) = next_pos {

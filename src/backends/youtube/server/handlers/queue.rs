@@ -59,12 +59,12 @@ mod tests {
         backends::youtube::{
             audio::AudioDeliveryPlanner,
             config::{AudioDeliveryMode, ExtractorType},
-            media::{MediaPreparer, PreparedMedia, PreloadTier},
+            media::{MediaPreparer, PreloadTier, PreparedMedia},
             server::{
                 handlers::queue_events::QueueEventHandler,
                 orchestrator::Orchestrator,
                 queue_coordinator::QueueCoordinator,
-                test_support::{acquire_mpv_test_guard, RecordingMediaPreparer, MpvTestGuard},
+                test_support::{MpvTestGuard, RecordingMediaPreparer, acquire_mpv_test_guard},
             },
             services::PlaybackStateTracker,
             url_resolver::UrlResolver,
@@ -87,14 +87,9 @@ mod tests {
         SongData::from(Song { uri: uri.to_string(), ..Song::default() })
     }
 
-    fn setup_queue_harness(
-    ) -> (
-        MpvTestGuard,
-        TempDir,
-        Arc<QueueCoordinator>,
-        Arc<QueueService>,
-        Arc<Mutex<PlayQueue>>,
-    ) {
+    fn setup_queue_harness()
+    -> (MpvTestGuard, TempDir, Arc<QueueCoordinator>, Arc<QueueService>, Arc<Mutex<PlayQueue>>)
+    {
         let mpv_guard = acquire_mpv_test_guard();
         let temp_dir = TempDir::new().unwrap();
         let socket = temp_dir.path().join("test-mpv.sock");
@@ -139,8 +134,7 @@ mod tests {
 
     #[test]
     fn handle_add_song_keeps_play_queue_order_aligned_with_positioned_insert() {
-        let (_mpv_guard, _temp_dir, queue_coordinator, queue, play_queue) =
-            setup_queue_harness();
+        let (_mpv_guard, _temp_dir, queue_coordinator, queue, play_queue) = setup_queue_harness();
 
         assert!(matches!(
             handle_add_song(&queue_coordinator, test_song("song-0"), None),
@@ -156,9 +150,8 @@ mod tests {
             ServerResponse::Ok
         ));
 
-        let queue_titles: Vec<String> = (0..queue.len())
-            .map(|idx| queue.get_by_index(idx).unwrap().uri)
-            .collect();
+        let queue_titles: Vec<String> =
+            (0..queue.len()).map(|idx| queue.get_by_index(idx).unwrap().uri).collect();
         let play_queue_titles: Vec<String> = {
             let play_queue = play_queue.lock();
             play_queue
@@ -200,8 +193,12 @@ mod tests {
             Arc::clone(&media_preparer),
         );
         let queue_event_handler = Mutex::new(
-            QueueEventHandler::new(Arc::clone(&playback), Arc::clone(&queue), Arc::clone(&play_queue))
-                .with_media_preparer(media_preparer),
+            QueueEventHandler::new(
+                Arc::clone(&playback),
+                Arc::clone(&queue),
+                Arc::clone(&play_queue),
+            )
+            .with_media_preparer(media_preparer),
         );
         let (event_tx, _event_rx) = crossbeam::channel::unbounded();
         let queue_coordinator = QueueCoordinator::new(
@@ -213,16 +210,28 @@ mod tests {
             event_tx,
         );
 
-        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-0"), None), ServerResponse::Ok));
-        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-1"), None), ServerResponse::Ok));
-        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-2"), None), ServerResponse::Ok));
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-0"), None),
+            ServerResponse::Ok
+        ));
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-1"), None),
+            ServerResponse::Ok
+        ));
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-2"), None),
+            ServerResponse::Ok
+        ));
 
         recording.warmed_batches.lock().clear();
         recording.warmed.lock().clear();
 
         queue.set_current(Some(0));
 
-        assert!(matches!(handle_add_song(&queue_coordinator, test_song("song-999"), Some(3)), ServerResponse::Ok));
+        assert!(matches!(
+            handle_add_song(&queue_coordinator, test_song("song-999"), Some(3)),
+            ServerResponse::Ok
+        ));
 
         assert!(recording.warmed.lock().is_empty());
         assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["song-999".to_string()]]);

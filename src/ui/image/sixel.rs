@@ -25,8 +25,7 @@ use crate::{
         terminal::TERMINAL,
         tmux::tmux_write_bytes,
     },
-    tmux,
-    try_skip,
+    tmux, try_skip,
     ui::image::{EncodeRequest, facade::IS_SHOWING, recv_data},
 };
 

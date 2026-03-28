@@ -6,23 +6,8 @@ use std::{
 use anyhow::Result;
 
 use crate::backends::api::{
-    self,
-    AfterAdd,
-    Backend,
-    BrowseResult,
-    Capability,
-    ContentDetails,
-    Discovery,
-    InsertAt,
-    Item,
-    Playback,
-    Queue,
-    Repeat,
-    SearchQuery,
-    SearchResults,
-    Status,
-    StatusQuery,
-    Volume,
+    self, AfterAdd, Backend, BrowseResult, Capability, ContentDetails, Discovery, InsertAt, Item,
+    Playback, Queue, Repeat, SearchQuery, SearchResults, Status, StatusQuery, Volume,
 };
 
 #[derive(Debug, Clone)]

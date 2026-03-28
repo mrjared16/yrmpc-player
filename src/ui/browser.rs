@@ -9,17 +9,11 @@ use ratatui::{prelude::Rect, widgets::ListState};
 use crate::{
     QueryResult,
     backends::{
-        BackendActions,
-        BackendDispatcher,
-        Capability,
-        DeleteTarget,
-        EXTERNAL_COMMAND,
-        Enqueue,
+        BackendActions, BackendDispatcher, Capability, DeleteTarget, EXTERNAL_COMMAND, Enqueue,
         youtube::protocol::play_intent::{MixType, PlayIntent},
     },
     config::keys::{
-        CommonAction,
-        GlobalAction,
+        CommonAction, GlobalAction,
         actions::{AddKind, AutoplayKind, DeleteKind, Position, RateKind, SaveKind},
     },
     ctx::{Ctx, LIKE_STICKER, RATING_STICKER},
@@ -35,12 +29,8 @@ use crate::{
         modals::{
             input_modal::InputModal,
             menu::{
-                add_to_playlist_or_show_modal,
-                create_add_modal,
-                create_delete_modal,
-                create_rating_modal,
-                create_save_modal,
-                delete_from_playlist_or_show_confirmation,
+                add_to_playlist_or_show_modal, create_add_modal, create_delete_modal,
+                create_rating_modal, create_save_modal, delete_from_playlist_or_show_confirmation,
                 modal::MenuModal,
             },
             select_modal::SelectModal,

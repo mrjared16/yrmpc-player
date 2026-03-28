@@ -1,8 +1,7 @@
 use anyhow::Result;
 
 use crate::backends::youtube::{
-    audio::mpv_source::MpvInput as MpvSourceInput,
-    media::PreparedMedia,
+    audio::mpv_source::MpvInput as MpvSourceInput, media::PreparedMedia,
 };
 
 pub struct PreparedMediaInputAdapter;

@@ -16,12 +16,7 @@ use itertools::Itertools;
 use ratatui::prelude::Rect;
 
 use super::{
-    AlbumArtConfig,
-    Backend,
-    EncodeRequest,
-    ImageBackendRequest,
-    csi_move,
-    facade::IS_SHOWING,
+    AlbumArtConfig, Backend, EncodeRequest, ImageBackendRequest, csi_move, facade::IS_SHOWING,
 };
 use crate::{
     config::{

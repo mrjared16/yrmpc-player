@@ -13,9 +13,11 @@ use crate::{
     backends::youtube::{
         audio::MpvInput,
         media::{MediaPreparer, PreloadTier},
-        server::{playback_coordinator::PlaybackCoordinator, playback_horizon::ResolvedPlaybackHorizon},
         server::orchestrator::PREFETCH_WINDOW_SIZE,
         server::playback_prepare::prepare_media_blocking,
+        server::{
+            playback_coordinator::PlaybackCoordinator, playback_horizon::ResolvedPlaybackHorizon,
+        },
         services::{PlaybackService, QueueService},
     },
     shared::play_queue::{PlayQueue, QueueEvent, QueueId, RepeatMode},
@@ -52,15 +54,15 @@ impl QueueEventHandler {
         self
     }
 
-    pub fn with_playback_coordinator(mut self, coordinator: Arc<Mutex<PlaybackCoordinator>>) -> Self {
+    pub fn with_playback_coordinator(
+        mut self,
+        coordinator: Arc<Mutex<PlaybackCoordinator>>,
+    ) -> Self {
         self.playback_coordinator = Some(coordinator);
         self
     }
 
-    pub fn with_prefix_window_worker_kick(
-        mut self,
-        kick: Arc<dyn Fn() + Send + Sync>,
-    ) -> Self {
+    pub fn with_prefix_window_worker_kick(mut self, kick: Arc<dyn Fn() + Send + Sync>) -> Self {
         self.prefix_window_worker_kick = Some(kick);
         self
     }
@@ -94,7 +96,10 @@ impl QueueEventHandler {
         }
         self.kick_prefix_window_worker_if_started();
 
-        let added_track_ids = filter_background_extract_track_ids(added_track_ids, self.playback_coordinator.as_ref());
+        let added_track_ids = filter_background_extract_track_ids(
+            added_track_ids,
+            self.playback_coordinator.as_ref(),
+        );
         drop(play_queue);
 
         if added_track_ids.is_empty() && play_order.is_empty() {
@@ -184,7 +189,9 @@ impl QueueEventHandler {
         drop(play_queue);
 
         let Some(preparer) = self.media_preparer.as_ref() else {
-            log::warn!("QueueEventHandler missing media preparer; cannot resolve media for {video_id}");
+            log::warn!(
+                "QueueEventHandler missing media preparer; cannot resolve media for {video_id}"
+            );
             return None;
         };
 
@@ -201,12 +208,7 @@ impl QueueEventHandler {
         log::debug!("QueueEvent::CurrentChanged: {from:?} -> {to:?}");
         if let Some(coordinator) = &self.playback_coordinator {
             let play_queue = self.play_queue.lock();
-            sync_coordinator_horizon(
-                coordinator,
-                &play_queue,
-                play_queue.get_play_order(),
-                to,
-            );
+            sync_coordinator_horizon(coordinator, &play_queue, play_queue.get_play_order(), to);
         }
         self.kick_prefix_window_worker_if_started();
     }
@@ -280,9 +282,7 @@ fn sync_coordinator_horizon(
         anchor_track.as_deref(),
     );
 
-    coordinator
-        .lock()
-        .sync_with_queue_observation(observed_current_track, horizon);
+    coordinator.lock().sync_with_queue_observation(observed_current_track, horizon);
 }
 
 fn filter_background_extract_track_ids(
@@ -340,9 +340,7 @@ fn playback_window_start_pos(
         return current_pos;
     }
 
-    current_id
-        .and_then(|id| play_order.iter().position(|&x| x == id))
-        .unwrap_or(0)
+    current_id.and_then(|id| play_order.iter().position(|&x| x == id)).unwrap_or(0)
 }
 
 #[cfg(test)]
@@ -370,7 +368,8 @@ mod tests {
     };
     use crate::domain::Song;
 
-    fn setup_playback_services() -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>) {
+    fn setup_playback_services() -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>)
+    {
         let mpv_guard = acquire_mpv_test_guard();
         let temp_dir = TempDir::new().unwrap();
         let socket = temp_dir.path().join("test-mpv.sock");
@@ -426,11 +425,7 @@ mod tests {
 
         assert_eq!(
             added_track_ids(&play_queue, &ids),
-            vec![
-                "video123".to_string(),
-                "video456".to_string(),
-                "video789".to_string(),
-            ]
+            vec!["video123".to_string(), "video456".to_string(), "video789".to_string(),]
         );
     }
 
@@ -439,7 +434,10 @@ mod tests {
         let mut play_queue = PlayQueue::new();
         let ids = [
             match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "https://www.youtube.com/watch?v=video123".to_string(), ..Song::default() },
+                song: Song {
+                    uri: "https://www.youtube.com/watch?v=video123".to_string(),
+                    ..Song::default()
+                },
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
@@ -463,11 +461,7 @@ mod tests {
 
         assert_eq!(
             normalized_window_track_ids(&play_queue, &ids),
-            vec![
-                "video123".to_string(),
-                "video456".to_string(),
-                "video789".to_string(),
-            ]
+            vec!["video123".to_string(), "video456".to_string(), "video789".to_string(),]
         );
     }
 
@@ -498,11 +492,7 @@ mod tests {
 
         assert_eq!(
             recording.activated_windows.lock().as_slice(),
-            &[vec![
-                "video123".to_string(),
-                "video456".to_string(),
-                "video789".to_string(),
-            ]]
+            &[vec!["video123".to_string(), "video456".to_string(), "video789".to_string(),]]
         );
         assert_eq!(
             recording.prefetched.lock().as_slice(),
@@ -582,31 +572,29 @@ mod tests {
         queue.add(test_song("video222"), None);
         queue.set_current(Some(0));
 
-        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video000"),
-        });
-        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video111"),
-        });
-        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video222"),
-        });
+        play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") });
+        play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") });
+        play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video222") });
 
-        let mut handler = QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
-            .with_media_preparer(preparer);
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer);
 
         queue.add(test_song("video999"), Some(1));
-        let events = play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video999"),
-        });
+        let events = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
         for event in events {
             handler.handle(event);
         }
 
-        assert_eq!(
-            recording.warmed_batches.lock().as_slice(),
-            &[vec!["video999".to_string()]]
-        );
+        assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["video999".to_string()]]);
         assert!(recording.activated_windows.lock().is_empty());
         assert!(recording.prefetched.lock().is_empty());
     }
@@ -633,9 +621,9 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let current_id = match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video000"),
-        })[0]
+        let current_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
         {
             QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
@@ -643,13 +631,14 @@ mod tests {
         play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
         coordinator.lock().begin_immediate_play("video000");
 
-        let mut handler = QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
-            .with_media_preparer(preparer)
-            .with_playback_coordinator(Arc::clone(&coordinator));
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video999"),
-        });
+        let added_event = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
         for event in added_event {
             handler.handle(event);
         }
@@ -668,9 +657,9 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let current_id = match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video000"),
-        })[0]
+        let current_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
         {
             QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
@@ -679,13 +668,14 @@ mod tests {
         coordinator.lock().begin_immediate_play("stale-current");
         coordinator.lock().mark_bytes_started("stale-current");
 
-        let mut handler = QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
-            .with_media_preparer(preparer)
-            .with_playback_coordinator(Arc::clone(&coordinator));
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video999"),
-        });
+        let added_event = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
         for event in added_event {
             handler.handle(event);
         }
@@ -712,9 +702,10 @@ mod tests {
         coordinator.lock().mark_bytes_started("video000");
         assert_eq!(coordinator.lock().claim_next_prefix_job().as_deref(), Some("video111"));
 
-        let mut handler = QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
-            .with_media_preparer(preparer)
-            .with_playback_coordinator(Arc::clone(&coordinator));
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_playback_coordinator(Arc::clone(&coordinator));
 
         handler.handle(QueueEvent::Stopped);
 
@@ -734,39 +725,45 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let stale_current_id = match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video000"),
-        })[0]
+        let stale_current_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
         {
             QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
         };
-        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video111"),
-        });
-        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video222"),
-        });
+        play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") });
+        play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video222") });
         play_queue
             .lock()
             .apply(crate::shared::play_queue::QueueCommand::Play { id: stale_current_id });
 
         coordinator.lock().begin_immediate_play("video111");
 
-        let mut handler = QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
-            .with_media_preparer(preparer)
-            .with_playback_coordinator(Arc::clone(&coordinator));
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Add {
-            song: test_song("video333"),
-        });
+        let added_event = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video333") });
         for event in added_event {
             handler.handle(event);
         }
 
         let snapshot = coordinator.lock().snapshot();
         assert_eq!(snapshot.current_track.as_deref(), Some("video111"));
-        assert_eq!(snapshot.current_owner, Some(crate::backends::youtube::server::playback_coordinator::TrackOwner::ImmediateRelay));
+        assert_eq!(
+            snapshot.current_owner,
+            Some(
+                crate::backends::youtube::server::playback_coordinator::TrackOwner::ImmediateRelay
+            )
+        );
         assert!(!snapshot.playback_started);
         assert_eq!(snapshot.resolved_horizon, vec!["video111", "video222", "video333", "video000"]);
     }

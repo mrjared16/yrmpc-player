@@ -15,8 +15,7 @@ use super::{CommonAction, Pane};
 use crate::{
     QueryResult,
     backends::{
-        BackendActions as _,
-        BackendDispatcher,
+        BackendActions as _, BackendDispatcher,
         youtube::protocol::play_intent::{MixType, PlayIntent},
     },
     config::{
@@ -37,19 +36,13 @@ use crate::{
         mouse_event::{MouseEvent, MouseEventKind, calculate_scrollbar_position},
     },
     ui::{
-        Enqueue,
-        UiAppEvent,
-        UiEvent,
+        Enqueue, UiAppEvent, UiEvent,
         dirstack::Dir,
         modals::{
             input_modal::InputModal,
             menu::{
-                add_to_playlist_or_show_modal,
-                create_add_modal,
-                create_delete_modal,
-                create_rating_modal,
-                create_save_modal,
-                delete_from_playlist_or_show_confirmation,
+                add_to_playlist_or_show_modal, create_add_modal, create_delete_modal,
+                create_rating_modal, create_save_modal, delete_from_playlist_or_show_confirmation,
                 modal::MenuModal,
             },
             select_modal::SelectModal,
@@ -1468,9 +1461,7 @@ impl Pane for SearchPane {
                     // Use rich mode rendering for preview if enabled
                     if ctx.config.theme.list_display.rich_mode {
                         use crate::ui::widgets::item_list::{
-                            ItemListConfig,
-                            ItemListWidget,
-                            ListRenderMode,
+                            ItemListConfig, ItemListWidget, ListRenderMode,
                         };
                         let list_config = ItemListConfig {
                             mode: ListRenderMode::Rich,
@@ -1634,9 +1625,10 @@ impl Pane for SearchPane {
                             // Add section header
                             let mut header = Song::default();
                             header.metadata.insert("type".to_string(), vec!["header".to_string()]);
-                            header.metadata.insert("title".to_string(), vec![
-                                section_display_name(section).to_string(),
-                            ]);
+                            header.metadata.insert(
+                                "title".to_string(),
+                                vec![section_display_name(section).to_string()],
+                            );
                             display_data.push(header);
                             // Add items
                             display_data.extend(items.drain(..));

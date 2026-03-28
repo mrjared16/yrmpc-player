@@ -108,13 +108,16 @@ impl AudioFileManager {
         let file = ProgressiveAudioFile::new(&path, content_length)?;
         let arc_file = Arc::new(file);
 
-        files.insert(video_id.to_string(), ManagedFile {
-            file: Arc::clone(&arc_file),
-            video_id: video_id.to_string(),
-            content_length,
-            last_accessed: std::time::Instant::now(),
-            priority: PrefetchPriority::None,
-        });
+        files.insert(
+            video_id.to_string(),
+            ManagedFile {
+                file: Arc::clone(&arc_file),
+                video_id: video_id.to_string(),
+                content_length,
+                last_accessed: std::time::Instant::now(),
+                priority: PrefetchPriority::None,
+            },
+        );
 
         Ok(arc_file)
     }
