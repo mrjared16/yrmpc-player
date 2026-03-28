@@ -75,16 +75,33 @@ impl YouTubeApi {
         self.api.lock().is_some()
     }
 
-    /// Sanitize user-provided search queries to avoid invalid arguments to the
-    /// YouTube Music API (which can cause HTTP 400 errors).
-    fn sanitize_query(raw: &str) -> Option<String> {
-        let cleaned: String = raw
-            .trim()
-            .chars()
-            .filter(|c| c.is_ascii_graphic() || c.is_ascii_whitespace())
-            .collect();
-        let cleaned = cleaned.trim();
-        if cleaned.is_empty() { None } else { Some(cleaned.to_string()) }
+    /// Normalize user-provided search queries before sending them to the
+    /// YouTube Music API.
+    ///
+    /// Preserve all user-visible Unicode while removing control characters and
+    /// collapsing whitespace so confirmed searches behave consistently with
+    /// autocomplete suggestions.
+    fn normalize_query(raw: &str) -> Option<String> {
+        let mut normalized = String::with_capacity(raw.len());
+        let mut previous_was_whitespace = false;
+
+        for c in raw.trim().chars() {
+            if c.is_control() {
+                continue;
+            }
+
+            if c.is_whitespace() {
+                if !previous_was_whitespace && !normalized.is_empty() {
+                    normalized.push(' ');
+                }
+                previous_was_whitespace = true;
+            } else {
+                normalized.push(c);
+                previous_was_whitespace = false;
+            }
+        }
+
+        if normalized.is_empty() { None } else { Some(normalized) }
     }
 
     /// Search for music - returns structured SearchResults with sections
@@ -96,10 +113,12 @@ impl YouTubeApi {
         use crate::domain::search::{SearchItem, SearchResults, SearchSection};
 
         let raw_query = query;
-        let query = match Self::sanitize_query(raw_query) {
+        let query = match Self::normalize_query(raw_query) {
             Some(q) => q,
             None => {
-                log::debug!("YouTube API: search_items called with empty/invalid query, skipping");
+                log::debug!(
+                    "YouTube API: search_items called with empty query after normalization, skipping"
+                );
                 return Ok(SearchResults::new());
             }
         };
@@ -140,18 +159,17 @@ impl YouTubeApi {
 
     /// Get search suggestions for autocomplete
     pub fn get_suggestions(&self, query: &str) -> Result<Vec<String>> {
-        if query.trim().is_empty() {
+        let Some(query) = Self::normalize_query(query) else {
             return Ok(vec![]);
-        }
+        };
 
         log::debug!("YouTube API: get_suggestions(query='{}')", query);
         let api = self.api.lock().clone().ok_or_else(|| anyhow!("API not initialized"))?;
 
-        let query_str = query.to_string();
         let suggestions = self
             .rt
             .block_on(async move {
-                let suggestion_query = GetSearchSuggestionsQuery::new(query_str);
+                let suggestion_query = GetSearchSuggestionsQuery::new(query);
                 api.query(suggestion_query).await
             })
             .map_err(|e| {
@@ -630,6 +648,33 @@ impl Default for YouTubeApi {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_normalize_query_preserves_unicode() {
+        assert_eq!(YouTubeApi::normalize_query("  hoàng dũng  "), Some("hoàng dũng".to_string()));
+    }
+
+    #[test]
+    fn test_normalize_query_collapses_whitespace() {
+        assert_eq!(
+            YouTubeApi::normalize_query("  hoàng\n\t dũng   live  "),
+            Some("hoàng dũng live".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_query_drops_control_characters() {
+        assert_eq!(
+            YouTubeApi::normalize_query("ho\u{0}àng\u{8} dũng"),
+            Some("hoàng dũng".to_string())
+        );
+    }
+
+    #[test]
+    fn test_normalize_query_rejects_blank_input() {
+        assert_eq!(YouTubeApi::normalize_query(" \n\t "), None);
+        assert_eq!(YouTubeApi::normalize_query("\u{0}\u{8}"), None);
+    }
 
     #[test]
     fn test_parse_duration() {
