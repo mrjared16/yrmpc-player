@@ -54,7 +54,7 @@ dashmap = "6"
 unicode-segmentation = "1.12.0"
 
 # YouTube Music
-ytmapi-rs = { path = "../ytmapi-yrmpc", features = ["preserve-raw-json"] }
+ytmapi-rs = { path = "../ytmapi-yrmpc", features = ["preserve-raw-json", "debug-logging"] }
 # NOTE: Removed rusty_ytdl - now using unified StreamExtractor (pytubefix + yt-dlp fallback)
 tokio = { version = "1", features = ["full"] }
 lru = "0.12"

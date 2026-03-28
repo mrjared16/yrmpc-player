@@ -126,6 +126,9 @@ pub struct ApiConfig {
     /// Cookie file path
     pub cookie_file: Option<PathBuf>,
 
+    /// Directory to dump raw ytmapi requests/responses for debugging.
+    pub request_dump_dir: Option<PathBuf>,
+
     /// Cache duration
     #[serde(with = "humantime_serde")]
     pub cache_duration: Duration,
@@ -179,6 +182,7 @@ impl Default for ApiConfig {
     fn default() -> Self {
         Self {
             cookie_file: None,
+            request_dump_dir: None,
             cache_duration: Duration::from_secs(3600),
             max_search_results: 50,
             extractor: ExtractorType::default(), // ytx by default (fast, ~200ms)

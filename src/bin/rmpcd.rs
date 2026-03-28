@@ -4,7 +4,7 @@ use anyhow::Result;
 use clap::Parser;
 use rmpc::backends::youtube::{
     YouTubeServer,
-    config::{AudioDeliveryMode, ExtractorType, YtDlpExtractorConfig},
+    config::{AudioDeliveryMode, ExtractorType, YouTubeConfig, YtDlpExtractorConfig},
 };
 
 #[derive(Parser, Debug)]
@@ -71,6 +71,20 @@ fn main() -> Result<()> {
         .init();
 
     let args = Args::parse();
+    let youtube_config = match YouTubeConfig::load() {
+        Ok(config) => config,
+        Err(err) => {
+            log::warn!("Failed to load ~/.config/yrmpc/youtube.toml: {err}");
+            YouTubeConfig::default()
+        }
+    };
+
+    if std::env::var_os("YTMAPI_DEBUG_DIR").is_none() {
+        if let Some(dump_dir) = youtube_config.api.request_dump_dir.clone() {
+            ytmapi_rs::debug::set_debug_dir(dump_dir.clone());
+            log::info!("Enabled ytmapi request dumps in {:?}", dump_dir);
+        }
+    }
 
     let cookie_path = args.cookies.or_else(find_default_cookie_file);
 
@@ -97,10 +111,7 @@ fn main() -> Result<()> {
         extractor_type,
         audio_delivery_mode,
         YtDlpExtractorConfig {
-            cookies_path: cookie_path
-                .as_deref()
-                .and_then(|path| path.to_str())
-                .map(str::to_owned),
+            cookies_path: cookie_path.as_deref().and_then(|path| path.to_str()).map(str::to_owned),
         },
     )?;
 
@@ -130,5 +141,4 @@ mod tests {
         assert_eq!(parse_audio_delivery_mode("passthrough"), AudioDeliveryMode::Direct);
         assert_eq!(parse_audio_delivery_mode("proxy"), AudioDeliveryMode::Relay);
     }
-
 }
