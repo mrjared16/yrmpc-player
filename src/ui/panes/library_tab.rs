@@ -173,13 +173,8 @@ impl NavigatorPane for LibraryTabPane {
                     return Ok(PaneAction::Handled);
                 }
 
-                if Self::is_char(key, 'n') {
-                    self.list_view.filter_next_match();
-                    key.stop_propagation();
-                    return Ok(PaneAction::Handled);
-                }
-                if Self::is_char(key, 'N') {
-                    self.list_view.filter_prev_match();
+                if matches!(key.code(), KeyCode::Tab) {
+                    self.list_view.confirm_find_and_jump_to_next();
                     key.stop_propagation();
                     return Ok(PaneAction::Handled);
                 }

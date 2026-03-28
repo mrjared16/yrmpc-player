@@ -25,10 +25,11 @@ cargo build
 **Verify changes**:
 
 ```bash
-cargo fmt
 cargo clippy
 cargo nextest run
 ```
+
+> Formatting rule: never run `cargo fmt` in `rmpc/` unless the user explicitly asks for it.
 
 > Use debug builds for normal development. Only use `--release` after the user has verified behavior and you need release-only validation.
 
@@ -39,6 +40,7 @@ cargo nextest run
 - `rmpc/` **is** the cargo root for the main application.
 - Run cargo commands from this directory, not from the parent repo root.
 - Prefer `cargo nextest run` over `cargo test` for normal verification.
+- Never run `cargo fmt` unless the user explicitly requests formatting.
 
 Examples:
 
@@ -90,5 +92,6 @@ cargo nextest run
 
 - Don’t reintroduce old `backlog` workflow instructions; this repo uses `br` from the parent project guidance.
 - Don’t run cargo from the parent repo root.
+- Don’t run `cargo fmt` proactively; it creates broad formatting churn in this repo.
 - Don’t treat `MusicBackend` as the preferred abstraction; use the newer API traits documented in `../AGENTS.md`.
 - Don’t assume old playback docs are canonical; prefer `../docs/arch/playback-flow.md`.

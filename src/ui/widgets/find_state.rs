@@ -7,6 +7,7 @@
 //! to better reflect vim terminology (/ to find, n/N to navigate).
 
 use crate::domain::display::ListItemDisplay;
+use crate::shared::string_util::fold_for_match;
 
 /// Find state for list views (vim-style / search)
 ///
@@ -40,7 +41,7 @@ impl FindState {
 
     /// Create with initial find text
     pub fn with_text(text: &str) -> Self {
-        Self { find_text: text.to_string(), matched_indices: Vec::new(), current_match: 0 }
+        Self { find_text: text.to_string(), ..Self::default() }
     }
 
     // ========== TEXT EDITING ==========
@@ -81,7 +82,7 @@ impl FindState {
 
     /// Apply find to items and compute matched indices
     ///
-    /// Uses case-insensitive substring matching on primary_text.
+    /// Uses case-insensitive, diacritic-insensitive substring matching.
     pub fn apply<T: ListItemDisplay>(&mut self, items: &[T]) {
         self.matched_indices.clear();
 
@@ -90,7 +91,11 @@ impl FindState {
             return;
         }
 
-        let find_lower = self.find_text.to_lowercase();
+        let folded_query = fold_for_match(&self.find_text);
+        if folded_query.is_empty() {
+            self.current_match = 0;
+            return;
+        }
 
         for (idx, item) in items.iter().enumerate() {
             // Only match focusable items
@@ -98,17 +103,8 @@ impl FindState {
                 continue;
             }
 
-            let primary = item.primary_text().to_lowercase();
-            if primary.contains(&find_lower) {
+            if item.matches_folded_query(&folded_query) {
                 self.matched_indices.push(idx);
-                continue;
-            }
-
-            // Also check secondary text
-            if let Some(secondary) = item.secondary_text() {
-                if secondary.to_lowercase().contains(&find_lower) {
-                    self.matched_indices.push(idx);
-                }
             }
         }
 
@@ -189,19 +185,23 @@ impl FindState {
 
 #[cfg(test)]
 mod tests {
-    use std::borrow::Cow;
-
     use super::*;
+    use std::borrow::Cow;
 
     #[derive(Debug)]
     struct TestItem {
         text: String,
+        secondary: Option<String>,
         focusable: bool,
     }
 
     impl ListItemDisplay for TestItem {
         fn primary_text(&self) -> Cow<'_, str> {
             Cow::Borrowed(&self.text)
+        }
+
+        fn secondary_text(&self) -> Option<Cow<'_, str>> {
+            self.secondary.as_deref().map(Cow::Borrowed)
         }
 
         fn is_focusable(&self) -> bool {
@@ -212,9 +212,9 @@ mod tests {
     #[test]
     fn apply_finds_matches_case_insensitive() {
         let items = vec![
-            TestItem { text: "Hello World".into(), focusable: true },
-            TestItem { text: "Goodbye World".into(), focusable: true },
-            TestItem { text: "Hello Again".into(), focusable: true },
+            TestItem { text: "Hello World".into(), secondary: None, focusable: true },
+            TestItem { text: "Goodbye World".into(), secondary: None, focusable: true },
+            TestItem { text: "Hello Again".into(), secondary: None, focusable: true },
         ];
 
         let mut find = FindState::with_text("hello");
@@ -229,8 +229,8 @@ mod tests {
     #[test]
     fn skips_unfocusable_items() {
         let items = vec![
-            TestItem { text: "Header: Hello".into(), focusable: false },
-            TestItem { text: "Hello World".into(), focusable: true },
+            TestItem { text: "Header: Hello".into(), secondary: None, focusable: false },
+            TestItem { text: "Hello World".into(), secondary: None, focusable: true },
         ];
 
         let mut find = FindState::with_text("hello");
@@ -244,9 +244,9 @@ mod tests {
     #[test]
     fn next_match_cycles() {
         let items = vec![
-            TestItem { text: "A".into(), focusable: true },
-            TestItem { text: "B".into(), focusable: true },
-            TestItem { text: "A again".into(), focusable: true },
+            TestItem { text: "A".into(), secondary: None, focusable: true },
+            TestItem { text: "B".into(), secondary: None, focusable: true },
+            TestItem { text: "A again".into(), secondary: None, focusable: true },
         ];
 
         let mut find = FindState::with_text("A");
@@ -260,9 +260,9 @@ mod tests {
     #[test]
     fn display_string_formats_correctly() {
         let items = vec![
-            TestItem { text: "Match".into(), focusable: true },
-            TestItem { text: "Match".into(), focusable: true },
-            TestItem { text: "Match".into(), focusable: true },
+            TestItem { text: "Match".into(), secondary: None, focusable: true },
+            TestItem { text: "Match".into(), secondary: None, focusable: true },
+            TestItem { text: "Match".into(), secondary: None, focusable: true },
         ];
 
         let mut find = FindState::with_text("Match");
@@ -271,5 +271,41 @@ mod tests {
         assert_eq!(find.display_string(), "/Match [1/3]");
         find.next_match();
         assert_eq!(find.display_string(), "/Match [2/3]");
+    }
+
+    #[test]
+    fn apply_finds_matches_diacritic_insensitive() {
+        let items = vec![
+            TestItem { text: "hoàng dũng".into(), secondary: None, focusable: true },
+            TestItem { text: "Đặng Thái Sơn".into(), secondary: None, focusable: true },
+            TestItem { text: "khác".into(), secondary: None, focusable: true },
+        ];
+
+        let mut find = FindState::with_text("dang");
+        find.apply(&items);
+
+        assert_eq!(find.match_count(), 1);
+        assert!(find.is_match(1));
+
+        find.set_text("hoang".into());
+        find.apply(&items);
+
+        assert_eq!(find.match_count(), 1);
+        assert!(find.is_match(0));
+    }
+
+    #[test]
+    fn apply_matches_secondary_text_diacritic_insensitive() {
+        let items = vec![TestItem {
+            text: "Bài hát".into(),
+            secondary: Some("Hoàng Dũng · Live".into()),
+            focusable: true,
+        }];
+
+        let mut find = FindState::with_text("hoang");
+        find.apply(&items);
+
+        assert_eq!(find.match_count(), 1);
+        assert!(find.is_match(0));
     }
 }

@@ -15,7 +15,7 @@ use ratatui::{
 };
 
 use super::element::Element;
-use crate::{ctx::Ctx, domain::display::ListItemDisplay};
+use crate::{ctx::Ctx, domain::display::ListItemDisplay, shared::string_util::fold_for_match};
 
 /// Minimum terminal width for rich mode (columns)
 const MIN_RICH_MODE_WIDTH: u16 = 60;
@@ -65,6 +65,7 @@ pub struct ItemListWidget<'a, T> {
     playing_style: Style,
     filter_match_style: Style,
     filter: Option<&'a str>,
+    filter_match_indices: Option<&'a [usize]>,
     ctx: &'a Ctx,
 }
 
@@ -79,8 +80,15 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
             playing_style: Style::default().add_modifier(Modifier::BOLD),
             filter_match_style: Style::default().fg(Color::Blue),
             filter: None,
+            filter_match_indices: None,
             ctx,
         }
+    }
+
+    /// Set the filter string for highlight matching.
+    pub fn filter(mut self, filter: Option<&'a str>) -> Self {
+        self.filter = filter;
+        self
     }
 
     pub fn config(mut self, config: ItemListConfig) -> Self {
@@ -103,9 +111,9 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
         self
     }
 
-    /// Set the filter string for highlight matching
-    pub fn filter(mut self, filter: Option<&'a str>) -> Self {
-        self.filter = filter;
+    /// Set the matched indices for filter highlighting.
+    pub fn filter_match_indices(mut self, filter_match_indices: Option<&'a [usize]>) -> Self {
+        self.filter_match_indices = filter_match_indices;
         self
     }
 
@@ -153,6 +161,7 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
         use ratatui::style::Color;
 
         let row_height = self.config.row_height;
+        let folded_filter = self.filter.map(fold_for_match);
 
         // Calculate viewport capacity and ensure selected item is visible
         let selected = state.selected().unwrap_or(0);
@@ -228,11 +237,12 @@ impl<'a, T: ListItemDisplay> ItemListWidget<'a, T> {
                 buf.set_string(row_rect.x, row_rect.y, &display_str, header_style);
             } else {
                 // NORMAL ITEM: Check filter match
-                let matches_filter = if let Some(filter) = self.filter {
-                    !filter.is_empty() && item.filter_matches(filter)
-                } else {
-                    false
-                };
+                let matches_filter = self
+                    .filter_match_indices
+                    .is_some_and(|indices| indices.binary_search(&item_idx).is_ok())
+                    || folded_filter
+                        .as_deref()
+                        .is_some_and(|folded_query| item.matches_folded_query(folded_query));
 
                 // Apply selection highlight to entire row
                 if is_selected {

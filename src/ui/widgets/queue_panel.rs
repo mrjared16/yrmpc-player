@@ -15,7 +15,10 @@ use ratatui::{
 use super::item_list::{ItemListConfig, ItemListWidget, ListRenderMode};
 use crate::{
     ctx::Ctx,
-    domain::{Song, display::ListItemDisplay},
+    domain::{
+        Song,
+        display::{ListItemDisplay, SearchKey},
+    },
 };
 
 /// Wrapper that provides ListItemDisplay with playing context for panel
@@ -53,6 +56,14 @@ impl ListItemDisplay for PanelSongView<'_> {
 
     fn is_playing(&self) -> bool {
         self.is_current
+    }
+
+    fn search_key(&self) -> SearchKey {
+        self.song.search_key()
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        self.song.matches_folded_query(folded_query)
     }
 }
 

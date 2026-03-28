@@ -47,6 +47,7 @@
 use std::time::Duration;
 
 use super::{DetailItem, Song};
+use crate::domain::display::SearchKey;
 
 // =============================================================================
 // CONTENT DETAILS ENUM
@@ -495,14 +496,21 @@ pub struct ContentRef {
     pub thumbnail: Option<String>,
     /// Secondary text (year, track count, author, etc.)
     pub subtitle: Option<String>,
+    pub search_key: SearchKey,
 }
 
 impl ContentRef {
+    fn rebuild_search_key(&mut self) {
+        self.search_key = SearchKey::from_display(&self.name, self.subtitle.as_deref());
+    }
+
     /// Create a new content reference.
     pub fn new(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let name = name.into();
         Self {
             id: id.into(),
-            name: name.into(),
+            search_key: SearchKey::from_display(&name, None),
+            name,
             content_type: ContentType::default(),
             thumbnail: None,
             subtitle: None,
@@ -511,9 +519,11 @@ impl ContentRef {
 
     /// Create an artist reference.
     pub fn artist(id: impl Into<String>, name: impl Into<String>) -> Self {
+        let name = name.into();
         Self {
             id: id.into(),
-            name: name.into(),
+            search_key: SearchKey::from_display(&name, None),
+            name,
             content_type: ContentType::Artist,
             thumbnail: None,
             subtitle: None,
@@ -522,9 +532,11 @@ impl ContentRef {
 
     /// Create an album reference.
     pub fn album(id: impl Into<String>, title: impl Into<String>) -> Self {
+        let title = title.into();
         Self {
             id: id.into(),
-            name: title.into(),
+            search_key: SearchKey::from_display(&title, None),
+            name: title,
             content_type: ContentType::Album,
             thumbnail: None,
             subtitle: None,
@@ -533,9 +545,11 @@ impl ContentRef {
 
     /// Create a playlist reference.
     pub fn playlist(id: impl Into<String>, title: impl Into<String>) -> Self {
+        let title = title.into();
         Self {
             id: id.into(),
-            name: title.into(),
+            search_key: SearchKey::from_display(&title, None),
+            name: title,
             content_type: ContentType::Playlist,
             thumbnail: None,
             subtitle: None,
@@ -551,6 +565,7 @@ impl ContentRef {
     /// Add subtitle.
     pub fn with_subtitle(mut self, text: impl Into<String>) -> Self {
         self.subtitle = Some(text.into());
+        self.rebuild_search_key();
         self
     }
 }
@@ -583,6 +598,14 @@ impl super::display::ListItemDisplay for ContentRef {
 
     fn is_focusable(&self) -> bool {
         true
+    }
+
+    fn search_key(&self) -> SearchKey {
+        self.search_key.clone()
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        self.search_key.matches(folded_query)
     }
 }
 

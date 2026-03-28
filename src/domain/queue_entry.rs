@@ -88,6 +88,7 @@ mod tests {
             thumbnail: None,
             explicit: false,
             radio_playlist_id: None,
+            search_key: Default::default(),
         };
 
         let entry = QueueEntry::new(PlayableItem::Song(song));

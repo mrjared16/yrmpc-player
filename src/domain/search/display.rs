@@ -171,7 +171,7 @@ use std::borrow::Cow;
 
 use ratatui::style::{Color, Style};
 
-use crate::domain::display::ListItemDisplay;
+use crate::domain::display::{ListItemDisplay, SearchKey};
 
 impl ListItemDisplay for SearchItem {
     fn primary_text(&self) -> Cow<'_, str> {
@@ -214,6 +214,26 @@ impl ListItemDisplay for SearchItem {
             Self::Browsable(_) => None,
         }
     }
+
+    fn search_key(&self) -> SearchKey {
+        match self {
+            Self::Playable(PlayableItem::Song(item)) => item.search_key.clone(),
+            Self::Playable(PlayableItem::Video(item)) => item.search_key.clone(),
+            Self::Browsable(BrowsableItem::Artist(item)) => item.search_key.clone(),
+            Self::Browsable(BrowsableItem::Album(item)) => item.search_key.clone(),
+            Self::Browsable(BrowsableItem::Playlist(item)) => item.search_key.clone(),
+        }
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        match self {
+            Self::Playable(PlayableItem::Song(item)) => item.search_key.matches(folded_query),
+            Self::Playable(PlayableItem::Video(item)) => item.search_key.matches(folded_query),
+            Self::Browsable(BrowsableItem::Artist(item)) => item.search_key.matches(folded_query),
+            Self::Browsable(BrowsableItem::Album(item)) => item.search_key.matches(folded_query),
+            Self::Browsable(BrowsableItem::Playlist(item)) => item.search_key.matches(folded_query),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -237,6 +257,7 @@ mod tests {
             thumbnail: None,
             explicit: false,
             radio_playlist_id: None,
+            search_key: SearchKey::from_display("Test Song", Some("Test Artist · Test Album")),
         };
         let playable = PlayableItem::Song(song);
 

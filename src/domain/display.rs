@@ -7,6 +7,41 @@ use std::borrow::Cow;
 
 use ratatui::style::Style;
 
+use crate::shared::string_util::fold_for_match;
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SearchKey {
+    primary: String,
+    secondary: Option<String>,
+}
+
+impl SearchKey {
+    #[must_use]
+    pub fn new(primary: impl Into<String>, secondary: Option<String>) -> Self {
+        Self { primary: primary.into(), secondary }
+    }
+
+    #[must_use]
+    pub fn from_display(primary: &str, secondary: Option<&str>) -> Self {
+        Self::new(fold_for_match(primary), secondary.map(fold_for_match))
+    }
+
+    #[must_use]
+    pub fn matches(&self, folded_query: &str) -> bool {
+        !folded_query.is_empty()
+            && (self.primary.contains(folded_query)
+                || self
+                    .secondary
+                    .as_ref()
+                    .is_some_and(|secondary| secondary.contains(folded_query)))
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.primary.is_empty() && self.secondary.as_ref().is_none_or(String::is_empty)
+    }
+}
+
 /// Unified display trait for items rendered in lists.
 ///
 /// Implementors provide data extraction; the widget handles layout and
@@ -85,21 +120,19 @@ pub trait ListItemDisplay {
         !self.is_header()
     }
 
-    /// Check if this item matches the filter string (case-insensitive).
-    /// Checks both primary_text (title) and secondary_text (artist/album).
-    /// Used for filter highlighting in rich mode.
-    fn filter_matches(&self, filter: &str) -> bool {
-        let filter_lower = filter.to_lowercase();
-        // Check primary text (title)
-        if self.primary_text().to_lowercase().contains(&filter_lower) {
-            return true;
-        }
-        // Check secondary text (artist/album)
-        if let Some(secondary) = self.secondary_text() {
-            if secondary.to_lowercase().contains(&filter_lower) {
-                return true;
-            }
-        }
-        false
+    /// Searchable text folded for fast matching.
+    ///
+    /// Override this to return cached/precomputed searchable text for stable
+    /// item types.
+    fn search_key(&self) -> SearchKey {
+        SearchKey::from_display(
+            self.primary_text().as_ref(),
+            self.secondary_text().as_deref().map(str::trim),
+        )
+    }
+
+    /// Check if this item matches a folded query string.
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        self.search_key().matches(folded_query)
     }
 }

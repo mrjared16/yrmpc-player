@@ -47,7 +47,9 @@ fn song_from_playable(p: &super::protocol::PlayableData, item_type: &str) -> Son
         metadata,
         last_modified: None,
         added: None,
+        search_key: Default::default(),
     }
+    .with_search_key()
 }
 
 fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> Song {
@@ -67,7 +69,9 @@ fn song_from_browsable(b: &super::protocol::BrowsableData, item_type: &str) -> S
         metadata,
         last_modified: None,
         added: None,
+        search_key: Default::default(),
     }
+    .with_search_key()
 }
 
 /// Parse a flat list of MediaItems (with Header markers) into structured

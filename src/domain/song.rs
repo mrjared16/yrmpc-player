@@ -3,6 +3,9 @@ use std::{collections::HashMap, time::Duration};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 
+use crate::domain::display::SearchKey;
+use crate::shared::string_util::fold_for_match;
+
 /// Domain model for a song/track
 /// Backend-agnostic - can be populated from MPD, YouTube Music, Spotify, etc.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -31,6 +34,10 @@ pub struct Song {
 
     /// When the song was added to the library/playlist (if applicable)
     pub added: Option<DateTime<Utc>>,
+
+    /// Folded search data for fast `/` matching.
+    #[serde(skip, default)]
+    pub search_key: SearchKey,
 }
 
 impl Default for Song {
@@ -42,6 +49,7 @@ impl Default for Song {
             metadata: HashMap::new(),
             last_modified: None,
             added: None,
+            search_key: SearchKey::default(),
         }
     }
 }
@@ -60,6 +68,31 @@ impl Song {
     /// Get the album from metadata
     pub fn album(&self) -> Option<&str> {
         self.metadata.get("album").and_then(|v| v.first()).map(|s| s.as_str())
+    }
+
+    fn computed_search_key(&self) -> SearchKey {
+        let secondary = self
+            .metadata
+            .get("subtitle")
+            .and_then(|v| v.first())
+            .map(|subtitle| fold_for_match(subtitle))
+            .or_else(|| match (self.artist(), self.album()) {
+                (Some(a), Some(b)) => Some(fold_for_match(&format!("{} · {}", a, b))),
+                (Some(a), None) => Some(fold_for_match(a)),
+                (None, Some(b)) => Some(fold_for_match(b)),
+                (None, None) => None,
+            });
+        SearchKey::new(fold_for_match(self.title()), secondary)
+    }
+
+    pub fn refresh_search_key(&mut self) {
+        self.search_key = self.computed_search_key();
+    }
+
+    #[must_use]
+    pub fn with_search_key(mut self) -> Self {
+        self.refresh_search_key();
+        self
     }
 }
 
@@ -90,7 +123,9 @@ impl From<crate::mpd::commands::current_song::Song> for Song {
             metadata,
             last_modified: Some(mpd_song.last_modified),
             added: mpd_song.added,
+            search_key: SearchKey::default(),
         }
+        .with_search_key()
     }
 }
 
@@ -182,6 +217,22 @@ impl ListItemDisplay for Song {
     fn is_header(&self) -> bool {
         self.item_type() == Some("header")
     }
+
+    fn search_key(&self) -> SearchKey {
+        if self.search_key.is_empty() {
+            self.computed_search_key()
+        } else {
+            self.search_key.clone()
+        }
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        if self.search_key.is_empty() {
+            self.computed_search_key().matches(folded_query)
+        } else {
+            self.search_key.matches(folded_query)
+        }
+    }
 }
 
 // =============================================================================
@@ -205,6 +256,7 @@ mod tests {
             metadata,
             last_modified: None,
             added: None,
+            search_key: SearchKey::default(),
         }
     }
 
@@ -268,6 +320,7 @@ mod tests {
             metadata,
             last_modified: None,
             added: None,
+            search_key: SearchKey::default(),
         };
         assert_eq!(song.thumbnail_url(), Some("https://example.com/cover.jpg"));
     }

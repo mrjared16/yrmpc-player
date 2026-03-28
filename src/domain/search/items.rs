@@ -2,7 +2,7 @@
 
 use std::{collections::HashMap, time::Duration};
 
-use crate::domain::Song;
+use crate::domain::{Song, display::SearchKey};
 
 /// A song from search results
 #[derive(Debug, Clone, PartialEq)]
@@ -18,6 +18,7 @@ pub struct SongItem {
     /// search and can be used to auto-populate the queue with related
     /// tracks
     pub radio_playlist_id: Option<String>,
+    pub search_key: SearchKey,
 }
 
 /// A video from search results
@@ -29,6 +30,7 @@ pub struct VideoItem {
     pub views: Option<String>,
     pub duration: Option<Duration>,
     pub thumbnail: Option<String>,
+    pub search_key: SearchKey,
 }
 
 /// An artist from search results
@@ -39,6 +41,7 @@ pub struct ArtistItem {
     pub name: String,
     pub subscribers: Option<String>,
     pub thumbnail: Option<String>,
+    pub search_key: SearchKey,
 }
 
 /// An album from search results
@@ -51,6 +54,7 @@ pub struct AlbumItem {
     pub album_type: Option<String>,
     pub thumbnail: Option<String>,
     pub explicit: bool,
+    pub search_key: SearchKey,
 }
 
 /// A playlist from search results
@@ -61,6 +65,7 @@ pub struct PlaylistItem {
     pub author: String,
     pub track_count: Option<String>,
     pub thumbnail: Option<String>,
+    pub search_key: SearchKey,
 }
 
 // ============ Conversions to domain::Song for queue ============
@@ -86,6 +91,7 @@ impl From<&SongItem> for Song {
             metadata,
             last_modified: None,
             added: None,
+            search_key: item.search_key.clone(),
         }
     }
 }
@@ -108,6 +114,7 @@ impl From<&VideoItem> for Song {
             metadata,
             last_modified: None,
             added: None,
+            search_key: item.search_key.clone(),
         }
     }
 }
@@ -125,6 +132,7 @@ impl Default for SongItem {
             thumbnail: None,
             explicit: false,
             radio_playlist_id: None,
+            search_key: SearchKey::default(),
         }
     }
 }
@@ -138,13 +146,20 @@ impl Default for VideoItem {
             views: None,
             duration: None,
             thumbnail: None,
+            search_key: SearchKey::default(),
         }
     }
 }
 
 impl Default for ArtistItem {
     fn default() -> Self {
-        Self { browse_id: None, name: String::new(), subscribers: None, thumbnail: None }
+        Self {
+            browse_id: None,
+            name: String::new(),
+            subscribers: None,
+            thumbnail: None,
+            search_key: SearchKey::default(),
+        }
     }
 }
 
@@ -158,6 +173,7 @@ impl Default for AlbumItem {
             album_type: None,
             thumbnail: None,
             explicit: false,
+            search_key: SearchKey::default(),
         }
     }
 }
@@ -170,6 +186,7 @@ impl Default for PlaylistItem {
             author: String::new(),
             track_count: None,
             thumbnail: None,
+            search_key: SearchKey::default(),
         }
     }
 }

@@ -59,7 +59,7 @@ use ratatui::style::{Color, Style};
 
 use super::{
     content::{ContentRef, ContentType},
-    display::ListItemDisplay,
+    display::{ListItemDisplay, SearchKey},
     search::{BrowsableItem, PlayableItem, SearchItem},
     song::Song,
 };
@@ -107,9 +107,11 @@ impl DetailItem {
     /// Note: In the new architecture, headers should be in ListItem::Header,
     /// but sometimes we need to round-trip through DetailItem.
     pub fn header(title: impl Into<String>) -> Self {
+        let title = title.into();
         Self::Ref(ContentRef {
             id: String::new(),
-            name: title.into(),
+            search_key: SearchKey::from_display(&title, None),
+            name: title,
             content_type: ContentType::Header,
             thumbnail: None,
             subtitle: None,
@@ -270,6 +272,20 @@ impl ListItemDisplay for DetailItem {
         // Headers are not focusable
         !self.is_header()
     }
+
+    fn search_key(&self) -> SearchKey {
+        match self {
+            Self::Song(song) => song.search_key(),
+            Self::Ref(r) => r.search_key(),
+        }
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        match self {
+            Self::Song(song) => song.matches_folded_query(folded_query),
+            Self::Ref(r) => r.matches_folded_query(folded_query),
+        }
+    }
 }
 
 // =============================================================================
@@ -306,6 +322,7 @@ impl From<PlayableItem> for DetailItem {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: s.search_key.clone(),
                 })
             }
             PlayableItem::Video(v) => {
@@ -323,6 +340,7 @@ impl From<PlayableItem> for DetailItem {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: v.search_key.clone(),
                 })
             }
         }
@@ -338,6 +356,7 @@ impl From<BrowsableItem> for DetailItem {
                 content_type: ContentType::Artist,
                 thumbnail: a.thumbnail.clone(),
                 subtitle: a.subscribers.clone(),
+                search_key: a.search_key.clone(),
             }),
             BrowsableItem::Album(a) => DetailItem::Ref(ContentRef {
                 id: a.album_id.clone(),
@@ -345,6 +364,7 @@ impl From<BrowsableItem> for DetailItem {
                 content_type: ContentType::Album,
                 thumbnail: a.thumbnail.clone(),
                 subtitle: Some(a.artist.clone()),
+                search_key: a.search_key.clone(),
             }),
             BrowsableItem::Playlist(p) => DetailItem::Ref(ContentRef {
                 id: p.playlist_id.clone(),
@@ -352,6 +372,7 @@ impl From<BrowsableItem> for DetailItem {
                 content_type: ContentType::Playlist,
                 thumbnail: p.thumbnail.clone(),
                 subtitle: Some(p.author.clone()),
+                search_key: p.search_key.clone(),
             }),
         }
     }
@@ -389,6 +410,7 @@ impl From<MediaItem> for DetailItem {
                 if let DetailItem::Ref(ref mut r) = item {
                     r.subtitle = a.subscribers;
                     r.thumbnail = a.thumbnail;
+                    r.search_key = SearchKey::from_display(&r.name, r.subtitle.as_deref());
                 }
                 item
             }
@@ -397,6 +419,7 @@ impl From<MediaItem> for DetailItem {
                 if let DetailItem::Ref(ref mut r) = item {
                     r.subtitle = a.artist;
                     r.thumbnail = a.thumbnail;
+                    r.search_key = SearchKey::from_display(&r.name, r.subtitle.as_deref());
                 }
                 item
             }
@@ -405,6 +428,7 @@ impl From<MediaItem> for DetailItem {
                 if let DetailItem::Ref(ref mut r) = item {
                     r.subtitle = p.author;
                     r.thumbnail = p.thumbnail;
+                    r.search_key = SearchKey::from_display(&r.name, r.subtitle.as_deref());
                 }
                 item
             }
@@ -417,6 +441,7 @@ impl From<MediaItem> for DetailItem {
                     content_type: ContentType::Header,
                     thumbnail: None,
                     subtitle: None,
+                    search_key: SearchKey::default(),
                 })
             }
         }
@@ -465,6 +490,7 @@ mod tests {
             name: "The Beatles".into(),
             subscribers: Some("1M subscribers".into()),
             thumbnail: Some("https://example.com/thumb.jpg".into()),
+            search_key: SearchKey::from_display("The Beatles", Some("1M subscribers")),
         };
 
         let search_item = SearchItem::Browsable(BrowsableItem::Artist(artist_item));
@@ -489,6 +515,7 @@ mod tests {
             album_type: Some("Album".into()),
             thumbnail: Some("https://example.com/cover.jpg".into()),
             explicit: false,
+            search_key: SearchKey::from_display("Abbey Road", Some("The Beatles")),
         };
 
         let search_item = SearchItem::Browsable(BrowsableItem::Album(album_item));
@@ -517,6 +544,7 @@ mod tests {
             metadata,
             last_modified: None,
             added: None,
+            search_key: SearchKey::default(),
         };
 
         let item = DetailItem::from(song);

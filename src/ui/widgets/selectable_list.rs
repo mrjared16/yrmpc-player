@@ -91,8 +91,12 @@ impl<T: ListItemDisplay> ListItemDisplay for HighlightedItem<'_, T> {
         self.item.icon_style()
     }
 
-    fn filter_matches(&self, filter: &str) -> bool {
-        self.item.filter_matches(filter)
+    fn search_key(&self) -> crate::domain::display::SearchKey {
+        self.item.search_key()
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        self.item.matches_folded_query(folded_query)
     }
 }
 
@@ -337,9 +341,22 @@ impl SelectableList {
     /// Exit Find mode, optionally keeping the highlights
     pub fn exit_find_mode(&mut self, keep_highlights: bool) {
         self.mode = InputMode::Normal;
-        if !keep_highlights {
+        let keep_active_search =
+            keep_highlights && self.filter.as_ref().is_some_and(|filter| !filter.text().is_empty());
+        if !keep_active_search {
             self.filter = None;
         }
+    }
+
+    /// Confirm the active find and jump to the next match.
+    pub fn confirm_find_and_jump_to_next(&mut self) {
+        if let Some(ref mut filter) = self.filter {
+            if let Some(idx) = filter.next_match().or_else(|| filter.current_match_idx()) {
+                self.state.select(Some(idx), 0);
+                self.list_state.select(Some(idx));
+            }
+        }
+        self.exit_find_mode(true);
     }
 
     /// Handle Esc key with proper priority
@@ -351,8 +368,7 @@ impl SelectableList {
     pub fn handle_esc(&mut self) -> EscResult {
         // Priority 1: Exit Find mode
         if self.mode == InputMode::Find {
-            self.mode = InputMode::Normal;
-            self.filter = None;
+            self.exit_find_mode(true);
             return EscResult::Handled;
         }
 
@@ -438,17 +454,18 @@ impl SelectableList {
         if self.mode == InputMode::Find {
             match key.code() {
                 KeyCode::Esc => {
-                    self.exit_find_mode(false);
+                    self.exit_find_mode(true);
                     key.stop_propagation();
                     return ListAction::Handled;
                 }
                 KeyCode::Enter => {
                     self.exit_find_mode(true);
                     key.stop_propagation();
-                    // Return activate on the current selection
-                    if let Some(idx) = self.selected() {
-                        return ListAction::Activate(idx);
-                    }
+                    return ListAction::Handled;
+                }
+                KeyCode::Tab => {
+                    self.confirm_find_and_jump_to_next();
+                    key.stop_propagation();
                     return ListAction::Handled;
                 }
                 KeyCode::Backspace => {
@@ -736,6 +753,26 @@ impl SelectableList {
         }
     }
 
+    fn sync_filter_to_items<T: ListItemDisplay>(&mut self, items: &[T]) {
+        let previous_selection = self.selected();
+        let Some(ref mut filter) = self.filter else {
+            return;
+        };
+        filter.apply(items);
+
+        if let Some(selected_idx) = previous_selection.filter(|&idx| idx < items.len()) {
+            if filter.is_match(selected_idx) {
+                filter.jump_to_idx(selected_idx);
+                return;
+            }
+        }
+
+        if let Some(idx) = filter.current_match_idx() {
+            self.state.select(Some(idx), 0);
+            self.list_state.select(Some(idx));
+        }
+    }
+
     /// Get filter match display string like "[2/15]"
     pub fn filter_display(&self) -> Option<String> {
         self.filter.as_ref().map(|f| f.display_string())
@@ -771,6 +808,8 @@ impl SelectableList {
         T: ListItemDisplay,
         F: Fn(usize, &T) -> bool,
     {
+        self.sync_filter_to_items(items);
+
         // Update state with content and viewport info
         let viewport_height = area.height.saturating_sub(2) as usize; // Account for borders
         self.state.set_content_and_viewport_len(items.len(), viewport_height);
@@ -792,13 +831,12 @@ impl SelectableList {
         let item_config =
             ItemListConfig { mode: ListRenderMode::Rich, thumbnail_width: 4, row_height: 2 };
 
-        // Extract filter text as owned String to avoid borrow issues
-        let filter_text = self.filter_text().map(|s| s.to_string());
+        let filter_match_indices = self.filter.as_ref().map(FindState::matched_indices);
 
         let widget = ItemListWidget::new(&highlighted_items, ctx)
             .config(item_config)
             .highlight_style(config.theme.current_item_style)
-            .filter(filter_text.as_deref());
+            .filter_match_indices(filter_match_indices);
 
         // Sync list_state
         self.list_state.select(self.state.selected());
@@ -1068,5 +1106,129 @@ mod tests {
             Some("N"),
             "BUG: Pressing 'N' in Find mode should add 'N' to filter"
         );
+    }
+
+    #[test]
+    fn esc_in_find_mode_confirms_search() {
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        use crate::{shared::key_event::KeyEvent, tests::fixtures::ctx};
+
+        let items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.enter_find_mode(&items, "ap");
+
+        let mut key = KeyEvent::from(CKeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let ctx = ctx();
+        let action = view.handle_key(&mut key, &items, &ctx);
+
+        assert!(matches!(action, ListAction::Handled));
+        assert_eq!(view.mode(), InputMode::Normal);
+        assert!(view.is_filtering());
+        assert_eq!(view.filter_text(), Some("ap"));
+    }
+
+    #[test]
+    fn enter_in_find_mode_confirms_without_activation() {
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        use crate::{shared::key_event::KeyEvent, tests::fixtures::ctx};
+
+        let items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.select(Some(0));
+        view.enter_find_mode(&items, "ap");
+
+        let mut key = KeyEvent::from(CKeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+        let ctx = ctx();
+        let action = view.handle_key(&mut key, &items, &ctx);
+
+        assert!(matches!(action, ListAction::Handled));
+        assert_eq!(view.mode(), InputMode::Normal);
+        assert!(view.is_filtering());
+    }
+
+    #[test]
+    fn n_navigates_after_esc_confirms_search() {
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        use crate::{shared::key_event::KeyEvent, tests::fixtures::ctx};
+
+        let items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Banana".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.enter_find_mode(&items, "ap");
+        assert_eq!(view.selected(), Some(0));
+
+        let ctx = ctx();
+        let mut esc = KeyEvent::from(CKeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        let _ = view.handle_key(&mut esc, &items, &ctx);
+
+        let mut n_key = KeyEvent::from(CKeyEvent::new(KeyCode::Char('n'), KeyModifiers::NONE));
+        let action = view.handle_key(&mut n_key, &items, &ctx);
+
+        assert!(matches!(action, ListAction::Handled));
+        assert_eq!(view.selected(), Some(2));
+    }
+
+    #[test]
+    fn tab_in_find_mode_confirms_and_jumps_to_next_match() {
+        use crossterm::event::{KeyCode, KeyEvent as CKeyEvent, KeyModifiers};
+
+        use crate::{shared::key_event::KeyEvent, tests::fixtures::ctx};
+
+        let items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Banana".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let mut view = SelectableList::new();
+        view.enter_find_mode(&items, "ap");
+        assert_eq!(view.selected(), Some(0));
+
+        let mut tab = KeyEvent::from(CKeyEvent::new(KeyCode::Tab, KeyModifiers::NONE));
+        let ctx = ctx();
+        let action = view.handle_key(&mut tab, &items, &ctx);
+
+        assert!(matches!(action, ListAction::Handled));
+        assert_eq!(view.mode(), InputMode::Normal);
+        assert!(view.is_filtering());
+        assert_eq!(view.filter_text(), Some("ap"));
+        assert_eq!(view.selected(), Some(2));
+    }
+
+    #[test]
+    fn active_filter_recomputes_when_items_change() {
+        let initial_items = vec![
+            TestItem { name: "Apple".into(), focusable: true },
+            TestItem { name: "Banana".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+        let updated_items = vec![
+            TestItem { name: "Berry".into(), focusable: true },
+            TestItem { name: "Apricot".into(), focusable: true },
+        ];
+
+        let mut view = SelectableList::new();
+        view.enter_find_mode(&initial_items, "ap");
+        view.exit_find_mode(true);
+        assert_eq!(view.selected(), Some(0));
+        assert!(view.is_filter_match(0));
+        assert!(view.is_filter_match(2));
+
+        view.sync_filter_to_items(&updated_items);
+
+        assert_eq!(view.selected(), Some(1));
+        assert!(!view.is_filter_match(0));
+        assert!(view.is_filter_match(1));
     }
 }

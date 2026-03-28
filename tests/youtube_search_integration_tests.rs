@@ -250,7 +250,7 @@ mod search_display_e2e_tests {
 
     use rmpc::domain::{
         detail_item::DetailItem,
-        display::ListItemDisplay,
+        display::{ListItemDisplay, SearchKey},
         search::{
             AlbumItem, ArtistItem, BrowsableItem, PlayableItem, PlaylistItem, SearchItem, SongItem,
             VideoItem,
@@ -268,6 +268,7 @@ mod search_display_e2e_tests {
                 name: "Kim Long".into(),
                 subscribers: Some("10K subscribers".into()),
                 thumbnail: Some("https://lh3.googleusercontent.com/kimlong.jpg".into()),
+                search_key: SearchKey::from_display("Kim Long", Some("10K subscribers")),
             })),
             // Song result (would be in "Songs" section)
             SearchItem::Playable(PlayableItem::Song(SongItem {
@@ -279,6 +280,10 @@ mod search_display_e2e_tests {
                 thumbnail: Some("https://i.ytimg.com/vi/abc123/sddefault.jpg".into()),
                 explicit: false,
                 radio_playlist_id: None,
+                search_key: SearchKey::from_display(
+                    "Về Với Em - Kim Long",
+                    Some("Kim Long · Single"),
+                ),
             })),
             // Album result (would be in "Albums" section)
             SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
@@ -289,6 +294,7 @@ mod search_display_e2e_tests {
                 album_type: Some("Album".into()),
                 thumbnail: Some("https://lh3.googleusercontent.com/album.jpg".into()),
                 explicit: false,
+                search_key: SearchKey::from_display("Best of Kim Long", Some("Kim Long")),
             })),
             // Playlist result (would be in "Playlists" section)
             SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
@@ -297,6 +303,10 @@ mod search_display_e2e_tests {
                 author: "YouTube Music".into(),
                 track_count: Some("25 songs".into()),
                 thumbnail: Some("https://lh3.googleusercontent.com/playlist.jpg".into()),
+                search_key: SearchKey::from_display(
+                    "Kim Long Greatest Hits",
+                    Some("YouTube Music"),
+                ),
             })),
             // Video result (would be in "Videos" section)
             SearchItem::Playable(PlayableItem::Video(VideoItem {
@@ -306,6 +316,10 @@ mod search_display_e2e_tests {
                 views: Some("1M views".into()),
                 duration: Some(Duration::from_secs(3600)),
                 thumbnail: Some("https://i.ytimg.com/vi/xyz789/sddefault.jpg".into()),
+                search_key: SearchKey::from_display(
+                    "Kim Long Live Concert",
+                    Some("Kim Long Official"),
+                ),
             })),
         ]
     }

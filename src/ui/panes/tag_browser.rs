@@ -390,7 +390,9 @@ mod tests {
             ]),
             last_modified: Some(chrono::Utc::now()),
             added: None,
+            search_key: Default::default(),
         }
+        .with_search_key()
     }
 
     fn song_with_originaldate(
@@ -409,7 +411,9 @@ mod tests {
             ]),
             last_modified: Some(chrono::Utc::now()),
             added: None,
+            search_key: Default::default(),
         }
+        .with_search_key()
     }
 
     fn pane_albums(pane: &TagBrowserPane) -> Vec<String> {

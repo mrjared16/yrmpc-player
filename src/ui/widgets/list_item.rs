@@ -49,7 +49,11 @@ use std::borrow::Cow;
 
 use ratatui::style::Style;
 
-use crate::domain::{DetailItem, Song, content::ContentRef, display::ListItemDisplay};
+use crate::domain::{
+    DetailItem, Song,
+    content::ContentRef,
+    display::{ListItemDisplay, SearchKey},
+};
 
 /// A list item for UI rendering.
 ///
@@ -215,6 +219,20 @@ impl ListItemDisplay for ListItem {
     fn is_focusable(&self) -> bool {
         matches!(self, Self::Content(_))
     }
+
+    fn search_key(&self) -> SearchKey {
+        match self {
+            Self::Content(item) => item.search_key(),
+            _ => SearchKey::default(),
+        }
+    }
+
+    fn matches_folded_query(&self, folded_query: &str) -> bool {
+        match self {
+            Self::Content(item) => item.matches_folded_query(folded_query),
+            _ => false,
+        }
+    }
 }
 
 // =============================================================================
@@ -285,6 +303,7 @@ mod tests {
             name: "Test Artist".into(),
             thumbnail: None,
             subtitle: None,
+            search_key: SearchKey::from_display("Test Artist", None),
         };
         let detail_item = DetailItem::Ref(artist_ref);
         let list_item = ListItem::from(detail_item);
@@ -314,6 +333,7 @@ mod tests {
             name: "Test Album".into(),
             thumbnail: None,
             subtitle: None,
+            search_key: SearchKey::from_display("Test Album", None),
         };
         let detail_item = DetailItem::Ref(album_ref);
         let list_item = ListItem::from(detail_item);
@@ -340,6 +360,7 @@ mod tests {
             name: "Test Playlist".into(),
             thumbnail: None,
             subtitle: None,
+            search_key: SearchKey::from_display("Test Playlist", None),
         };
         let detail_item = DetailItem::Ref(playlist_ref);
         let list_item = ListItem::from(detail_item);
@@ -376,6 +397,7 @@ mod tests {
             metadata,
             last_modified: None,
             added: None,
+            search_key: SearchKey::default(),
         };
 
         // Verify Song has thumbnail
@@ -419,6 +441,7 @@ mod tests {
             name: "Famous Artist".into(),
             thumbnail: Some("https://example.com/artist.jpg".into()),
             subtitle: Some("1M subscribers".into()),
+            search_key: SearchKey::from_display("Famous Artist", Some("1M subscribers")),
         };
 
         // Act: Convert to DetailItem → ListItem

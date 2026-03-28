@@ -497,7 +497,9 @@ impl From<MediaItem> for Song {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: Default::default(),
                 }
+                .with_search_key()
             }
             MediaItem::Artist(a) => {
                 metadata.insert("title".to_string(), vec![a.name.clone()]);
@@ -516,7 +518,9 @@ impl From<MediaItem> for Song {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: Default::default(),
                 }
+                .with_search_key()
             }
             MediaItem::Album(a) => {
                 metadata.insert("title".to_string(), vec![a.title.clone()]);
@@ -535,7 +539,9 @@ impl From<MediaItem> for Song {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: Default::default(),
                 }
+                .with_search_key()
             }
             MediaItem::Playlist(p) => {
                 metadata.insert("title".to_string(), vec![p.title.clone()]);
@@ -554,7 +560,9 @@ impl From<MediaItem> for Song {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: Default::default(),
                 }
+                .with_search_key()
             }
             MediaItem::Header { title } => {
                 metadata.insert("title".to_string(), vec![title.clone()]);
@@ -567,7 +575,9 @@ impl From<MediaItem> for Song {
                     metadata,
                     last_modified: None,
                     added: None,
+                    search_key: Default::default(),
                 }
+                .with_search_key()
             }
         }
     }

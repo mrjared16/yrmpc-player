@@ -14,6 +14,8 @@ use std::time::Duration;
 pub use display::Displayable;
 pub use items::*;
 
+use crate::domain::display::SearchKey;
+
 /// Top-level search result type
 ///
 /// Separates playable vs browsable to prevent LSP violations
@@ -230,47 +232,62 @@ impl From<crate::backends::api::Item> for SearchItem {
 
         use crate::domain::ContentType;
 
-        match item.content_type {
+        let crate::backends::api::Item {
+            id,
+            title,
+            subtitle,
+            duration,
+            thumbnail,
+            content_type,
+            queue_id: _,
+        } = item;
+
+        match content_type {
             ContentType::Track => SearchItem::Playable(PlayableItem::Song(SongItem {
-                video_id: item.id,
-                title: item.title,
-                artist: item.subtitle.unwrap_or_default(),
+                search_key: SearchKey::from_display(&title, subtitle.as_deref()),
+                video_id: id,
+                title,
+                artist: subtitle.unwrap_or_default(),
                 album: None,
-                duration: item.duration,
-                thumbnail: item.thumbnail,
+                duration,
+                thumbnail,
                 explicit: false,
                 radio_playlist_id: None,
             })),
             ContentType::Artist => SearchItem::Browsable(BrowsableItem::Artist(ArtistItem {
-                name: item.title,
-                browse_id: Some(item.id),
-                thumbnail: item.thumbnail,
-                subscribers: item.subtitle,
+                search_key: SearchKey::from_display(&title, subtitle.as_deref()),
+                name: title,
+                browse_id: Some(id),
+                thumbnail,
+                subscribers: subtitle,
             })),
             ContentType::Album => SearchItem::Browsable(BrowsableItem::Album(AlbumItem {
-                album_id: item.id,
-                title: item.title,
-                artist: item.subtitle.unwrap_or_default(),
+                search_key: SearchKey::from_display(&title, subtitle.as_deref()),
+                album_id: id,
+                title,
+                artist: subtitle.unwrap_or_default(),
                 year: None,
                 album_type: None,
-                thumbnail: item.thumbnail,
+                thumbnail,
                 explicit: false,
             })),
             ContentType::Playlist => SearchItem::Browsable(BrowsableItem::Playlist(PlaylistItem {
-                playlist_id: item.id,
-                title: item.title,
-                author: item.subtitle.unwrap_or_default(),
+                search_key: SearchKey::from_display(&title, subtitle.as_deref()),
+                playlist_id: id,
+                title,
+                author: subtitle.unwrap_or_default(),
                 track_count: None,
-                thumbnail: item.thumbnail,
+                thumbnail,
             })),
             // Directory and other types default to video (can't be easily mapped)
             _ => SearchItem::Playable(PlayableItem::Video(VideoItem {
-                video_id: item.id,
-                title: item.title,
-                channel: item.subtitle.unwrap_or_default(),
+                search_key: SearchKey::from_display(&title, subtitle.as_deref()),
+                video_id: id,
+                title,
+                channel: subtitle.unwrap_or_default(),
                 views: None,
-                duration: item.duration,
-                thumbnail: item.thumbnail,
+                duration,
+                thumbnail,
             })),
         }
     }

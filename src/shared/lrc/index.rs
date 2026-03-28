@@ -253,7 +253,9 @@ mod tests {
             metadata,
             last_modified: None,
             added: None,
+            search_key: Default::default(),
         }
+        .with_search_key()
     }
 
     #[builder]

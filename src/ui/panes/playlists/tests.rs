@@ -542,6 +542,7 @@ fn song(name: &str) -> Song {
         metadata: HashMap::new(),
         last_modified: Some(*NOW),
         added: None,
+        search_key: Default::default(),
     }
 }
 
