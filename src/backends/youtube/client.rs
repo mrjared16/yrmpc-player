@@ -973,6 +973,20 @@ impl api::Discovery for YouTubeProxy {
                 if let Some(subs) = &yt_artist.subscribers {
                     stats.push(Stat::subscribers(subs.clone()));
                 }
+                if let Some(monthly) = &yt_artist.monthly_listeners {
+                    stats.push(Stat::text(
+                        crate::domain::content::StatKey::MonthlyListeners,
+                        "Monthly listeners",
+                        monthly.clone(),
+                    ));
+                }
+                if let Some(views) = &yt_artist.views {
+                    stats.push(Stat::text(
+                        crate::domain::content::StatKey::Views,
+                        "Views",
+                        views.clone(),
+                    ));
+                }
                 extensions = extensions.stats(stats);
 
                 // Add actions
@@ -987,6 +1001,7 @@ impl api::Discovery for YouTubeProxy {
                         .map(|a| {
                             ContentRef::album(a.id, a.title)
                                 .with_subtitle(a.year.unwrap_or_default())
+                                .with_thumbnail(a.thumbnail.unwrap_or_default())
                         })
                         .collect();
                     extensions = extensions.albums("Albums", albums);
@@ -1000,6 +1015,7 @@ impl api::Discovery for YouTubeProxy {
                         .map(|a| {
                             ContentRef::album(a.id, a.title)
                                 .with_subtitle(a.year.unwrap_or_default())
+                                .with_thumbnail(a.thumbnail.unwrap_or_default())
                         })
                         .collect();
                     extensions = extensions.singles("Singles", singles);
@@ -1010,7 +1026,10 @@ impl api::Discovery for YouTubeProxy {
                     let related: Vec<ContentRef> = yt_artist
                         .related_artists
                         .into_iter()
-                        .map(|a| ContentRef::artist(a.id, a.name))
+                        .map(|a| {
+                            ContentRef::artist(a.id, a.name)
+                                .with_thumbnail(a.thumbnail.unwrap_or_default())
+                        })
                         .collect();
                     extensions = extensions.related_artists("Fans also like", related);
                 }

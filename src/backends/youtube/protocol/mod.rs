@@ -461,6 +461,10 @@ pub struct ArtistDetailsData {
     pub id: String,
     pub name: String,
     pub subscribers: Option<String>,
+    #[serde(default)]
+    pub views: Option<String>,
+    #[serde(default)]
+    pub monthly_listeners: Option<String>,
     pub description: Option<String>,
     pub thumbnail: Option<String>,
     /// Top songs as MediaItem (canonical type)
@@ -555,6 +559,8 @@ impl From<crate::backends::youtube::details::ArtistDetails> for ArtistDetailsDat
             id: a.id,
             name: a.name,
             subscribers: a.subscribers,
+            views: a.views,
+            monthly_listeners: a.monthly_listeners,
             description: a.description,
             thumbnail: a.thumbnail,
             top_songs: a.top_songs.into_iter().map(MediaItem::from).collect(),
@@ -650,6 +656,8 @@ impl ArtistDetailsData {
             id: self.id.clone(),
             name: self.name.clone(),
             subscribers: self.subscribers.clone(),
+            views: self.views.clone(),
+            monthly_listeners: self.monthly_listeners.clone(),
             description: self.description.clone(),
             thumbnail: self.thumbnail.clone(),
             top_songs: self.top_songs.iter().map(media_item_to_song).collect(),

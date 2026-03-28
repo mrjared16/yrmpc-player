@@ -59,6 +59,8 @@ pub struct ArtistDetails {
     pub id: String,
     pub name: String,
     pub subscribers: Option<String>,
+    pub views: Option<String>,
+    pub monthly_listeners: Option<String>,
     pub description: Option<String>,
     pub thumbnail: Option<String>,
     pub top_songs: Vec<Song>,
@@ -193,6 +195,16 @@ impl From<ArtistDetails> for content::ArtistContent {
         if let Some(subs) = &yt.subscribers {
             stats.push(content::Stat::subscribers(subs.clone()));
         }
+        if let Some(monthly) = &yt.monthly_listeners {
+            stats.push(content::Stat::text(
+                content::StatKey::MonthlyListeners,
+                "Monthly listeners",
+                monthly.clone(),
+            ));
+        }
+        if let Some(views) = &yt.views {
+            stats.push(content::Stat::text(content::StatKey::Views, "Views", views.clone()));
+        }
         extensions = extensions.stats(stats);
 
         // Add actions
@@ -210,6 +222,7 @@ impl From<ArtistDetails> for content::ArtistContent {
                 .map(|a| {
                     content::ContentRef::album(a.id, a.title)
                         .with_subtitle(a.year.unwrap_or_default())
+                        .with_thumbnail(a.thumbnail.unwrap_or_default())
                 })
                 .collect();
             extensions = extensions.albums("Albums", albums);
@@ -223,6 +236,7 @@ impl From<ArtistDetails> for content::ArtistContent {
                 .map(|a| {
                     content::ContentRef::album(a.id, a.title)
                         .with_subtitle(a.year.unwrap_or_default())
+                        .with_thumbnail(a.thumbnail.unwrap_or_default())
                 })
                 .collect();
             extensions = extensions.singles("Singles", singles);
@@ -233,7 +247,10 @@ impl From<ArtistDetails> for content::ArtistContent {
             let related: Vec<content::ContentRef> = yt
                 .related_artists
                 .into_iter()
-                .map(|a| content::ContentRef::artist(a.id, a.name))
+                .map(|a| {
+                    content::ContentRef::artist(a.id, a.name)
+                        .with_thumbnail(a.thumbnail.unwrap_or_default())
+                })
                 .collect();
             extensions = extensions.related_artists("Fans also like", related);
         }

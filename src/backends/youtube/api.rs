@@ -13,16 +13,9 @@ use ytmapi_rs::{
     common::{AlbumID, ArtistChannelID, PlaylistID, VideoID, YoutubeID},
     parse::{BasicSearchResultCommunityPlaylist, SearchResultVideo},
     query::{
-        GetAlbumQuery,
-        GetArtistQuery,
-        GetLibraryAlbumsQuery,
-        GetLibraryArtistsQuery,
-        GetLibraryPlaylistsQuery,
-        GetLibrarySongsQuery,
-        GetPlaylistDetailsQuery,
-        GetSearchSuggestionsQuery,
-        GetWatchPlaylistQuery,
-        SearchQuery,
+        GetAlbumQuery, GetArtistQuery, GetLibraryAlbumsQuery, GetLibraryArtistsQuery,
+        GetLibraryPlaylistsQuery, GetLibrarySongsQuery, GetPlaylistDetailsQuery,
+        GetSearchSuggestionsQuery, GetWatchPlaylistQuery, SearchQuery,
     },
 };
 
@@ -413,6 +406,9 @@ impl YouTubeApi {
                 s.metadata.insert("title".into(), vec![song.title]);
                 s.metadata.insert("artist".into(), vec![artist.name.clone()]);
                 s.metadata.insert("album".into(), vec![song.album.name]);
+                if let Some(thumb) = song.thumbnails.last() {
+                    s.metadata.insert("thumbnail".into(), vec![thumb.url.clone()]);
+                }
                 top_songs.push(s);
             }
         }
@@ -449,14 +445,28 @@ impl YouTubeApi {
             })
             .unwrap_or_default();
 
-        // Note: related_artists field may not exist in this version of ytmapi_rs
-        // Use empty vec as fallback
-        let related_artists: Vec<ArtistRef> = vec![];
+        let related_artists: Vec<ArtistRef> = artist
+            .top_releases
+            .related
+            .map(|related| {
+                related
+                    .results
+                    .into_iter()
+                    .map(|related_artist| ArtistRef {
+                        id: related_artist.browse_id.get_raw().to_string(),
+                        name: related_artist.title,
+                        thumbnail: related_artist.thumbnails.last().map(|t| t.url.clone()),
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
         Ok(ArtistDetails {
             id: artist_id.to_string(),
             name: artist.name,
-            subscribers: None, // Field may not exist
+            subscribers: artist.subscribers,
+            views: artist.views,
+            monthly_listeners: artist.monthly_listeners,
             description: artist.description,
             thumbnail: artist.thumbnails.last().map(|t| t.url.clone()),
             top_songs,
