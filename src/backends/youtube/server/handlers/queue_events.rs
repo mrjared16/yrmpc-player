@@ -87,7 +87,6 @@ impl QueueEventHandler {
         log::debug!("QueueEvent::ItemsAdded: {ids:?}");
 
         let play_queue = self.play_queue.lock();
-        let added_track_ids = added_track_ids(&play_queue, ids);
         let play_order = play_queue.get_play_order().to_vec();
         let current_id = play_queue.get_current_id();
 
@@ -95,23 +94,10 @@ impl QueueEventHandler {
             sync_coordinator_horizon(coordinator, &play_queue, &play_order, current_id);
         }
         self.kick_prefix_window_worker_if_started();
-
-        let added_track_ids = filter_background_extract_track_ids(
-            added_track_ids,
-            self.playback_coordinator.as_ref(),
-        );
         drop(play_queue);
 
-        if added_track_ids.is_empty() && play_order.is_empty() {
+        if play_order.is_empty() {
             return;
-        }
-
-        if let Some(ref preparer) = self.media_preparer {
-            if !added_track_ids.is_empty() {
-                preparer.warm_many(&added_track_ids);
-            }
-        } else {
-            log::warn!("QueueEventHandler missing media preparer; skipping queue warm");
         }
     }
 
@@ -561,7 +547,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_items_added_only_warms_tracks_during_active_playback() {
+    fn handle_items_added_only_updates_policy_during_active_playback() {
         let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
         let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
         let recording = Arc::new(RecordingMediaPreparer::fail_on_prepare());
@@ -594,7 +580,7 @@ mod tests {
             handler.handle(event);
         }
 
-        assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["video999".to_string()]]);
+        assert!(recording.warmed_batches.lock().is_empty());
         assert!(recording.activated_windows.lock().is_empty());
         assert!(recording.prefetched.lock().is_empty());
     }
@@ -644,7 +630,7 @@ mod tests {
         }
 
         assert_eq!(coordinator.lock().snapshot().resolved_horizon, vec!["video000", "video999"]);
-        assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["video999".to_string()]]);
+        assert!(recording.warmed_batches.lock().is_empty());
         assert!(recording.activated_windows.lock().is_empty());
         assert!(recording.prefetched.lock().is_empty());
     }
@@ -682,8 +668,9 @@ mod tests {
 
         let snapshot = coordinator.lock().snapshot();
         assert_eq!(snapshot.current_track.as_deref(), Some("video000"));
-        assert_eq!(snapshot.next_three_window, vec!["video999"]);
-        assert!(!snapshot.next_three_window.contains(&"video000".to_string()));
+        assert_eq!(snapshot.warm_window, vec!["video999"]);
+        assert_eq!(snapshot.prefix_window, vec!["video999"]);
+        assert!(!snapshot.warm_window.contains(&"video000".to_string()));
     }
 
     #[test]
@@ -713,7 +700,8 @@ mod tests {
         assert_eq!(snapshot.current_track, None);
         assert_eq!(snapshot.current_owner, None);
         assert!(!snapshot.playback_started);
-        assert!(snapshot.next_three_window.is_empty());
+        assert!(snapshot.warm_window.is_empty());
+        assert!(snapshot.prefix_window.is_empty());
         assert!(snapshot.active_prefix_job.is_none());
     }
 

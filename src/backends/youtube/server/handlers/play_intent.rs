@@ -10,12 +10,11 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 
-use super::extract_video_id;
 use crate::backends::youtube::{
-    media::{MediaPreparer, PreloadTier},
+    media::MediaPreparer,
     protocol::{
         ServerResponse,
-        play_intent::{PlayError, PlayIntent, RequestId, derive_priorities},
+        play_intent::{PlayError, PlayIntent, RequestId},
     },
     server::{
         orchestrator::{Orchestrator, PREFETCH_WINDOW_SIZE},
@@ -36,22 +35,13 @@ pub fn handle_play_with_intent(
         return ServerResponse::PlayIntentError(e);
     }
 
-    let priorities = derive_priorities(&intent);
-    if !matches!(&intent, PlayIntent::Append { .. }) {
-        for (song, tier) in &priorities {
-            let Some(track_id) = extract_video_id(&song.uri) else {
-                continue;
-            };
-
-            orchestrator.media_preparer().prefetch(&track_id, *tier);
-        }
-    }
-
     match &intent {
         PlayIntent::Context { tracks, shuffle, offset, .. } => {
+            let source = context_source_label(&intent);
             log::info!(
-                "[INTENT] context request_id={} count={} shuffle={} offset={}",
+                "[INTENT] context request_id={} source={} count={} shuffle={} offset={} startup_policy=current_only_until_playback_started",
                 request_id,
+                source,
                 tracks.len(),
                 shuffle,
                 offset
@@ -133,6 +123,31 @@ pub fn handle_play_with_intent(
     }
 
     ServerResponse::Ok
+}
+
+fn context_source_label(intent: &PlayIntent) -> &'static str {
+    match intent {
+        PlayIntent::Context { source, .. } => match source {
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::Album {
+                ..
+            }) => "album",
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::Playlist {
+                ..
+            }) => "playlist",
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::Artist {
+                ..
+            }) => "artist",
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::Search {
+                ..
+            }) => "search",
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::History) => {
+                "history"
+            }
+            Some(crate::backends::youtube::protocol::play_intent::ContextSource::Queue) => "queue",
+            None => "unknown",
+        },
+        _ => "n/a",
+    }
 }
 
 /// Validate PlayIntent before processing
@@ -303,7 +318,7 @@ mod tests {
     }
 
     #[test]
-    fn append_intent_batches_warm_side_effects_when_playback_is_active() {
+    fn append_intent_does_not_schedule_background_warm_side_effects() {
         let (_mpv_guard, _temp_dir, orchestrator, queue_coordinator, recording, play_queue) =
             setup_orchestrator();
         orchestrator.queue().add(test_song("youtube://existing"), None);
@@ -319,10 +334,7 @@ mod tests {
 
         assert!(matches!(response, ServerResponse::Ok));
         assert!(recording.warmed.lock().is_empty());
-        assert_eq!(
-            recording.warmed_batches.lock().clone(),
-            vec![vec!["new-track-a".to_string(), "new-track-b".to_string()]]
-        );
+        assert!(recording.warmed_batches.lock().is_empty());
     }
 
     #[test]

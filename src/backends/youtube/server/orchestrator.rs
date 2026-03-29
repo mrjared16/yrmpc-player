@@ -213,12 +213,21 @@ impl Orchestrator {
 
         if !coordinator.playback_started() {
             coordinator.mark_bytes_started(&track_id);
+            let warm_window = coordinator.warm_window();
+            let prefix_window = coordinator.prefix_window();
             drop(coordinator);
+            log_startup_window_state(
+                "playback_started",
+                Some(track_id.as_str()),
+                &warm_window,
+                &prefix_window,
+            );
             self.kick_prefix_window_worker();
         }
     }
 
     pub fn prefetch_upcoming(&self) {
+        log::debug!("[STARTUP] phase=kick_background_worker reason=prefetch_upcoming_api");
         self.kick_prefix_window_worker();
     }
 
@@ -320,82 +329,50 @@ impl Orchestrator {
         let current_mpv_pos = usize::try_from(current_mpv_pos)
             .context("convert MPV playlist position during queue reconciliation")?;
 
-        let previous_window = self.queue.playback_window_state();
-        let previous_current_window_pos = previous_window
-            .current_idx
-            .and_then(|window_current_idx| {
-                previous_window.prefetch_indices.iter().position(|&idx| idx == window_current_idx)
-            })
-            .unwrap_or(current_mpv_pos);
-        let existing_tail: Vec<usize> = previous_window
-            .prefetch_indices
-            .iter()
-            .skip(previous_current_window_pos.saturating_add(1))
-            .copied()
-            .collect();
-
         for idx in (0..current_mpv_pos).rev() {
             self.playback.playlist_remove(idx).with_context(|| {
                 format!("remove stale MPV prefix item {idx} during reconciliation")
             })?;
         }
 
-        let active_indices = self.queue.compute_prefetch_window(current_idx, PREFETCH_WINDOW_SIZE);
-        let desired_tail: Vec<usize> = active_indices.iter().skip(1).copied().collect();
-        let unchanged_tail_len = existing_tail
-            .iter()
-            .zip(desired_tail.iter())
-            .take_while(|(existing, desired)| existing == desired)
-            .count();
-
         let playlist_count = self
             .playback
             .get_playlist_count()
             .context("read MPV playlist count during queue reconciliation")?;
-        for idx in ((unchanged_tail_len + 1)..playlist_count).rev() {
+        for idx in (1..playlist_count).rev() {
             self.playback.playlist_remove(idx).with_context(|| {
                 format!("remove stale MPV tail item {idx} during reconciliation")
             })?;
         }
 
+        let current_only_window = vec![current_idx];
         self.queue.set_playback_window_state(
             Some(current_idx),
             current_idx,
-            active_indices.clone(),
+            current_only_window.clone(),
         );
-        activate_playback_window(&self.media_preparer, &self.queue, &active_indices);
-        let playback_started = {
+        activate_playback_window(&self.media_preparer, &self.queue, &current_only_window);
+        let (playback_started, current_track, warm_window, prefix_window) = {
             let mut coordinator = self.coordinator.lock();
             coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
                 self.queue.as_ref(),
                 current_idx,
             ));
-            coordinator.playback_started()
+            (
+                coordinator.playback_started(),
+                coordinator.current_track_id(),
+                coordinator.warm_window(),
+                coordinator.prefix_window(),
+            )
         };
         if playback_started {
+            log_startup_window_state(
+                "queue_mutation_reconciled",
+                current_track.as_deref(),
+                &warm_window,
+                &prefix_window,
+            );
             self.kick_prefix_window_worker();
-        }
-
-        for (offset, &queue_idx) in active_indices.iter().enumerate().skip(1 + unchanged_tail_len) {
-            let song = self
-                .queue
-                .get_by_index(queue_idx)
-                .with_context(|| format!("read queue item {queue_idx} during reconciliation"))?;
-            let track_id = stable_track_id(&song.uri);
-            if track_id.is_empty() {
-                continue;
-            }
-
-            let input = prepare_media_blocking(
-                &self.media_preparer,
-                &track_id,
-                tier_for_window_offset(offset),
-            )
-            .and_then(|prepared| build_runtime_mpv_input(&self.playback, &track_id, &prepared))
-            .with_context(|| format!("prepare track {track_id} during queue reconciliation"))?;
-            self.playback
-                .playlist_append_input(&input)
-                .with_context(|| format!("append track {track_id} during queue reconciliation"))?;
         }
 
         Ok(())
@@ -430,15 +407,20 @@ fn spawn_prefix_window_worker(
     prefix_window_rx: crossbeam::channel::Receiver<()>,
 ) {
     thread::spawn(move || {
-        let mut last_activated_window: Option<Vec<String>> = None;
+        let mut last_warm_window: Option<Vec<String>> = None;
+        let mut last_activated_prefix_window: Option<Vec<String>> = None;
 
         while prefix_window_rx.recv().is_ok() {
             loop {
-                let active_window = coordinator.lock().next_three_window();
+                let (warm_window, prefix_window) = {
+                    let coordinator = coordinator.lock();
+                    (coordinator.warm_window(), coordinator.prefix_window())
+                };
+                warm_window_if_changed(media_preparer.as_ref(), &mut last_warm_window, warm_window);
                 activate_window_if_changed(
                     media_preparer.as_ref(),
-                    &mut last_activated_window,
-                    active_window,
+                    &mut last_activated_prefix_window,
+                    prefix_window,
                 );
 
                 let Some(track_id) = coordinator.lock().claim_next_prefix_job() else {
@@ -455,7 +437,7 @@ fn spawn_prefix_window_worker(
 
                 let result =
                     prepare_media_blocking(&media_preparer, &track_id, PreloadTier::Background);
-                let active_window = {
+                let prefix_window = {
                     let mut coordinator = coordinator.lock();
                     match result {
                         Ok(
@@ -476,16 +458,39 @@ fn spawn_prefix_window_worker(
                             coordinator.fail_prefix_job(&track_id);
                         }
                     }
-                    coordinator.next_three_window()
+                    coordinator.prefix_window()
                 };
                 activate_window_if_changed(
                     media_preparer.as_ref(),
-                    &mut last_activated_window,
-                    active_window,
+                    &mut last_activated_prefix_window,
+                    prefix_window,
                 );
             }
         }
     });
+}
+
+fn warm_window_if_changed(
+    media_preparer: &dyn MediaPreparer,
+    last_warm_window: &mut Option<Vec<String>>,
+    warm_window: Vec<String>,
+) {
+    if last_warm_window.as_ref() == Some(&warm_window) {
+        return;
+    }
+
+    if warm_window.is_empty() {
+        *last_warm_window = Some(warm_window);
+        return;
+    }
+
+    log::info!(
+        "[STARTUP-WORKER] action=warm_window_changed count={} tracks={:?}",
+        warm_window.len(),
+        warm_window,
+    );
+    media_preparer.warm_many(&warm_window);
+    *last_warm_window = Some(warm_window);
 }
 
 fn activate_window_if_changed(
@@ -497,8 +502,28 @@ fn activate_window_if_changed(
         return;
     }
 
+    log::info!(
+        "[STARTUP-WORKER] action=prefix_window_changed count={} tracks={:?}",
+        active_window.len(),
+        active_window,
+    );
     media_preparer.activate_playback_window(&active_window);
     *last_activated_window = Some(active_window);
+}
+
+fn log_startup_window_state(
+    label: &str,
+    current_track: Option<&str>,
+    warm_window: &[String],
+    prefix_window: &[String],
+) {
+    log::info!(
+        "[STARTUP] phase={} current_track={} warm_window={:?} prefix_window={:?}",
+        label,
+        current_track.unwrap_or("none"),
+        warm_window,
+        prefix_window,
+    );
 }
 
 fn play_position_sync_with_services(
@@ -529,6 +554,14 @@ fn play_position_sync_with_services(
         state_tracker.force_set(PlaybackState::Idle);
         return ServerResponse::Error("No playable tracks found".to_string());
     };
+
+    log::info!(
+        "[STARTUP] phase=play_position_sync position={} current_track={} planned_tracks={} prefetch_indices={:?}",
+        pos,
+        track.track_id,
+        plan.tracks.len(),
+        plan.prefetch_indices,
+    );
 
     {
         let mut coordinator = coordinator.lock();
@@ -573,6 +606,11 @@ fn play_position_sync_with_services(
 
     queue.set_playback_window_state(Some(pos), pos, appended_prefetch_indices.clone());
     activate_playback_window(media_preparer, queue, &appended_prefetch_indices);
+    log::info!(
+        "[STARTUP] phase=current_only_window_armed position={} queue_indices={:?}",
+        pos,
+        appended_prefetch_indices,
+    );
 
     if appended_prefetch_indices.len() < plan.prefetch_indices.len() {
         log::warn!(
@@ -912,7 +950,8 @@ mod tests {
         let response = orch.play_position_sync(0);
         assert!(matches!(response, ServerResponse::Ok));
 
-        assert!(orch.coordinator.lock().snapshot().next_three_window.is_empty());
+        assert!(orch.coordinator.lock().snapshot().warm_window.is_empty());
+        assert!(orch.coordinator.lock().snapshot().prefix_window.is_empty());
         assert_eq!(
             *recording.prepared.lock(),
             vec![("video123".to_string(), PreloadTier::Immediate)]
@@ -924,7 +963,11 @@ mod tests {
         let prepared = wait_for_prepared_entries(&recording, 4);
 
         assert_eq!(
-            orch.coordinator.lock().snapshot().next_three_window,
+            orch.coordinator.lock().snapshot().warm_window,
+            vec!["video456", "video789", "video999"]
+        );
+        assert_eq!(
+            orch.coordinator.lock().snapshot().prefix_window,
             vec!["video456", "video789", "video999"]
         );
         assert_eq!(
@@ -999,7 +1042,8 @@ mod tests {
             )
         );
         assert!(!snapshot.playback_started);
-        assert!(snapshot.next_three_window.is_empty());
+        assert!(snapshot.warm_window.is_empty());
+        assert!(snapshot.prefix_window.is_empty());
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
 
         orch.handle_playback_started_for_current_track();
@@ -1012,7 +1056,8 @@ mod tests {
             )
         );
         assert_eq!(snapshot.track_states.get("song-0"), Some(&crate::backends::youtube::server::playback_coordinator::TrackJobState::PlayingDirect));
-        assert_eq!(snapshot.next_three_window, vec!["song-1", "song-2", "song-3"]);
+        assert_eq!(snapshot.warm_window, vec!["song-1", "song-2", "song-3"]);
+        assert_eq!(snapshot.prefix_window, vec!["song-1", "song-2", "song-3"]);
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
 
         drop(temp_dir);
@@ -1451,7 +1496,8 @@ mod tests {
         let prepared = wait_for_prepared_entries(&recording, 2);
         assert_eq!(prepared[0], ("song-0".to_string(), PreloadTier::Immediate));
         assert_eq!(prepared[1], ("song-1".to_string(), PreloadTier::Background));
-        assert_eq!(orch.coordinator().lock().next_three_window(), vec!["song-1".to_string()]);
+        assert_eq!(orch.coordinator().lock().warm_window(), vec!["song-1".to_string()]);
+        assert_eq!(orch.coordinator().lock().prefix_window(), vec!["song-1".to_string()]);
         assert!(orch.coordinator().lock().playback_started());
 
         let activated_windows = recording.activated_windows.lock().clone();
@@ -1496,7 +1542,8 @@ mod tests {
 
         assert_eq!(orch.queue().current_index(), Some(1));
         assert_eq!(orch.coordinator().lock().current_track_id().as_deref(), Some("song-1"));
-        assert!(orch.coordinator().lock().next_three_window().is_empty());
+        assert!(orch.coordinator().lock().warm_window().is_empty());
+        assert!(orch.coordinator().lock().prefix_window().is_empty());
         assert_eq!(
             recording.activated_windows.lock().clone(),
             vec![vec!["song-1".to_string(), "song-2".to_string(), "song-3".to_string(),]]
@@ -1705,23 +1752,14 @@ mod tests {
 
         assert_eq!(orch.queue().playback_base_index(), 0);
         assert_eq!(orch.queue().get_prefetched_at(0), Some(0));
-        assert_eq!(orch.queue().get_prefetched_at(1), Some(1));
-        assert_eq!(orch.queue().get_prefetched_at(2), Some(2));
-        assert_eq!(
-            recording.activated_windows.lock().clone(),
-            vec![vec!["song-0".to_string(), "song-new".to_string(), "song-1".to_string(),]]
-        );
-        assert_eq!(
-            recording.prepared.lock().clone(),
-            vec![
-                ("song-new".to_string(), PreloadTier::Gapless),
-                ("song-1".to_string(), PreloadTier::Eager),
-            ]
-        );
+        assert_eq!(orch.queue().get_prefetched_at(1), None);
+        assert_eq!(orch.queue().get_prefetched_at(2), None);
+        assert_eq!(recording.activated_windows.lock().clone(), vec![vec!["song-0".to_string()]]);
+        assert!(recording.prepared.lock().is_empty());
     }
 
     #[test]
-    fn queue_append_reconciliation_only_prepares_new_tail_entries() {
+    fn queue_append_reconciliation_defers_future_tail_preparation() {
         let (_mpv_guard, _temp_dir, orch, recording) = setup_orchestrator_with_preparer();
 
         orch.queue().add(test_song("song-0"), None);
@@ -1740,9 +1778,7 @@ mod tests {
         orch.reconcile_active_window_after_queue_mutation().unwrap();
 
         assert_eq!(orch.queue().playback_base_index(), 0);
-        assert_eq!(
-            recording.prepared.lock().clone(),
-            vec![("song-2".to_string(), PreloadTier::Eager)]
-        );
+        assert!(recording.prepared.lock().is_empty());
+        assert_eq!(recording.activated_windows.lock().clone(), vec![vec!["song-0".to_string()]]);
     }
 }

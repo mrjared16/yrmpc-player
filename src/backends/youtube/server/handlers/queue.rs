@@ -166,7 +166,7 @@ mod tests {
     }
 
     #[test]
-    fn handle_add_song_outside_active_window_warms_once_via_queue_event_handler() {
+    fn handle_add_song_outside_active_window_defers_background_work_to_coordinator_policy() {
         let _mpv_guard = acquire_mpv_test_guard();
         let temp_dir = TempDir::new().unwrap();
         let socket = temp_dir.path().join("test-mpv.sock");
@@ -234,6 +234,6 @@ mod tests {
         ));
 
         assert!(recording.warmed.lock().is_empty());
-        assert_eq!(recording.warmed_batches.lock().as_slice(), &[vec!["song-999".to_string()]]);
+        assert!(recording.warmed_batches.lock().is_empty());
     }
 }

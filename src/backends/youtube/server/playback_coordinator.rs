@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use super::playback_horizon::ResolvedPlaybackHorizon;
 
-const NEXT_THREE_WINDOW_SIZE: usize = 3;
+const BACKGROUND_WINDOW_SIZE: usize = 3;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TrackOwner {
@@ -29,7 +29,8 @@ pub struct PlaybackCoordinatorSnapshot {
     pub current_track: Option<String>,
     pub current_owner: Option<TrackOwner>,
     pub resolved_horizon: Vec<String>,
-    pub next_three_window: Vec<String>,
+    pub warm_window: Vec<String>,
+    pub prefix_window: Vec<String>,
     pub active_prefix_job: Option<String>,
     pub track_states: HashMap<String, TrackJobState>,
     pub playback_started: bool,
@@ -67,8 +68,13 @@ impl PlaybackCoordinator {
     }
 
     #[must_use]
-    pub fn next_three_window(&self) -> Vec<String> {
-        self.snapshot.next_three_window.clone()
+    pub fn warm_window(&self) -> Vec<String> {
+        self.snapshot.warm_window.clone()
+    }
+
+    #[must_use]
+    pub fn prefix_window(&self) -> Vec<String> {
+        self.snapshot.prefix_window.clone()
     }
 
     #[must_use]
@@ -87,8 +93,14 @@ impl PlaybackCoordinator {
         self.snapshot.current_owner = Some(TrackOwner::ImmediateRelay);
         self.snapshot.playback_started = false;
         self.snapshot.active_prefix_job = None;
-        self.snapshot.next_three_window.clear();
+        self.snapshot.warm_window.clear();
+        self.snapshot.prefix_window.clear();
         self.snapshot.track_states.insert(track_id, TrackJobState::Extracting);
+        log::info!(
+            "[STARTUP-POLICY] phase=begin_immediate_play current_track={} playback_started={} warm_window_len=0 prefix_window_len=0",
+            self.snapshot.current_track.as_deref().unwrap_or("unknown"),
+            self.snapshot.playback_started,
+        );
     }
 
     pub fn reset(&mut self) {
@@ -107,9 +119,14 @@ impl PlaybackCoordinator {
         };
         self.snapshot.track_states.insert(track_id.to_string(), job_state);
 
-        if self.snapshot.active_prefix_job.is_none() {
-            self.recompute_next_three_window();
-        }
+        self.recompute_background_windows();
+        log::info!(
+            "[STARTUP-POLICY] phase=playback_confirmed current_track={} owner={:?} warm_window={:?} prefix_window={:?}",
+            track_id,
+            self.snapshot.current_owner,
+            self.snapshot.warm_window,
+            self.snapshot.prefix_window,
+        );
     }
 
     pub fn swap_current_track_to_direct_fallback(&mut self, track_id: &str) -> bool {
@@ -127,9 +144,18 @@ impl PlaybackCoordinator {
     pub fn queue_changed(&mut self, new_horizon: ResolvedPlaybackHorizon) {
         self.snapshot.resolved_horizon = new_horizon.track_ids().to_vec();
 
-        if self.snapshot.playback_started && self.snapshot.active_prefix_job.is_none() {
-            self.recompute_next_three_window();
+        if self.snapshot.playback_started {
+            self.recompute_background_windows();
         }
+
+        log::debug!(
+            "[STARTUP-POLICY] phase=queue_changed playback_started={} current_track={:?} horizon_len={} warm_window={:?} prefix_window={:?}",
+            self.snapshot.playback_started,
+            self.snapshot.current_track,
+            self.snapshot.resolved_horizon.len(),
+            self.snapshot.warm_window,
+            self.snapshot.prefix_window,
+        );
     }
 
     pub fn sync_current_track_from_queue(
@@ -178,7 +204,7 @@ impl PlaybackCoordinator {
 
         let next_track = self
             .snapshot
-            .next_three_window
+            .prefix_window
             .iter()
             .find(|track_id| {
                 !matches!(
@@ -204,14 +230,14 @@ impl PlaybackCoordinator {
 
         let still_valid = self.snapshot.playback_started
             && self.snapshot.current_track.as_deref() != Some(track_id)
-            && self.snapshot.next_three_window.iter().any(|candidate| candidate == track_id);
+            && self.snapshot.prefix_window.iter().any(|candidate| candidate == track_id);
 
         if !still_valid {
             self.snapshot.active_prefix_job = None;
             if matches!(self.snapshot.track_states.get(track_id), Some(TrackJobState::Prefixing)) {
                 self.snapshot.track_states.insert(track_id.to_string(), TrackJobState::None);
             }
-            self.recompute_next_three_window();
+            self.recompute_background_windows();
         }
 
         still_valid
@@ -224,7 +250,7 @@ impl PlaybackCoordinator {
 
         self.snapshot.active_prefix_job = None;
         self.snapshot.track_states.insert(track_id.to_string(), TrackJobState::PrefixReady);
-        self.recompute_next_three_window();
+        self.recompute_background_windows();
         true
     }
 
@@ -235,7 +261,7 @@ impl PlaybackCoordinator {
 
         self.snapshot.active_prefix_job = None;
         self.snapshot.track_states.insert(track_id.to_string(), TrackJobState::Failed);
-        self.recompute_next_three_window();
+        self.recompute_background_windows();
         true
     }
 
@@ -244,10 +270,12 @@ impl PlaybackCoordinator {
         self.snapshot.current_track.as_deref() != Some(track_id)
     }
 
-    fn recompute_next_three_window(&mut self) {
+    fn recompute_background_windows(&mut self) {
         let horizon = ResolvedPlaybackHorizon::new(self.snapshot.resolved_horizon.clone());
-        self.snapshot.next_three_window = horizon
-            .next_tracks_after(self.snapshot.current_track.as_deref(), NEXT_THREE_WINDOW_SIZE);
+        let window = horizon
+            .next_tracks_after(self.snapshot.current_track.as_deref(), BACKGROUND_WINDOW_SIZE);
+        self.snapshot.warm_window = window.clone();
+        self.snapshot.prefix_window = window;
     }
 }
 
@@ -268,10 +296,12 @@ mod tests {
 
         coordinator.queue_changed(horizon(&["current", "a", "b", "c"]));
         coordinator.begin_immediate_play("current");
-        assert!(coordinator.snapshot().next_three_window.is_empty());
+        assert!(coordinator.snapshot().warm_window.is_empty());
+        assert!(coordinator.snapshot().prefix_window.is_empty());
 
         coordinator.mark_bytes_started("current");
-        assert_eq!(coordinator.snapshot().next_three_window, vec!["a", "b", "c"]);
+        assert_eq!(coordinator.snapshot().warm_window, vec!["a", "b", "c"]);
+        assert_eq!(coordinator.snapshot().prefix_window, vec!["a", "b", "c"]);
     }
 
     #[test]
@@ -307,7 +337,8 @@ mod tests {
         coordinator.queue_changed(horizon(&["current", "a", "b", "c"]));
         coordinator.begin_immediate_play("current");
         coordinator.mark_bytes_started("current");
-        assert_eq!(coordinator.next_three_window(), vec!["a", "b", "c"]);
+        assert_eq!(coordinator.warm_window(), vec!["a", "b", "c"]);
+        assert_eq!(coordinator.prefix_window(), vec!["a", "b", "c"]);
 
         coordinator.sync_current_track_from_queue(
             Some("a".to_string()),
@@ -316,7 +347,8 @@ mod tests {
 
         assert_eq!(coordinator.current_track_id().as_deref(), Some("a"));
         assert_eq!(coordinator.current_owner(), None);
-        assert_eq!(coordinator.next_three_window(), vec!["b", "c"]);
+        assert_eq!(coordinator.warm_window(), vec!["b", "c"]);
+        assert_eq!(coordinator.prefix_window(), vec!["b", "c"]);
     }
 
     #[test]
@@ -332,7 +364,8 @@ mod tests {
         );
 
         assert_eq!(coordinator.current_owner(), Some(super::TrackOwner::ImmediateRelay));
-        assert_eq!(coordinator.next_three_window(), vec!["a", "b"]);
+        assert_eq!(coordinator.warm_window(), vec!["a", "b"]);
+        assert_eq!(coordinator.prefix_window(), vec!["a", "b"]);
     }
 
     #[test]
@@ -348,7 +381,8 @@ mod tests {
         assert_eq!(coordinator.current_track_id(), None);
         assert_eq!(coordinator.current_owner(), None);
         assert!(!coordinator.playback_started());
-        assert!(coordinator.next_three_window().is_empty());
+        assert!(coordinator.warm_window().is_empty());
+        assert!(coordinator.prefix_window().is_empty());
         assert_eq!(coordinator.claim_next_prefix_job(), None);
     }
 
@@ -413,5 +447,23 @@ mod tests {
         assert_eq!(snapshot.current_track.as_deref(), Some("current"));
         assert_eq!(snapshot.current_owner, Some(super::TrackOwner::ImmediateRelay));
         assert_eq!(snapshot.resolved_horizon, vec!["current", "a", "b", "c"]);
+    }
+
+    #[test]
+    fn begin_immediate_play_clears_background_policy_until_playback_starts() {
+        let mut coordinator = PlaybackCoordinator::default();
+        coordinator.queue_changed(horizon(&["old", "a", "b", "c"]));
+        coordinator.begin_immediate_play("old");
+        coordinator.mark_bytes_started("old");
+        assert_eq!(coordinator.warm_window(), vec!["a", "b", "c"]);
+        assert_eq!(coordinator.prefix_window(), vec!["a", "b", "c"]);
+
+        coordinator.begin_immediate_play("new");
+
+        let snapshot = coordinator.snapshot();
+        assert_eq!(snapshot.current_track.as_deref(), Some("new"));
+        assert!(!snapshot.playback_started);
+        assert!(snapshot.warm_window.is_empty());
+        assert!(snapshot.prefix_window.is_empty());
     }
 }
