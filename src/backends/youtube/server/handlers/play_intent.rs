@@ -17,10 +17,13 @@ use crate::backends::youtube::{
         play_intent::{PlayError, PlayIntent, RequestId},
     },
     server::{
+        handlers::stable_track_id,
         orchestrator::{Orchestrator, PREFETCH_WINDOW_SIZE},
+        playback_prepare::prepare_media_blocking,
         queue_coordinator::QueueCoordinator,
     },
 };
+use crate::domain::Song;
 use crate::shared::play_queue::QueueCommand;
 
 pub fn handle_play_with_intent(
@@ -53,6 +56,7 @@ pub fn handle_play_with_intent(
             }
 
             queue_coordinator.apply(QueueCommand::Clear);
+            prime_startup_track(orchestrator, &tracks[*offset]);
             queue_coordinator.apply(QueueCommand::AddBatch { songs: tracks.clone() });
 
             orchestrator.queue().set_shuffle_enabled(*shuffle);
@@ -114,6 +118,7 @@ pub fn handle_play_with_intent(
             orchestrator.queue().add(seed.clone(), None);
 
             queue_coordinator.apply(QueueCommand::Clear);
+            prime_startup_track(orchestrator, seed);
             queue_coordinator.apply(QueueCommand::Add { song: seed.clone() });
 
             let _ = event_tx.send("queue".to_string());
@@ -123,6 +128,21 @@ pub fn handle_play_with_intent(
     }
 
     ServerResponse::Ok
+}
+
+fn prime_startup_track(orchestrator: &Orchestrator, song: &Song) {
+    let track_id = stable_track_id(&song.uri);
+    if track_id.is_empty() {
+        return;
+    }
+
+    if let Err(error) = prepare_media_blocking(
+        orchestrator.media_preparer(),
+        &track_id,
+        crate::backends::youtube::media::PreloadTier::Immediate,
+    ) {
+        log::warn!("[INTENT] startup track priming failed track_id={} error={}", track_id, error,);
+    }
 }
 
 fn context_source_label(intent: &PlayIntent) -> &'static str {
@@ -373,6 +393,42 @@ mod tests {
             ordered_uris,
             vec!["youtube://ctx-a".to_string(), "youtube://ctx-b".to_string()]
         );
+    }
+
+    #[test]
+    fn context_intent_primes_current_track_before_queue_batch_warm() {
+        let (_mpv_guard, _temp_dir, orchestrator, queue_coordinator, recording, _play_queue) =
+            setup_orchestrator();
+        let (event_tx, _event_rx) = crossbeam::channel::unbounded();
+        let tracks = vec![
+            test_song("youtube://ctx-a"),
+            test_song("youtube://ctx-b"),
+            test_song("youtube://ctx-c"),
+        ];
+
+        let response = handle_play_with_intent(
+            PlayIntent::Context { tracks, offset: 0, shuffle: false, source: None },
+            17,
+            &orchestrator,
+            &queue_coordinator,
+            &event_tx,
+        );
+
+        assert!(matches!(response, ServerResponse::Ok));
+        let prepared = recording.prepared.lock().clone();
+        assert_eq!(
+            prepared.first(),
+            Some(&("ctx-a".to_string(), crate::backends::youtube::media::PreloadTier::Immediate))
+        );
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        loop {
+            let warmed = recording.warmed.lock().clone();
+            if warmed == vec!["ctx-b".to_string(), "ctx-c".to_string()] {
+                break;
+            }
+            assert!(std::time::Instant::now() < deadline, "unexpected warmed list: {warmed:?}");
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
     }
 
     #[test]
