@@ -127,7 +127,10 @@ impl YouTubeServer {
             audio_source_plan.transport,
             AudioTransportTarget::LocalRelay
         ) {
-            match RelayRuntime::start_with_cache(services.audio_cache()) {
+            match RelayRuntime::start_with_cache(
+                services.audio_cache(),
+                Some(services.url_resolver()),
+            ) {
                 Ok(runtime) => Some(Arc::new(runtime)),
                 Err(err) => {
                     log::warn!(
