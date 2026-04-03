@@ -18,7 +18,7 @@ fn find_cookies_file() -> Option<PathBuf> {
     let candidates = [
         PathBuf::from("../cookies.txt"),
         PathBuf::from("../../cookies.txt"),
-        PathBuf::from("<PROJECT_ROOT>/cookies.txt"),
+        PathBuf::from("cookies.txt"),
     ];
 
     for path in candidates {
