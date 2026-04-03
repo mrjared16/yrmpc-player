@@ -104,6 +104,14 @@ impl YouTubeApi {
         if normalized.is_empty() { None } else { Some(normalized) }
     }
 
+    fn normalize_playlist_browse_id(raw: &str) -> String {
+        if raw.starts_with("VL") { raw.to_string() } else { format!("VL{raw}") }
+    }
+
+    fn normalize_watch_playlist_id(raw: &str) -> String {
+        raw.strip_prefix("VL").unwrap_or(raw).to_string()
+    }
+
     /// Search for music - returns structured SearchResults with sections
     ///
     /// Uses adapter layer for ytmapi-rs conversions, keeping domain types
@@ -266,12 +274,19 @@ impl YouTubeApi {
     }
 
     fn browse_playlist(&self, api: &YtMusic<BrowserToken>, playlist_id: &str) -> Result<Vec<Song>> {
-        log::debug!("YouTube API: browse_playlist(playlist_id='{}')", playlist_id);
-        let query = GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
+        let watch_playlist_id = Self::normalize_watch_playlist_id(playlist_id);
+        log::debug!(
+            "YouTube API: browse_playlist(playlist_id='{}', watch_playlist_id='{}')",
+            playlist_id,
+            watch_playlist_id
+        );
+        let query =
+            GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(&watch_playlist_id));
         let playlist = self.rt.block_on(api.query(query)).map_err(|e| {
             log::error!(
-                "YouTube API browse_playlist failed for playlist_id='{}': {}",
+                "YouTube API browse_playlist failed for playlist_id='{}' (watch='{}'): {}",
                 playlist_id,
+                watch_playlist_id,
                 e
             );
             e
@@ -307,15 +322,23 @@ impl YouTubeApi {
         let api = self.api.lock();
         let api = api.as_ref().ok_or_else(|| anyhow!("API not authenticated"))?;
 
-        log::debug!("YouTube API: get_playlist_details(playlist_id='{}')", playlist_id);
+        let browse_playlist_id = Self::normalize_playlist_browse_id(playlist_id);
+        let watch_playlist_id = Self::normalize_watch_playlist_id(playlist_id);
+
+        log::debug!(
+            "YouTube API: get_playlist_details(playlist_id='{}', browse_playlist_id='{}', watch_playlist_id='{}')",
+            playlist_id,
+            browse_playlist_id,
+            watch_playlist_id
+        );
 
         // First, get playlist metadata (title, description, author, etc.)
-        let details_query = GetPlaylistDetailsQuery::new(PlaylistID::from_raw(playlist_id));
+        let details_query = GetPlaylistDetailsQuery::new(PlaylistID::from_raw(&browse_playlist_id));
         let details = self.rt.block_on(api.query(details_query))?;
 
         // Then, get the tracks from watch playlist query
         let tracks_query =
-            GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(playlist_id));
+            GetWatchPlaylistQuery::new_from_playlist_id(PlaylistID::from_raw(&watch_playlist_id));
         let playlist_tracks = self.rt.block_on(api.query(tracks_query))?;
 
         let mut tracks = Vec::new();
@@ -674,6 +697,46 @@ mod tests {
     fn test_normalize_query_rejects_blank_input() {
         assert_eq!(YouTubeApi::normalize_query(" \n\t "), None);
         assert_eq!(YouTubeApi::normalize_query("\u{0}\u{8}"), None);
+    }
+
+    #[test]
+    fn test_normalize_playlist_browse_id_adds_vl_prefix() {
+        assert_eq!(
+            YouTubeApi::normalize_playlist_browse_id("PLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"),
+            "VLPLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"
+        );
+        assert_eq!(
+            YouTubeApi::normalize_playlist_browse_id("RDCLAK5uy_example"),
+            "VLRDCLAK5uy_example"
+        );
+    }
+
+    #[test]
+    fn test_normalize_playlist_browse_id_preserves_existing_vl_prefix() {
+        assert_eq!(
+            YouTubeApi::normalize_playlist_browse_id("VLPLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"),
+            "VLPLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"
+        );
+    }
+
+    #[test]
+    fn test_normalize_watch_playlist_id_strips_vl_prefix() {
+        assert_eq!(
+            YouTubeApi::normalize_watch_playlist_id("VLPLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"),
+            "PLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"
+        );
+        assert_eq!(
+            YouTubeApi::normalize_watch_playlist_id("VLRDCLAK5uy_example"),
+            "RDCLAK5uy_example"
+        );
+    }
+
+    #[test]
+    fn test_normalize_watch_playlist_id_preserves_non_vl_ids() {
+        assert_eq!(
+            YouTubeApi::normalize_watch_playlist_id("PLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"),
+            "PLrCSB3UeThVQOxLdlq-QTHQChQM0HKTsm"
+        );
     }
 
     #[test]
