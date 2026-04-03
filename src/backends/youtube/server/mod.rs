@@ -56,7 +56,7 @@ use parking_lot::Mutex;
 
 use super::{
     audio::{AudioDeliveryPlanner, AudioTransportTarget, CacheConfig, MpvAudioSource},
-    config::{AudioDeliveryMode, ExtractorType, YtDlpExtractorConfig},
+    config::{AudioDeliveryMode, BackgroundExtractMode, ExtractorType, YtDlpExtractorConfig},
     media::{MediaPreparer, RelayRuntime},
     protocol::{ServerCommand, ServerResponse, framing},
     services::{
@@ -97,6 +97,8 @@ impl YouTubeServer {
         cookie_file: Option<&str>,
         extractor_type: ExtractorType,
         audio_delivery_mode: AudioDeliveryMode,
+        background_extract_mode: BackgroundExtractMode,
+        future_track_count: usize,
         ytdlp_config: YtDlpExtractorConfig,
     ) -> Result<Self> {
         let mpv_socket = socket_path.with_extension("mpv.sock");
@@ -187,6 +189,8 @@ impl YouTubeServer {
             Arc::clone(&queue),
             Arc::clone(&state_tracker),
             Arc::clone(&media_preparer),
+            background_extract_mode,
+            future_track_count,
         ));
 
         let queue_event_handler = QueueEventHandler::new(
@@ -196,9 +200,9 @@ impl YouTubeServer {
         )
         .with_media_preparer(Arc::clone(&media_preparer))
         .with_playback_coordinator(Arc::clone(orchestrator.coordinator()))
-        .with_prefix_window_worker_kick({
+        .with_plan_changed({
             let orchestrator = Arc::clone(&orchestrator);
-            Arc::new(move || orchestrator.kick_prefix_window_worker())
+            Arc::new(move || orchestrator.publish_prefix_plan_changed())
         });
 
         let queue_coordinator = Arc::new(QueueCoordinator::new(
@@ -507,6 +511,8 @@ mod tests {
             None,
             ExtractorType::default(),
             AudioDeliveryMode::default(),
+            BackgroundExtractMode::default(),
+            2,
             YtDlpExtractorConfig::default(),
         );
         assert!(result.is_ok() || result.is_err());

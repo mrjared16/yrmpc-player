@@ -29,7 +29,7 @@ pub struct QueueEventHandler {
     play_queue: Arc<Mutex<PlayQueue>>,
     media_preparer: Option<Arc<dyn MediaPreparer>>,
     playback_coordinator: Option<Arc<Mutex<PlaybackCoordinator>>>,
-    prefix_window_worker_kick: Option<Arc<dyn Fn() + Send + Sync>>,
+    plan_changed: Option<Arc<dyn Fn() + Send + Sync>>,
 }
 
 impl QueueEventHandler {
@@ -45,7 +45,7 @@ impl QueueEventHandler {
             play_queue,
             media_preparer: None,
             playback_coordinator: None,
-            prefix_window_worker_kick: None,
+            plan_changed: None,
         }
     }
 
@@ -62,8 +62,8 @@ impl QueueEventHandler {
         self
     }
 
-    pub fn with_prefix_window_worker_kick(mut self, kick: Arc<dyn Fn() + Send + Sync>) -> Self {
-        self.prefix_window_worker_kick = Some(kick);
+    pub fn with_plan_changed(mut self, publish: Arc<dyn Fn() + Send + Sync>) -> Self {
+        self.plan_changed = Some(publish);
         self
     }
 
@@ -93,7 +93,7 @@ impl QueueEventHandler {
         if let Some(coordinator) = &self.playback_coordinator {
             sync_coordinator_horizon(coordinator, &play_queue, &play_order, current_id);
         }
-        self.kick_prefix_window_worker_if_started();
+        self.publish_plan_changed();
         drop(play_queue);
 
         if play_order.is_empty() {
@@ -103,6 +103,15 @@ impl QueueEventHandler {
 
     fn handle_items_removed(&mut self, ids: &[QueueId]) {
         log::debug!("QueueEvent::ItemsRemoved: {ids:?}");
+
+        let play_queue = self.play_queue.lock();
+        let play_order = play_queue.get_play_order().to_vec();
+        let current_id = play_queue.get_current_id();
+
+        if let Some(coordinator) = &self.playback_coordinator {
+            sync_coordinator_horizon(coordinator, &play_queue, &play_order, current_id);
+        }
+        self.publish_plan_changed();
     }
 
     fn handle_order_changed(&mut self, play_order: &[QueueId], current_id: Option<QueueId>) {
@@ -111,7 +120,7 @@ impl QueueEventHandler {
         if let Some(coordinator) = &self.playback_coordinator {
             sync_coordinator_horizon(coordinator, &self.play_queue.lock(), play_order, current_id);
         }
-        self.kick_prefix_window_worker_if_started();
+        self.publish_plan_changed();
 
         if self.queue.current_index().is_some() {
             log::debug!("Skipping QueueEvent::OrderChanged playback sync during active playback");
@@ -196,7 +205,7 @@ impl QueueEventHandler {
             let play_queue = self.play_queue.lock();
             sync_coordinator_horizon(coordinator, &play_queue, play_queue.get_play_order(), to);
         }
-        self.kick_prefix_window_worker_if_started();
+        self.publish_plan_changed();
     }
 
     fn handle_modes_changed(&mut self, shuffle: bool, repeat: RepeatMode) {
@@ -208,7 +217,10 @@ impl QueueEventHandler {
         if let Some(coordinator) = &self.playback_coordinator {
             coordinator.lock().reset();
         }
-        if let Some(ref preparer) = self.media_preparer {
+        self.publish_plan_changed();
+        if self.plan_changed.is_none()
+            && let Some(ref preparer) = self.media_preparer
+        {
             preparer.activate_playback_window(&[]);
         }
     }
@@ -218,19 +230,17 @@ impl QueueEventHandler {
         if let Some(coordinator) = &self.playback_coordinator {
             coordinator.lock().reset();
         }
-        if let Some(ref preparer) = self.media_preparer {
+        self.publish_plan_changed();
+        if self.plan_changed.is_none()
+            && let Some(ref preparer) = self.media_preparer
+        {
             preparer.activate_playback_window(&[]);
         }
     }
 
-    fn kick_prefix_window_worker_if_started(&self) {
-        let playback_started = self
-            .playback_coordinator
-            .as_ref()
-            .map(|coordinator| coordinator.lock().playback_started())
-            .unwrap_or(false);
-        if playback_started && let Some(kick) = &self.prefix_window_worker_kick {
-            kick();
+    fn publish_plan_changed(&self) {
+        if let Some(publish) = &self.plan_changed {
+            publish();
         }
     }
 }
@@ -268,7 +278,16 @@ fn sync_coordinator_horizon(
         anchor_track.as_deref(),
     );
 
-    coordinator.lock().sync_with_queue_observation(observed_current_track, horizon);
+    let queue_track_ids =
+        ResolvedPlaybackHorizon::from_play_queue_track_id(play_queue, play_order, None)
+            .track_ids()
+            .to_vec();
+
+    coordinator.lock().sync_with_queue_observation(
+        observed_current_track,
+        horizon,
+        queue_track_ids,
+    );
 }
 
 fn filter_background_extract_track_ids(
@@ -340,7 +359,10 @@ fn normalized_window_track_ids(play_queue: &PlayQueue, window: &[QueueId]) -> Ve
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use parking_lot::Mutex;
     use tempfile::TempDir;
@@ -348,7 +370,8 @@ mod tests {
     use super::*;
     use crate::backends::youtube::{
         audio::AudioDeliveryPlanner,
-        config::{AudioDeliveryMode, ExtractorType},
+        config::{AudioDeliveryMode, BackgroundExtractMode, ExtractorType},
+        media::MediaPreparationPlan,
         server::test_support::{MpvTestGuard, RecordingMediaPreparer, acquire_mpv_test_guard},
         url_resolver::UrlResolver,
     };
@@ -636,6 +659,85 @@ mod tests {
     }
 
     #[test]
+    fn handle_items_added_publishes_plan_changed_even_before_playback_started() {
+        let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let notifications = Arc::new(AtomicUsize::new(0));
+
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_plan_changed({
+                    let notifications = Arc::clone(&notifications);
+                    Arc::new(move || {
+                        notifications.fetch_add(1, Ordering::SeqCst);
+                    })
+                });
+
+        let added_event = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
+        for event in added_event {
+            handler.handle(event);
+        }
+
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn handle_items_removed_recomputes_horizon_and_publishes_plan_changed() {
+        let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
+        let notifications = Arc::new(AtomicUsize::new(0));
+
+        let current_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
+        {
+            QueueEvent::ItemsAdded { ref ids } => ids[0],
+            _ => unreachable!(),
+        };
+        let removed_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") })[0]
+        {
+            QueueEvent::ItemsAdded { ref ids } => ids[0],
+            _ => unreachable!(),
+        };
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
+
+        coordinator.lock().begin_immediate_play("video000");
+        coordinator.lock().mark_bytes_started("video000");
+        coordinator.lock().queue_changed(
+            ResolvedPlaybackHorizon::new(vec!["video000".to_string(), "video111".to_string()]),
+            vec!["video000".to_string(), "video111".to_string()],
+        );
+
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_playback_coordinator(Arc::clone(&coordinator))
+                .with_plan_changed({
+                    let notifications = Arc::clone(&notifications);
+                    Arc::new(move || {
+                        notifications.fetch_add(1, Ordering::SeqCst);
+                    })
+                });
+
+        let removed_events = play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Remove { id: removed_id });
+        for event in removed_events {
+            handler.handle(event);
+        }
+
+        let snapshot = coordinator.lock().snapshot();
+        assert_eq!(snapshot.resolved_horizon, vec!["video000"]);
+        assert!(snapshot.extract_scope.is_empty());
+        assert!(snapshot.prefix_window.is_empty());
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
     fn handle_items_added_repairs_stale_current_track_before_recomputing_horizon() {
         let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
         let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
@@ -651,6 +753,10 @@ mod tests {
             _ => unreachable!(),
         };
         play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
+        coordinator.lock().queue_changed(
+            ResolvedPlaybackHorizon::new(vec!["video000".to_string()]),
+            vec!["video000".to_string()],
+        );
         coordinator.lock().begin_immediate_play("stale-current");
         coordinator.lock().mark_bytes_started("stale-current");
 
@@ -668,9 +774,9 @@ mod tests {
 
         let snapshot = coordinator.lock().snapshot();
         assert_eq!(snapshot.current_track.as_deref(), Some("video000"));
-        assert_eq!(snapshot.warm_window, vec!["video999"]);
+        assert_eq!(snapshot.extract_scope, vec!["video999"]);
         assert_eq!(snapshot.prefix_window, vec!["video999"]);
-        assert!(!snapshot.warm_window.contains(&"video000".to_string()));
+        assert!(!snapshot.extract_scope.contains(&"video000".to_string()));
     }
 
     #[test]
@@ -681,10 +787,10 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        coordinator.lock().queue_changed(ResolvedPlaybackHorizon::new(vec![
-            "video000".to_string(),
-            "video111".to_string(),
-        ]));
+        coordinator.lock().queue_changed(
+            ResolvedPlaybackHorizon::new(vec!["video000".to_string(), "video111".to_string()]),
+            vec!["video000".to_string(), "video111".to_string()],
+        );
         coordinator.lock().begin_immediate_play("video000");
         coordinator.lock().mark_bytes_started("video000");
         assert_eq!(coordinator.lock().claim_next_prefix_job().as_deref(), Some("video111"));
@@ -700,9 +806,80 @@ mod tests {
         assert_eq!(snapshot.current_track, None);
         assert_eq!(snapshot.current_owner, None);
         assert!(!snapshot.playback_started);
-        assert!(snapshot.warm_window.is_empty());
+        assert!(snapshot.extract_scope.is_empty());
         assert!(snapshot.prefix_window.is_empty());
         assert!(snapshot.active_prefix_job.is_none());
+    }
+
+    fn media_plan_from_coordinator(
+        coordinator: &PlaybackCoordinator,
+        background_extract_mode: BackgroundExtractMode,
+    ) -> MediaPreparationPlan {
+        let plan = coordinator.preparation_plan();
+        let mut active_window = Vec::new();
+        if let Some(current_track) = plan.current_track {
+            active_window.push(current_track);
+        }
+        active_window.extend(plan.prefix_window.iter().cloned());
+
+        MediaPreparationPlan {
+            background_extract_mode,
+            active_window,
+            prefix_targets: plan.prefix_window,
+            extract_scope_generation: plan.extract_scope_generation,
+            extract_scope: plan.extract_scope,
+        }
+    }
+
+    fn assert_reset_event_clears_media_via_plan(event: QueueEvent) {
+        let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let recording = Arc::new(RecordingMediaPreparer::fail_on_prepare());
+        let preparer: Arc<dyn MediaPreparer> = recording.clone();
+        let coordinator =
+            Arc::new(Mutex::new(PlaybackCoordinator::new(BackgroundExtractMode::Balanced, 2)));
+
+        coordinator.lock().queue_changed(
+            ResolvedPlaybackHorizon::new(vec!["video000".to_string(), "video111".to_string()]),
+            vec!["video000".to_string(), "video111".to_string()],
+        );
+        coordinator.lock().begin_immediate_play("video000");
+        coordinator.lock().mark_bytes_started("video000");
+        recording.apply_plan(media_plan_from_coordinator(
+            &coordinator.lock(),
+            BackgroundExtractMode::Balanced,
+        ));
+        assert!(recording.activated_windows.lock().iter().any(|window| !window.is_empty()));
+
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_playback_coordinator(Arc::clone(&coordinator))
+                .with_plan_changed({
+                    let coordinator = Arc::clone(&coordinator);
+                    let recording = Arc::clone(&recording);
+                    Arc::new(move || {
+                        let plan = media_plan_from_coordinator(
+                            &coordinator.lock(),
+                            BackgroundExtractMode::Balanced,
+                        );
+                        recording.apply_plan(plan);
+                    })
+                });
+
+        handler.handle(event);
+
+        assert_eq!(recording.activated_windows.lock().last().cloned(), Some(Vec::new()));
+    }
+
+    #[test]
+    fn handle_stopped_clears_media_window_via_plan_publication() {
+        assert_reset_event_clears_media_via_plan(QueueEvent::Stopped);
+    }
+
+    #[test]
+    fn handle_cleared_clears_media_window_via_plan_publication() {
+        assert_reset_event_clears_media_via_plan(QueueEvent::Cleared);
     }
 
     #[test]

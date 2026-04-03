@@ -443,6 +443,14 @@ impl SectionList {
                 }
             }
 
+            ListAction::PlayScope(idx) => {
+                if let Some(item) = self.flat_items.get(idx).and_then(|i| i.as_content()) {
+                    ContentAction::PlayScope(item.clone())
+                } else {
+                    ContentAction::Handled
+                }
+            }
+
             ListAction::Mark(indices) => {
                 let items = self.indices_to_items(&indices);
                 ContentAction::Mark(items)

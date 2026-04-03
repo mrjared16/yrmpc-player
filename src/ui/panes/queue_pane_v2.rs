@@ -403,6 +403,7 @@ impl Pane for QueuePaneV2 {
             ContentAction::Mark(_) => {
                 // Marks handled internally by SectionList
             }
+            ContentAction::PlayScope(_) => {}
             ContentAction::Activate(item) => {
                 let pane_action = self.resolve_action(item, ctx);
                 // For legacy Pane, we just trigger the action directly
@@ -490,6 +491,7 @@ impl NavigatorPane for QueuePaneV2 {
                 let pane_action = self.resolve_action(item, ctx);
                 Ok(pane_action)
             }
+            ContentAction::PlayScope(_) => Ok(PaneAction::Handled),
             ContentAction::Mark(_) => Ok(PaneAction::Handled),
             ContentAction::Delete(items) => {
                 let ids: Vec<u32> =

@@ -113,6 +113,8 @@ mod tests {
             Arc::clone(&queue),
             state_tracker,
             media_preparer,
+            crate::backends::youtube::config::BackgroundExtractMode::Balanced,
+            2,
         );
         let queue_event_handler = Mutex::new(QueueEventHandler::new(
             Arc::clone(&playback),
@@ -191,6 +193,8 @@ mod tests {
             Arc::clone(&queue),
             state_tracker,
             Arc::clone(&media_preparer),
+            crate::backends::youtube::config::BackgroundExtractMode::Balanced,
+            2,
         );
         let queue_event_handler = Mutex::new(
             QueueEventHandler::new(

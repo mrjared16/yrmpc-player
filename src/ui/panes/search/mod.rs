@@ -713,6 +713,7 @@ impl SearchPane {
                 CommonAction::EnterSearch => {}
                 CommonAction::NextResult => {}
                 CommonAction::PreviousResult => {}
+                CommonAction::PlayScope => {}
                 CommonAction::Select => {}
                 CommonAction::InvertSelection => {}
                 CommonAction::Rename => {}
@@ -974,6 +975,7 @@ impl SearchPane {
 
                     ctx.render()?;
                 }
+                CommonAction::PlayScope => {}
                 CommonAction::NextResult => {
                     self.songs_dir
                         .jump_next_matching(ctx.config.theme.browser_song_format.0.as_slice(), ctx);

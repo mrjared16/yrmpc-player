@@ -11,6 +11,7 @@
     max_fps: 30,
     scrolloff: 0,
     wrap_navigation: false,
+    show_footer_key_hints: true,
     enable_mouse: true,
     enable_config_hot_reload: true,
     status_update_interval_ms: 1000,
@@ -81,6 +82,7 @@
             "<C-Space>": InvertSelection,
             "G":         Bottom,
             "<CR>":      Confirm,
+            "P":         PlayScope,
             "i":         FocusInput,
             "J":         MoveDown,
             "<C-d>":     DownHalf,
@@ -177,4 +179,3 @@
         ),
     ],
 )
-

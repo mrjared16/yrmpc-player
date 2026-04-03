@@ -121,6 +121,7 @@ impl Default for KeyConfigFile {
                 (Key { key: K::Char('c'), modifiers: M::CONTROL }, C::Close),
                 (Key { key: K::Esc,       modifiers: M::NONE    }, C::Close),
                 (Key { key: K::Enter,     modifiers: M::NONE    }, C::Confirm),
+                (Key { key: K::Char('P'), modifiers: M::SHIFT   }, C::PlayScope),
                 (Key { key: K::Char('i'), modifiers: M::NONE    }, C::FocusInput),
                 (Key { key: K::Char('B'), modifiers: M::SHIFT   }, C::ShowInfo),
                 (Key { key: K::Char('z'), modifiers: M::CONTROL }, C::ContextMenu {}),

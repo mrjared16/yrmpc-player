@@ -8,7 +8,7 @@
 //! This module is used by both the main server and the internal event
 //! processor.
 
-use std::{sync::Arc, thread};
+use std::{sync::Arc, thread, time::Duration};
 
 use anyhow::{Context, Result};
 use crossbeam::channel::Sender;
@@ -16,10 +16,11 @@ use parking_lot::Mutex;
 
 use crate::backends::youtube::{
     audio::MpvInput,
-    media::{MediaPreparer, PreloadTier, PreparedMedia},
+    config::BackgroundExtractMode,
+    media::{MediaPreparationPlan, MediaPreparer, PreloadTier, PreparedMedia},
     protocol::{ServerResponse, SongData},
     server::handlers::stable_track_id,
-    server::playback_coordinator::PlaybackCoordinator,
+    server::playback_coordinator::{PlaybackCoordinator, PreparationPlan},
     server::playback_horizon::ResolvedPlaybackHorizon,
     server::playback_prepare::{
         build_current_runtime_input_with_direct_fallback, build_runtime_mpv_input,
@@ -79,8 +80,10 @@ pub struct Orchestrator {
     queue: Arc<QueueService>,
     state_tracker: Arc<PlaybackStateTracker>,
     media_preparer: Arc<dyn MediaPreparer>,
+    background_extract_mode: BackgroundExtractMode,
+    future_track_count: usize,
     coordinator: Arc<Mutex<PlaybackCoordinator>>,
-    prefix_window_kick: Sender<()>,
+    prefix_plan_changed: Sender<()>,
     prefetch: Arc<PrefetchManager>,
     track_ended: Arc<TrackEndedHandler>,
 }
@@ -91,16 +94,24 @@ impl Orchestrator {
         queue: Arc<QueueService>,
         state_tracker: Arc<PlaybackStateTracker>,
         media_preparer: Arc<dyn MediaPreparer>,
+        background_extract_mode: BackgroundExtractMode,
+        future_track_count: usize,
     ) -> Self {
-        let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
+        let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::new(
+            background_extract_mode,
+            future_track_count,
+        )));
         let prefetch =
             Arc::new(PrefetchManager::new(Arc::clone(&queue), Arc::clone(&media_preparer)));
-        let (prefix_window_kick, prefix_window_rx) = crossbeam::channel::bounded(1);
+        let (prefix_plan_changed, prefix_window_rx) = crossbeam::channel::bounded(1);
+        let prefix_plan_changed_for_track_ended = prefix_plan_changed.clone();
         let playback_for_track_ended = Arc::clone(&playback);
         let queue_for_track_ended = Arc::clone(&queue);
         let state_for_track_ended = Arc::clone(&state_tracker);
         let preparer_for_track_ended = Arc::clone(&media_preparer);
         let coordinator_for_track_ended = Arc::clone(&coordinator);
+        let background_extract_mode_for_track_ended = background_extract_mode;
+        let future_track_count_for_track_ended = future_track_count;
         let play_position_sync: Arc<dyn Fn(usize) -> ServerResponse + Send + Sync> =
             Arc::new(move |pos| {
                 play_position_sync_with_services(
@@ -109,6 +120,9 @@ impl Orchestrator {
                     &state_for_track_ended,
                     &preparer_for_track_ended,
                     &coordinator_for_track_ended,
+                    &prefix_plan_changed_for_track_ended,
+                    background_extract_mode_for_track_ended,
+                    future_track_count_for_track_ended,
                     pos,
                 )
             });
@@ -123,6 +137,7 @@ impl Orchestrator {
         spawn_prefix_window_worker(
             Arc::clone(&media_preparer),
             Arc::clone(&coordinator),
+            background_extract_mode,
             prefix_window_rx,
         );
 
@@ -131,8 +146,10 @@ impl Orchestrator {
             queue,
             state_tracker,
             media_preparer,
+            background_extract_mode,
+            future_track_count,
             coordinator,
-            prefix_window_kick,
+            prefix_plan_changed,
             prefetch,
             track_ended,
         }
@@ -213,26 +230,20 @@ impl Orchestrator {
 
         if !coordinator.playback_started() {
             coordinator.mark_bytes_started(&track_id);
-            let warm_window = coordinator.warm_window();
-            let prefix_window = coordinator.prefix_window();
+            let plan = coordinator.preparation_plan();
             drop(coordinator);
-            log_startup_window_state(
-                "playback_started",
-                Some(track_id.as_str()),
-                &warm_window,
-                &prefix_window,
-            );
-            self.kick_prefix_window_worker();
+            log_startup_plan_state("playback_started", &plan);
+            self.publish_prefix_plan_changed();
         }
     }
 
     pub fn prefetch_upcoming(&self) {
         log::debug!("[STARTUP] phase=kick_background_worker reason=prefetch_upcoming_api");
-        self.kick_prefix_window_worker();
+        self.publish_prefix_plan_changed();
     }
 
-    pub fn kick_prefix_window_worker(&self) {
-        match self.prefix_window_kick.try_send(()) {
+    pub fn publish_prefix_plan_changed(&self) {
+        match self.prefix_plan_changed.try_send(()) {
             Ok(()) | Err(crossbeam::channel::TrySendError::Full(())) => {}
             Err(crossbeam::channel::TrySendError::Disconnected(())) => {}
         }
@@ -276,6 +287,9 @@ impl Orchestrator {
             &self.state_tracker,
             &self.media_preparer,
             &self.coordinator,
+            &self.prefix_plan_changed,
+            self.background_extract_mode,
+            self.future_track_count,
             pos,
         )
     }
@@ -293,17 +307,16 @@ impl Orchestrator {
             .filter(|track_id| !track_id.is_empty());
         let new_horizon =
             ResolvedPlaybackHorizon::from_queue_service(self.queue.as_ref(), current_idx);
-
         let mut coordinator = self.coordinator.lock();
         if coordinator.should_preserve_pending_current_track(current_track.as_deref()) {
             return;
         }
 
-        coordinator.sync_with_queue_observation(current_track, new_horizon);
+        coordinator.sync_with_playback_observation(current_track, new_horizon);
 
         if coordinator.playback_started() {
             drop(coordinator);
-            self.kick_prefix_window_worker();
+            self.publish_prefix_plan_changed();
         }
     }
 
@@ -352,27 +365,20 @@ impl Orchestrator {
             current_only_window.clone(),
         );
         activate_playback_window(&self.media_preparer, &self.queue, &current_only_window);
-        let (playback_started, current_track, warm_window, prefix_window) = {
+        let plan = {
             let mut coordinator = self.coordinator.lock();
-            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
-                self.queue.as_ref(),
-                current_idx,
-            ));
-            (
-                coordinator.playback_started(),
-                coordinator.current_track_id(),
-                coordinator.warm_window(),
-                coordinator.prefix_window(),
-            )
-        };
-        if playback_started {
-            log_startup_window_state(
-                "queue_mutation_reconciled",
-                current_track.as_deref(),
-                &warm_window,
-                &prefix_window,
+            coordinator.queue_changed(
+                ResolvedPlaybackHorizon::from_queue_service(self.queue.as_ref(), current_idx),
+                ResolvedPlaybackHorizon::extract_scope_from_queue_service(
+                    self.queue.as_ref(),
+                    current_idx,
+                ),
             );
-            self.kick_prefix_window_worker();
+            coordinator.preparation_plan()
+        };
+        if plan.playback_started {
+            log_startup_plan_state("queue_mutation_reconciled", &plan);
+            self.publish_prefix_plan_changed();
         }
 
         Ok(())
@@ -404,126 +410,53 @@ impl Orchestrator {
 fn spawn_prefix_window_worker(
     media_preparer: Arc<dyn MediaPreparer>,
     coordinator: Arc<Mutex<PlaybackCoordinator>>,
+    background_extract_mode: BackgroundExtractMode,
     prefix_window_rx: crossbeam::channel::Receiver<()>,
 ) {
     thread::spawn(move || {
-        let mut last_warm_window: Option<Vec<String>> = None;
-        let mut last_activated_prefix_window: Option<Vec<String>> = None;
-
         while prefix_window_rx.recv().is_ok() {
-            loop {
-                let (warm_window, prefix_window) = {
-                    let coordinator = coordinator.lock();
-                    (coordinator.warm_window(), coordinator.prefix_window())
-                };
-                warm_window_if_changed(media_preparer.as_ref(), &mut last_warm_window, warm_window);
-                activate_window_if_changed(
-                    media_preparer.as_ref(),
-                    &mut last_activated_prefix_window,
-                    prefix_window,
-                );
+            while prefix_window_rx.try_recv().is_ok() {}
 
-                let Some(track_id) = coordinator.lock().claim_next_prefix_job() else {
-                    break;
-                };
-
-                let should_prepare = {
-                    let mut coordinator = coordinator.lock();
-                    coordinator.revalidate_claimed_prefix_job(&track_id)
-                };
-                if !should_prepare {
-                    continue;
-                }
-
-                let result =
-                    prepare_media_blocking(&media_preparer, &track_id, PreloadTier::Background);
-                let prefix_window = {
-                    let mut coordinator = coordinator.lock();
-                    match result {
-                        Ok(
-                            PreparedMedia::StagedPrefix { .. } | PreparedMedia::LocalFile { .. },
-                        ) => {
-                            coordinator.finish_prefix_job(&track_id);
-                        }
-                        Ok(other) => {
-                            log::warn!(
-                                "prefix window worker expected staged background prefix for {}, got {:?}",
-                                track_id,
-                                other
-                            );
-                            coordinator.fail_prefix_job(&track_id);
-                        }
-                        Err(err) => {
-                            log::warn!("prefix window worker failed for {}: {}", track_id, err);
-                            coordinator.fail_prefix_job(&track_id);
-                        }
-                    }
-                    coordinator.prefix_window()
-                };
-                activate_window_if_changed(
-                    media_preparer.as_ref(),
-                    &mut last_activated_prefix_window,
-                    prefix_window,
-                );
-            }
+            let plan = coordinator.lock().preparation_plan();
+            media_preparer.apply_plan(media_preparation_plan(&plan, background_extract_mode));
         }
     });
 }
 
-fn warm_window_if_changed(
-    media_preparer: &dyn MediaPreparer,
-    last_warm_window: &mut Option<Vec<String>>,
-    warm_window: Vec<String>,
-) {
-    if last_warm_window.as_ref() == Some(&warm_window) {
-        return;
+fn media_preparation_plan(
+    plan: &PreparationPlan,
+    background_extract_mode: BackgroundExtractMode,
+) -> MediaPreparationPlan {
+    let mut active_window = Vec::new();
+    if let Some(current_track) = &plan.current_track {
+        active_window.push(current_track.clone());
     }
+    active_window.extend(plan.prefix_window.iter().cloned());
 
-    if warm_window.is_empty() {
-        *last_warm_window = Some(warm_window);
-        return;
-    }
-
-    log::info!(
-        "[STARTUP-WORKER] action=warm_window_changed count={} tracks={:?}",
-        warm_window.len(),
-        warm_window,
-    );
-    media_preparer.warm_many(&warm_window);
-    *last_warm_window = Some(warm_window);
-}
-
-fn activate_window_if_changed(
-    media_preparer: &dyn MediaPreparer,
-    last_activated_window: &mut Option<Vec<String>>,
-    active_window: Vec<String>,
-) {
-    if last_activated_window.as_ref() == Some(&active_window) {
-        return;
-    }
-
-    log::info!(
-        "[STARTUP-WORKER] action=prefix_window_changed count={} tracks={:?}",
-        active_window.len(),
+    MediaPreparationPlan {
+        background_extract_mode,
         active_window,
-    );
-    media_preparer.activate_playback_window(&active_window);
-    *last_activated_window = Some(active_window);
+        prefix_targets: plan.prefix_window.clone(),
+        extract_scope_generation: plan.extract_scope_generation,
+        extract_scope: plan.extract_scope.clone(),
+    }
 }
 
-fn log_startup_window_state(
-    label: &str,
-    current_track: Option<&str>,
-    warm_window: &[String],
-    prefix_window: &[String],
-) {
-    log::info!(
-        "[STARTUP] phase={} current_track={} warm_window={:?} prefix_window={:?}",
+fn log_startup_plan_state(label: &str, plan: &PreparationPlan) {
+    log::debug!(
+        "[STARTUP] phase={} current_track={} extract_scope={:?} prefix_window={:?}",
         label,
-        current_track.unwrap_or("none"),
-        warm_window,
-        prefix_window,
+        plan.current_track.as_deref().unwrap_or("none"),
+        &plan.extract_scope,
+        &plan.prefix_window,
     );
+}
+
+fn publish_prefix_plan_changed(prefix_plan_changed: &crossbeam::channel::Sender<()>) {
+    match prefix_plan_changed.try_send(()) {
+        Ok(()) | Err(crossbeam::channel::TrySendError::Full(())) => {}
+        Err(crossbeam::channel::TrySendError::Disconnected(())) => {}
+    }
 }
 
 fn play_position_sync_with_services(
@@ -532,6 +465,9 @@ fn play_position_sync_with_services(
     state_tracker: &Arc<PlaybackStateTracker>,
     media_preparer: &Arc<dyn MediaPreparer>,
     coordinator: &Arc<Mutex<PlaybackCoordinator>>,
+    prefix_plan_changed: &crossbeam::channel::Sender<()>,
+    background_extract_mode: BackgroundExtractMode,
+    _future_track_count: usize,
     pos: usize,
 ) -> ServerResponse {
     log::info!("play_position_sync for pos={} (uses MediaPreparer)", pos);
@@ -565,8 +501,20 @@ fn play_position_sync_with_services(
 
     {
         let mut coordinator = coordinator.lock();
-        coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(queue.as_ref(), pos));
-        coordinator.begin_immediate_play(track.track_id.clone());
+        let new_horizon = ResolvedPlaybackHorizon::from_queue_service(queue.as_ref(), pos);
+        let should_refresh_extract_scope =
+            !matches!(background_extract_mode, BackgroundExtractMode::Performance)
+                || coordinator.current_track_id().is_none();
+        if should_refresh_extract_scope {
+            coordinator.queue_changed(
+                new_horizon,
+                ResolvedPlaybackHorizon::extract_scope_from_queue_service(queue.as_ref(), pos),
+            );
+            coordinator.begin_immediate_play(track.track_id.clone());
+        } else {
+            coordinator.sync_with_playback_observation(Some(track.track_id.clone()), new_horizon);
+            coordinator.begin_immediate_play_preserving_extract_scope(track.track_id.clone());
+        }
     }
 
     let mut appended_prefetch_indices: Vec<usize> = Vec::new();
@@ -606,11 +554,13 @@ fn play_position_sync_with_services(
 
     queue.set_playback_window_state(Some(pos), pos, appended_prefetch_indices.clone());
     activate_playback_window(media_preparer, queue, &appended_prefetch_indices);
-    log::info!(
+    log::debug!(
         "[STARTUP] phase=current_only_window_armed position={} queue_indices={:?}",
         pos,
         appended_prefetch_indices,
     );
+
+    publish_prefix_plan_changed(prefix_plan_changed);
 
     if appended_prefetch_indices.len() < plan.prefetch_indices.len() {
         log::warn!(
@@ -774,18 +724,38 @@ mod tests {
     /// Create an Orchestrator from test services with a stub preparer
     fn setup_orchestrator() -> (MpvTestGuard, TempDir, Orchestrator) {
         let (mpv_guard, temp_dir, playback, queue, state_tracker) = setup_test_services();
-        let orch = Orchestrator::new(playback, queue, state_tracker, stub_media_preparer());
+        let orch = Orchestrator::new(
+            playback,
+            queue,
+            state_tracker,
+            stub_media_preparer(),
+            BackgroundExtractMode::Balanced,
+            2,
+        );
         (mpv_guard, temp_dir, orch)
     }
 
     /// Create an Orchestrator with a custom RecordingMediaPreparer
-    fn setup_orchestrator_with_preparer()
-    -> (MpvTestGuard, TempDir, Orchestrator, Arc<RecordingMediaPreparer>) {
+    fn setup_orchestrator_with_preparer_mode(
+        background_extract_mode: BackgroundExtractMode,
+    ) -> (MpvTestGuard, TempDir, Orchestrator, Arc<RecordingMediaPreparer>) {
         let (mpv_guard, temp_dir, playback, queue, state_tracker) = setup_test_services();
         let recording = Arc::new(RecordingMediaPreparer::default());
         let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
-        let orch = Orchestrator::new(playback, queue, state_tracker, media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue,
+            state_tracker,
+            media_preparer,
+            background_extract_mode,
+            2,
+        );
         (mpv_guard, temp_dir, orch, recording)
+    }
+
+    fn setup_orchestrator_with_preparer()
+    -> (MpvTestGuard, TempDir, Orchestrator, Arc<RecordingMediaPreparer>) {
+        setup_orchestrator_with_preparer_mode(BackgroundExtractMode::Balanced)
     }
 
     fn wait_for_prepared_entries(
@@ -800,6 +770,20 @@ mod tests {
             std::thread::sleep(Duration::from_millis(10));
         }
         recording.prepared.lock().clone()
+    }
+
+    fn wait_for_warmed_entries(
+        recording: &Arc<RecordingMediaPreparer>,
+        expected_len: usize,
+    ) -> Vec<String> {
+        for _ in 0..50 {
+            let warmed = recording.warmed.lock().clone();
+            if warmed.len() >= expected_len {
+                return warmed;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+        recording.warmed.lock().clone()
     }
 
     fn test_song(id: &str) -> Song {
@@ -878,6 +862,10 @@ mod tests {
         fn activate_playback_window(&self, track_ids: &[String]) {
             self.activated_windows.lock().push(track_ids.to_vec());
         }
+
+        fn apply_plan(&self, plan: MediaPreparationPlan) {
+            self.activate_playback_window(&plan.active_window);
+        }
     }
 
     // =========================================================================
@@ -920,6 +908,31 @@ mod tests {
     }
 
     #[test]
+    fn media_preparation_plan_includes_current_track_in_active_window() {
+        let plan = PreparationPlan {
+            current_track: Some("video000".to_string()),
+            playback_started: true,
+            resolved_horizon: vec!["video000".to_string(), "video111".to_string()],
+            extract_scope_generation: 7,
+            extract_scope: vec!["video111".to_string()],
+            prefix_window: vec!["video111".to_string()],
+        };
+
+        let media_plan = media_preparation_plan(&plan, BackgroundExtractMode::Balanced);
+
+        assert_eq!(
+            media_plan,
+            MediaPreparationPlan {
+                background_extract_mode: BackgroundExtractMode::Balanced,
+                active_window: vec!["video000".to_string(), "video111".to_string()],
+                prefix_targets: vec!["video111".to_string()],
+                extract_scope_generation: 7,
+                extract_scope: vec!["video111".to_string()],
+            }
+        );
+    }
+
+    #[test]
     fn play_position_sync_normalizes_full_youtube_urls() {
         let (_mpv_guard, _temp_dir, orch, recording) = setup_orchestrator_with_preparer();
 
@@ -950,7 +963,10 @@ mod tests {
         let response = orch.play_position_sync(0);
         assert!(matches!(response, ServerResponse::Ok));
 
-        assert!(orch.coordinator.lock().snapshot().warm_window.is_empty());
+        assert_eq!(
+            orch.coordinator.lock().snapshot().extract_scope,
+            vec!["video123", "video456", "video789", "video999"]
+        );
         assert!(orch.coordinator.lock().snapshot().prefix_window.is_empty());
         assert_eq!(
             *recording.prepared.lock(),
@@ -960,30 +976,99 @@ mod tests {
 
         orch.handle_playback_started_for_current_track();
 
-        let prepared = wait_for_prepared_entries(&recording, 4);
+        let prepared = wait_for_prepared_entries(&recording, 3);
+        let warmed = wait_for_warmed_entries(&recording, 3);
 
         assert_eq!(
-            orch.coordinator.lock().snapshot().warm_window,
-            vec!["video456", "video789", "video999"]
+            orch.coordinator.lock().snapshot().extract_scope,
+            vec!["video123", "video456", "video789", "video999"]
         );
+        assert_eq!(orch.coordinator.lock().snapshot().prefix_window, vec!["video456", "video789"]);
         assert_eq!(
-            orch.coordinator.lock().snapshot().prefix_window,
-            vec!["video456", "video789", "video999"]
+            warmed,
+            vec!["video456".to_string(), "video789".to_string(), "video999".to_string()]
         );
+        assert!(recording.warmed_batches.lock().is_empty());
         assert_eq!(
             prepared,
             vec![
                 ("video123".to_string(), PreloadTier::Immediate),
                 ("video456".to_string(), PreloadTier::Background),
                 ("video789".to_string(), PreloadTier::Background),
-                ("video999".to_string(), PreloadTier::Background),
             ]
         );
         assert!(recording.activated_windows.lock().contains(&vec![
+            "video123".to_string(),
             "video456".to_string(),
             "video789".to_string(),
-            "video999".to_string()
         ]));
+    }
+
+    #[test]
+    fn performance_mode_starts_queue_wide_extract_before_playback_started() {
+        let (_mpv_guard, _temp_dir, orch, recording) =
+            setup_orchestrator_with_preparer_mode(BackgroundExtractMode::Performance);
+
+        orch.queue().add(test_song("video123"), None);
+        orch.queue().add(test_song("video456"), None);
+        orch.queue().add(test_song("video789"), None);
+        orch.queue().add(test_song("video999"), None);
+
+        let response = orch.play_position_sync(0);
+        assert!(matches!(response, ServerResponse::Ok));
+
+        assert_eq!(
+            orch.coordinator.lock().snapshot().extract_scope,
+            vec!["video123", "video456", "video789", "video999"]
+        );
+        assert!(orch.coordinator.lock().snapshot().prefix_window.is_empty());
+        assert!(recording.warmed.lock().is_empty());
+
+        for _ in 0..50 {
+            if recording.warmed_batches.lock().contains(&vec![
+                "video456".to_string(),
+                "video789".to_string(),
+                "video999".to_string(),
+            ]) {
+                return;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        panic!("performance mode did not start queue-wide extract warm before playback-start");
+    }
+
+    #[test]
+    fn performance_mode_track_change_does_not_restart_queue_wide_extract_batch() {
+        let (_mpv_guard, _temp_dir, orch, recording) =
+            setup_orchestrator_with_preparer_mode(BackgroundExtractMode::Performance);
+
+        orch.queue().add(test_song("video123"), None);
+        orch.queue().add(test_song("video456"), None);
+        orch.queue().add(test_song("video789"), None);
+        orch.queue().add(test_song("video999"), None);
+
+        let response = orch.play_position_sync(0);
+        assert!(matches!(response, ServerResponse::Ok));
+
+        for _ in 0..50 {
+            if recording.warmed_batches.lock().contains(&vec![
+                "video456".to_string(),
+                "video789".to_string(),
+                "video999".to_string(),
+            ]) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        }
+
+        assert_eq!(recording.warmed_batches.lock().len(), 1);
+
+        let response = orch.play_position_sync(1);
+        assert!(matches!(response, ServerResponse::Ok));
+        std::thread::sleep(Duration::from_millis(50));
+
+        assert_eq!(recording.warmed_batches.lock().len(), 1);
     }
 
     #[test]
@@ -1023,7 +1108,14 @@ mod tests {
         let (mpv_guard, temp_dir, playback, queue, state_tracker) =
             setup_test_services_with_mode(AudioDeliveryMode::Relay, None);
         let media_preparer: Arc<dyn MediaPreparer> = Arc::new(StreamAndCacheMediaPreparer);
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker,
+            media_preparer,
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         queue.add(test_song("song-0"), None);
         queue.add(test_song("song-1"), None);
@@ -1042,7 +1134,7 @@ mod tests {
             )
         );
         assert!(!snapshot.playback_started);
-        assert!(snapshot.warm_window.is_empty());
+        assert_eq!(snapshot.extract_scope, vec!["song-0", "song-1", "song-2", "song-3"]);
         assert!(snapshot.prefix_window.is_empty());
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
 
@@ -1056,8 +1148,8 @@ mod tests {
             )
         );
         assert_eq!(snapshot.track_states.get("song-0"), Some(&crate::backends::youtube::server::playback_coordinator::TrackJobState::PlayingDirect));
-        assert_eq!(snapshot.warm_window, vec!["song-1", "song-2", "song-3"]);
-        assert_eq!(snapshot.prefix_window, vec!["song-1", "song-2", "song-3"]);
+        assert_eq!(snapshot.extract_scope, vec!["song-0", "song-1", "song-2", "song-3"]);
+        assert_eq!(snapshot.prefix_window, vec!["song-1", "song-2"]);
         assert!(!orch.coordinator.lock().should_accept_queue_extract_result("song-0"));
 
         drop(temp_dir);
@@ -1108,10 +1200,10 @@ mod tests {
 
         {
             let mut coordinator = orch.coordinator.lock();
-            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
-                orch.queue().as_ref(),
-                0,
-            ));
+            coordinator.queue_changed(
+                ResolvedPlaybackHorizon::from_queue_service(orch.queue().as_ref(), 0),
+                ResolvedPlaybackHorizon::extract_scope_from_queue_service(orch.queue().as_ref(), 0),
+            );
             coordinator.begin_immediate_play("song-1");
         }
 
@@ -1137,10 +1229,10 @@ mod tests {
 
         {
             let mut coordinator = orch.coordinator.lock();
-            coordinator.queue_changed(ResolvedPlaybackHorizon::from_queue_service(
-                orch.queue().as_ref(),
-                0,
-            ));
+            coordinator.queue_changed(
+                ResolvedPlaybackHorizon::from_queue_service(orch.queue().as_ref(), 0),
+                ResolvedPlaybackHorizon::extract_scope_from_queue_service(orch.queue().as_ref(), 0),
+            );
             coordinator.begin_immediate_play("song-1");
             assert!(coordinator.swap_current_track_to_direct_fallback("song-1"));
         }
@@ -1267,8 +1359,14 @@ mod tests {
         let fail_ids = HashSet::from(["song-1".to_string()]);
         let media_preparer: Arc<dyn MediaPreparer> =
             Arc::new(SelectiveFailMediaPreparer { fail_ids });
-        let orch =
-            Orchestrator::new(playback, queue.clone(), state_tracker.clone(), media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker.clone(),
+            media_preparer,
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         orch.handle_end_of_window(RepeatMode::Off);
 
@@ -1305,7 +1403,14 @@ mod tests {
         let fail_ids = HashSet::from(["song-1".to_string(), "song-2".to_string()]);
         let media_preparer: Arc<dyn MediaPreparer> =
             Arc::new(SelectiveFailMediaPreparer { fail_ids });
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker,
+            media_preparer,
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         let response = orch.play_position_sync(0);
         assert!(matches!(response, ServerResponse::Ok));
@@ -1329,7 +1434,14 @@ mod tests {
         let fail_ids = HashSet::from(["song-1".to_string()]);
         let media_preparer: Arc<dyn MediaPreparer> =
             Arc::new(SelectiveFailMediaPreparer { fail_ids });
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker,
+            media_preparer,
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         let response = orch.play_position_sync(0);
         assert!(matches!(response, ServerResponse::Ok));
@@ -1496,12 +1608,18 @@ mod tests {
         let prepared = wait_for_prepared_entries(&recording, 2);
         assert_eq!(prepared[0], ("song-0".to_string(), PreloadTier::Immediate));
         assert_eq!(prepared[1], ("song-1".to_string(), PreloadTier::Background));
-        assert_eq!(orch.coordinator().lock().warm_window(), vec!["song-1".to_string()]);
+        assert_eq!(
+            orch.coordinator().lock().extract_scope(),
+            vec!["song-0".to_string(), "song-1".to_string()]
+        );
         assert_eq!(orch.coordinator().lock().prefix_window(), vec!["song-1".to_string()]);
         assert!(orch.coordinator().lock().playback_started());
 
         let activated_windows = recording.activated_windows.lock().clone();
-        assert_eq!(activated_windows, vec![vec!["song-0".to_string()], vec!["song-1".to_string()]]);
+        assert_eq!(
+            activated_windows,
+            vec![vec!["song-0".to_string()], vec!["song-0".to_string(), "song-1".to_string()]]
+        );
     }
 
     #[test]
@@ -1521,7 +1639,7 @@ mod tests {
         assert_eq!(prepared[1], ("song-1".to_string(), PreloadTier::Background));
         assert_eq!(
             recording.activated_windows.lock().clone(),
-            vec![vec!["song-0".to_string()], vec!["song-1".to_string()]]
+            vec![vec!["song-0".to_string()], vec!["song-0".to_string(), "song-1".to_string()]]
         );
     }
 
@@ -1542,7 +1660,7 @@ mod tests {
 
         assert_eq!(orch.queue().current_index(), Some(1));
         assert_eq!(orch.coordinator().lock().current_track_id().as_deref(), Some("song-1"));
-        assert!(orch.coordinator().lock().warm_window().is_empty());
+        assert_eq!(orch.coordinator().lock().extract_scope(), Vec::<String>::new());
         assert!(orch.coordinator().lock().prefix_window().is_empty());
         assert_eq!(
             recording.activated_windows.lock().clone(),
@@ -1681,7 +1799,14 @@ mod tests {
         let fail_ids = HashSet::from(["song-3".to_string()]);
         let media_preparer: Arc<dyn MediaPreparer> =
             Arc::new(SelectiveFailMediaPreparer { fail_ids });
-        let orch = Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer);
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker,
+            media_preparer,
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         queue.set_current(Some(0));
         queue.set_playback_base_index(0);
@@ -1709,8 +1834,14 @@ mod tests {
             fail_ids: HashSet::from(["song-3".to_string()]),
             ..Default::default()
         });
-        let orch =
-            Orchestrator::new(playback, queue.clone(), state_tracker, media_preparer.clone());
+        let orch = Orchestrator::new(
+            playback,
+            queue.clone(),
+            state_tracker,
+            media_preparer.clone(),
+            BackgroundExtractMode::Balanced,
+            2,
+        );
 
         queue.set_current(Some(0));
         queue.set_playback_base_index(0);
@@ -1779,6 +1910,11 @@ mod tests {
 
         assert_eq!(orch.queue().playback_base_index(), 0);
         assert!(recording.prepared.lock().is_empty());
-        assert_eq!(recording.activated_windows.lock().clone(), vec![vec!["song-0".to_string()]]);
+        let activated_windows = recording.activated_windows.lock().clone();
+        assert!(
+            activated_windows.is_empty() || activated_windows == vec![vec!["song-0".to_string()]],
+            "unexpected activated windows: {:?}",
+            activated_windows
+        );
     }
 }

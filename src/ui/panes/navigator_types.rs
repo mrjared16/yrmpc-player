@@ -97,6 +97,8 @@ pub enum ListAction {
     Handled,
     /// Enter pressed - activate item at index
     Activate(usize),
+    /// Play scope pressed - pane interprets scoped play for item at index
+    PlayScope(usize),
     /// Space pressed - return marked indices
     Mark(Vec<usize>),
     /// Shift+K - move items up
@@ -127,6 +129,8 @@ pub enum ContentAction {
     Handled,
     /// Enter pressed - pane interprets (play? navigate? drill?)
     Activate(DetailItem),
+    /// Play-scope key pressed - pane interprets scoped play semantics
+    PlayScope(DetailItem),
     /// Space pressed - return marked items
     Mark(Vec<DetailItem>),
     /// Shift+K - move items up
@@ -169,6 +173,9 @@ pub enum PaneAction {
 
     /// Play all songs starting from index
     PlayAll { songs: Vec<Song>, start_index: usize },
+
+    /// Fetch album/playlist details and play the referenced context directly
+    PlayRef(EntityRef),
 
     /// Add songs to queue
     Enqueue(Vec<Song>),

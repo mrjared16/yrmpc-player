@@ -110,6 +110,8 @@ fn main() -> Result<()> {
         cookie_path.as_deref().and_then(|p| p.to_str()),
         extractor_type,
         audio_delivery_mode,
+        youtube_config.audio.background_extract_mode,
+        youtube_config.audio.future_track_count,
         YtDlpExtractorConfig {
             cookies_path: cookie_path.as_deref().and_then(|path| path.to_str()).map(str::to_owned),
         },

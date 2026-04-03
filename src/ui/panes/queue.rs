@@ -1181,6 +1181,7 @@ impl Pane for QueuePane {
 
                     ctx.render()?;
                 }
+                CommonAction::PlayScope => {}
                 CommonAction::Bottom => {
                     if !self.queue.is_empty() {
                         self.queue.last();

@@ -683,6 +683,8 @@ fn test_runtime_direct_truncated_fixture_triggers_eof_recovery_diagnostic() {
         Arc::clone(&queue),
         Arc::clone(&state_tracker),
         Arc::clone(&media_preparer),
+        rmpc::backends::youtube::config::BackgroundExtractMode::Balanced,
+        2,
     );
     let response = orch.play_position_sync(0);
     assert!(matches!(response, rmpc::backends::youtube::protocol::ServerResponse::Ok));

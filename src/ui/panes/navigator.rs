@@ -51,12 +51,23 @@ use crate::{
     actions::{Intent, Selection},
     ctx::Ctx,
     domain::DetailItem,
-    shared::key_event::KeyEvent,
+    shared::{
+        key_event::KeyEvent,
+        macros::{status_error, status_info},
+    },
 };
 
 const NAV_FETCH_PLAYLIST_DETAIL_ID: &str = "navigator_fetch_playlist_detail";
 const NAV_FETCH_ALBUM_DETAIL_ID: &str = "navigator_fetch_album_detail";
 const NAV_FETCH_ARTIST_DETAIL_ID: &str = "navigator_fetch_artist_detail";
+const NAV_PLAY_SCOPE_PLAYLIST_ID: &str = "navigator_play_scope_playlist";
+const NAV_PLAY_SCOPE_ALBUM_ID: &str = "navigator_play_scope_album";
+
+enum PlayScopeFetchResult {
+    Playlist { entity: EntityRef, details: crate::domain::content::PlaylistContent },
+    Album { entity: EntityRef, details: crate::domain::content::AlbumContent },
+    Failed { entity: EntityRef },
+}
 
 // =============================================================================
 // NAVIGATOR
@@ -86,6 +97,9 @@ pub struct Navigator {
     /// Pending async navigation request currently being shown as a loading state.
     pending_navigation: Option<EntityRef>,
 
+    /// Pending async fetch-and-play request for album/playlist refs.
+    pending_play_scope: Option<EntityRef>,
+
     /// Action router for Intent dispatch (reused, not recreated)
     action_dispatcher: crate::actions::ActionDispatcher,
 }
@@ -114,6 +128,7 @@ impl Navigator {
             history: Vec::new(),
             max_history: 10,
             pending_navigation: None,
+            pending_play_scope: None,
             action_dispatcher: Self::create_action_dispatcher(),
         }
     }
@@ -348,6 +363,119 @@ impl Navigator {
         Ok(())
     }
 
+    pub(crate) fn request_play_ref(&mut self, entity: EntityRef, ctx: &mut Ctx) -> Result<()> {
+        use crate::{
+            QueryResult,
+            backends::api::{ContentType, Discovery, Item},
+            config::tabs::PaneType,
+            domain::content::ContentDetails,
+        };
+
+        let (query_id, content_type) = match entity.entity_type {
+            DetailId::Playlist => (NAV_PLAY_SCOPE_PLAYLIST_ID, ContentType::Playlist),
+            DetailId::Album => (NAV_PLAY_SCOPE_ALBUM_ID, ContentType::Album),
+            DetailId::Artist => return Ok(()),
+        };
+
+        let pending = entity.clone();
+        let item = Item {
+            id: entity.id.clone(),
+            content_type,
+            title: entity.name.clone(),
+            subtitle: None,
+            thumbnail: None,
+            duration: None,
+            queue_id: None,
+        };
+
+        self.pending_play_scope = Some(pending.clone());
+        ctx.queue_store().reconcile(vec![]);
+        ctx.command(|client| {
+            client.clear()?;
+            Ok(())
+        });
+        status_info!("Play {}", pending.name);
+        ctx.render()?;
+
+        ctx.query().id(query_id).replace_id(query_id).target(PaneType::Search).query(
+            move |client| {
+                let result = match client.details(&item) {
+                    Ok(ContentDetails::Playlist(details)) => {
+                        PlayScopeFetchResult::Playlist { entity: pending.clone(), details }
+                    }
+                    Ok(ContentDetails::Album(details)) => {
+                        PlayScopeFetchResult::Album { entity: pending.clone(), details }
+                    }
+                    Ok(_) | Err(_) => PlayScopeFetchResult::Failed { entity: pending.clone() },
+                };
+
+                Ok(QueryResult::Any(Box::new(result)))
+            },
+        );
+
+        Ok(())
+    }
+
+    fn handle_play_scope_result(&mut self, result: PlayScopeFetchResult, ctx: &Ctx) {
+        match result {
+            PlayScopeFetchResult::Playlist { entity, details } => {
+                if !self.pending_play_scope.as_ref().is_some_and(|pending| pending.id == entity.id)
+                {
+                    return;
+                }
+                self.pending_play_scope = None;
+
+                if details.tracks.is_empty() {
+                    status_error!("Failed to play {}", entity.name);
+                    return;
+                }
+
+                ctx.queue_store()
+                    .play(crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
+                    tracks: details.tracks,
+                    offset: 0,
+                    shuffle: ctx.status.random,
+                    source: Some(
+                        crate::backends::youtube::protocol::play_intent::ContextSource::Playlist {
+                            playlist_id: details.id,
+                        },
+                    ),
+                });
+            }
+            PlayScopeFetchResult::Album { entity, details } => {
+                if !self.pending_play_scope.as_ref().is_some_and(|pending| pending.id == entity.id)
+                {
+                    return;
+                }
+                self.pending_play_scope = None;
+
+                if details.tracks.is_empty() {
+                    status_error!("Failed to play {}", entity.name);
+                    return;
+                }
+
+                ctx.queue_store().play(
+                    crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
+                        tracks: details.tracks,
+                        offset: 0,
+                        shuffle: ctx.status.random,
+                        source: Some(
+                            crate::backends::youtube::protocol::play_intent::ContextSource::Album {
+                                album_id: details.id,
+                            },
+                        ),
+                    },
+                );
+            }
+            PlayScopeFetchResult::Failed { entity } => {
+                if self.pending_play_scope.as_ref().is_some_and(|pending| pending.id == entity.id) {
+                    self.pending_play_scope = None;
+                    status_error!("Failed to play {}", entity.name);
+                }
+            }
+        }
+    }
+
     /// Push content to a detail pane.
     pub fn push_content(&mut self, content: EntityContent) {
         let detail_id = content.detail_id();
@@ -430,6 +558,9 @@ impl Navigator {
                 let executor = PaneActionExecutor::new(&self.action_dispatcher);
                 let items: Vec<DetailItem> = songs.into_iter().map(DetailItem::Song).collect();
                 executor.execute_intent(ctx, Intent::play(items))?;
+            }
+            PaneAction::PlayRef(entity) => {
+                self.request_play_ref(entity, ctx)?;
             }
             PaneAction::Enqueue(songs) => {
                 let executor = PaneActionExecutor::new(&self.action_dispatcher);
@@ -586,6 +717,16 @@ impl Navigator {
         use crate::config::tabs::PaneType;
 
         match (id, data, target) {
+            (
+                NAV_PLAY_SCOPE_PLAYLIST_ID | NAV_PLAY_SCOPE_ALBUM_ID,
+                crate::QueryResult::Any(any),
+                _,
+            ) => {
+                if let Ok(result) = any.downcast::<PlayScopeFetchResult>() {
+                    self.handle_play_scope_result(*result, ctx);
+                }
+                Ok(())
+            }
             (NAV_FETCH_PLAYLIST_DETAIL_ID, crate::QueryResult::PlaylistDetail(details), _) => {
                 if self.pending_navigation.as_ref().is_some_and(|pending| {
                     pending.entity_type == DetailId::Playlist && pending.id == details.id
@@ -795,12 +936,26 @@ mod tests {
         crate::domain::PlaylistContent {
             id: "playlist123".to_string(),
             title: "Test Playlist".to_string(),
-            tracks: vec![],
+            tracks: vec![make_test_song(1, "Playlist Song")],
             author: None,
             thumbnail: None,
             description: None,
             track_count: None,
             duration_text: None,
+            extensions: crate::domain::content::Extensions::default(),
+        }
+    }
+
+    fn make_test_album() -> crate::domain::AlbumContent {
+        crate::domain::AlbumContent {
+            id: "album123".to_string(),
+            title: "Test Album".to_string(),
+            tracks: vec![make_test_song(2, "Album Song")],
+            artist: crate::domain::content::ContentRef::artist("artist123", "Test Artist"),
+            year: None,
+            thumbnail: None,
+            description: None,
+            release_type: None,
             extensions: crate::domain::content::Extensions::default(),
         }
     }
@@ -878,6 +1033,70 @@ mod tests {
 
         assert!(!navigator.artist_pane.has_content());
         assert_eq!(navigator.active, PaneId::Tab(TabId::Search));
+    }
+
+    #[test]
+    fn navigator_play_scope_playlist_result_replaces_queue_without_switching_panes() {
+        let ctx = create_test_ctx();
+        let mut navigator = Navigator::new(&ctx);
+        navigator.switch_to_tab(TabId::Library);
+        navigator.pending_play_scope = Some(EntityRef {
+            entity_type: DetailId::Playlist,
+            id: "playlist123".to_string(),
+            name: "Test Playlist".to_string(),
+        });
+
+        navigator
+            .on_query_finished(
+                NAV_PLAY_SCOPE_PLAYLIST_ID,
+                crate::QueryResult::Any(Box::new(PlayScopeFetchResult::Playlist {
+                    entity: EntityRef {
+                        entity_type: DetailId::Playlist,
+                        id: "playlist123".to_string(),
+                        name: "Test Playlist".to_string(),
+                    },
+                    details: make_test_playlist(),
+                })),
+                crate::config::tabs::PaneType::Search,
+                &ctx,
+            )
+            .unwrap();
+
+        assert_eq!(navigator.active, PaneId::Tab(TabId::Library));
+        assert!(navigator.pending_play_scope.is_none());
+        assert_eq!(ctx.queue_store().len(), 1);
+    }
+
+    #[test]
+    fn navigator_play_scope_album_result_replaces_queue_without_switching_panes() {
+        let ctx = create_test_ctx();
+        let mut navigator = Navigator::new(&ctx);
+        navigator.switch_to_tab(TabId::Search);
+        navigator.pending_play_scope = Some(EntityRef {
+            entity_type: DetailId::Album,
+            id: "album123".to_string(),
+            name: "Test Album".to_string(),
+        });
+
+        navigator
+            .on_query_finished(
+                NAV_PLAY_SCOPE_ALBUM_ID,
+                crate::QueryResult::Any(Box::new(PlayScopeFetchResult::Album {
+                    entity: EntityRef {
+                        entity_type: DetailId::Album,
+                        id: "album123".to_string(),
+                        name: "Test Album".to_string(),
+                    },
+                    details: make_test_album(),
+                })),
+                crate::config::tabs::PaneType::Search,
+                &ctx,
+            )
+            .unwrap();
+
+        assert_eq!(navigator.active, PaneId::Tab(TabId::Search));
+        assert!(navigator.pending_play_scope.is_none());
+        assert_eq!(ctx.queue_store().len(), 1);
     }
 
     #[test]

@@ -814,6 +814,7 @@ pub enum CommonActionFile {
     Rename,
     Close,
     Confirm,
+    PlayScope,
     FocusInput,
     Add,
     AddAll,
@@ -875,6 +876,7 @@ pub enum CommonAction {
     Rename,
     Close,
     Confirm,
+    PlayScope,
     FocusInput,
     #[strum(to_string = "AddOptions({kind})")]
     AddOptions {
@@ -927,6 +929,9 @@ impl ToDescription for CommonAction {
             }
             CommonAction::Confirm => {
                 "Confirm whatever action is currently going on. In browser panes it either enters a directory or adds and plays a song under cursor".into()
+            }
+            CommonAction::PlayScope => {
+                "Play the current pane's scoped context. For example: marked songs, top songs, or the focused album/playlist reference.".into()
             }
             CommonAction::FocusInput => {
                 "Focuses textbox if any is on the screen and is not focused".into()
@@ -1140,6 +1145,7 @@ impl TryFrom<CommonActionFile> for CommonAction {
             CommonActionFile::Rename => CommonAction::Rename,
             CommonActionFile::Close => CommonAction::Close,
             CommonActionFile::Confirm => CommonAction::Confirm,
+            CommonActionFile::PlayScope => CommonAction::PlayScope,
             CommonActionFile::FocusInput => CommonAction::FocusInput,
             CommonActionFile::PaneUp => CommonAction::PaneUp,
             CommonActionFile::PaneDown => CommonAction::PaneDown,

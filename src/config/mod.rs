@@ -49,7 +49,7 @@ use crate::{
 };
 
 #[allow(clippy::struct_excessive_bools)]
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Clone)]
 pub struct Config {
     pub address: MpdAddress,
     pub password: Option<MpdPassword>,
@@ -60,6 +60,7 @@ pub struct Config {
     pub max_fps: u32,
     pub scrolloff: usize,
     pub wrap_navigation: bool,
+    pub show_footer_key_hints: bool,
     pub keybinds: KeyConfig,
     pub enable_mouse: bool,
     pub enable_config_hot_reload: bool,
@@ -90,6 +91,14 @@ pub struct Config {
     pub mpv_socket: Option<String>,
     pub youtube: YouTubeConfig,
     pub legacy_panes: LegacyPanes,
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        ConfigFile::default()
+            .into_config(None, None, None, None, true)
+            .expect("default config should build")
+    }
 }
 
 #[derive(Debug, Default, Clone, Serialize, Deserialize, PartialEq)]
@@ -156,6 +165,8 @@ pub struct ConfigFile {
     scrolloff: usize,
     #[serde(default = "defaults::bool::<false>")]
     wrap_navigation: bool,
+    #[serde(default = "defaults::bool::<true>")]
+    pub show_footer_key_hints: bool,
     #[serde(default = "defaults::default_progress_update_interval_ms")]
     status_update_interval_ms: Option<u64>,
     #[serde(default = "defaults::bool::<false>")]
@@ -250,6 +261,7 @@ impl Default for ConfigFile {
             keybinds: KeyConfigFile::default(),
             volume_step: 5,
             scrolloff: 0,
+            show_footer_key_hints: true,
             status_update_interval_ms: Some(1000),
             mpd_write_timeout_ms: 5_000,
             mpd_read_timeout_ms: 10_000,
@@ -459,6 +471,7 @@ impl ConfigFile {
             max_fps: self.max_fps,
             scrolloff: self.scrolloff,
             wrap_navigation: self.wrap_navigation,
+            show_footer_key_hints: self.show_footer_key_hints,
             status_update_interval_ms: self.status_update_interval_ms.map(|v| v.max(100)),
             mpd_read_timeout: Duration::from_millis(self.mpd_read_timeout_ms),
             mpd_write_timeout: Duration::from_millis(self.mpd_write_timeout_ms),
@@ -646,7 +659,7 @@ pub mod utils {
 mod tests {
     #[cfg(debug_assertions)]
     use crate::config::keys::KeyConfigFile;
-    use crate::config::{ConfigFile, theme::UiConfigFile};
+    use crate::config::{Config, ConfigFile, theme::UiConfigFile};
 
     #[test]
     #[cfg(debug_assertions)]
@@ -708,5 +721,10 @@ mod tests {
         "#;
         let res: Result<ConfigFile, _> = ron::de::from_str(config_str);
         assert!(res.is_err());
+    }
+
+    #[test]
+    fn runtime_default_enables_footer_key_hints() {
+        assert!(Config::default().show_footer_key_hints);
     }
 }

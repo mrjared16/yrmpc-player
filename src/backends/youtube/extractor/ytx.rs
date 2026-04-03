@@ -6,6 +6,7 @@ use std::{
     collections::HashMap,
     io::{BufRead, BufReader},
     process::{Command, Stdio},
+    thread,
 };
 
 use anyhow::{Context, Result, anyhow};
@@ -38,16 +39,18 @@ impl YtxExtractor {
     /// Parse a single NDJSON line from ytx output.
     fn parse_ndjson_line(line: &str) -> Option<(String, Result<String>)> {
         let json: serde_json::Value = serde_json::from_str(line).ok()?;
+        let video_id = json
+            .get("id")
+            .and_then(|v| v.as_str())
+            .or_else(|| json.get("video_id").and_then(|v| v.as_str()))?
+            .to_string();
 
         // Check for error response
         if let Some(error) = json.get("error").and_then(|e| e.as_str()) {
-            let video_id =
-                json.get("video_id").and_then(|v| v.as_str()).unwrap_or("unknown").to_string();
             return Some((video_id, Err(anyhow!("ytx error: {}", error))));
         }
 
         // Extract video_id and url
-        let video_id = json.get("video_id").and_then(|v| v.as_str())?.to_string();
         let url = json.get("url").and_then(|v| v.as_str())?.to_string();
 
         if url.is_empty() {
@@ -55,6 +58,43 @@ impl YtxExtractor {
         }
 
         Some((video_id, Ok(url)))
+    }
+
+    fn summarize_bulk_stderr(stderr: &str) -> Option<String> {
+        let trimmed = stderr.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+
+        for line in trimmed.lines().rev() {
+            let line = line.trim();
+            if line.is_empty() {
+                continue;
+            }
+            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(line) {
+                if let Some(error) = err_json.get("error").and_then(|e| e.as_str()) {
+                    return Some(error.to_string());
+                }
+            }
+            return Some(line.to_string());
+        }
+
+        None
+    }
+
+    fn build_bulk_failure_error(
+        video_id: &str,
+        status: Option<std::process::ExitStatus>,
+        stderr_summary: Option<&str>,
+    ) -> anyhow::Error {
+        match (status.and_then(|s| s.code()), stderr_summary) {
+            (Some(code), Some(stderr)) => {
+                anyhow!("ytx bulk failed for {video_id} (exit {code}): {stderr}")
+            }
+            (Some(code), None) => anyhow!("ytx bulk failed for {video_id} (exit {code})"),
+            (None, Some(stderr)) => anyhow!("ytx bulk failed for {video_id}: {stderr}"),
+            (None, None) => anyhow!("ytx bulk failed for {video_id}: no response"),
+        }
     }
 }
 
@@ -103,24 +143,40 @@ impl Extractor for YtxExtractor {
             }
         };
 
+        let stderr_handle = child.stderr.take().map(|stderr| {
+            thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                let mut lines = Vec::new();
+                for line in reader.lines().map_while(Result::ok) {
+                    lines.push(line);
+                }
+                lines.join("\n")
+            })
+        });
+
         // Read NDJSON output line by line
         if let Some(stdout) = child.stdout.take() {
             let reader = BufReader::new(stdout);
             for line in reader.lines().map_while(Result::ok) {
                 if let Some((video_id, result)) = Self::parse_ndjson_line(&line) {
-                    log::debug!("ytx bulk: {} -> {}", video_id, result.is_ok());
+                    log::trace!("ytx bulk track_id={} result={}", video_id, result.is_ok());
                     results.insert(video_id, result);
                 }
             }
         }
 
         // Wait for process to finish
-        let _ = child.wait();
+        let status = child.wait().ok();
+        let stderr = stderr_handle.and_then(|handle| handle.join().ok()).unwrap_or_default();
+        let stderr_summary = Self::summarize_bulk_stderr(&stderr);
 
         // Mark any missing IDs as errors
         for id in video_ids {
             if !results.contains_key(id) {
-                results.insert(id.clone(), Err(anyhow!("No response from ytx for {}", id)));
+                results.insert(
+                    id.clone(),
+                    Err(Self::build_bulk_failure_error(id, status, stderr_summary.as_deref())),
+                );
             }
         }
 
@@ -165,7 +221,7 @@ impl Extractor for YtxExtractor {
             return Err(anyhow!("ytx returned empty URL"));
         }
 
-        log::debug!("ytx extracted URL for {} (len={})", video_id, url.len());
+        log::trace!("ytx extracted URL for track_id={} (len={})", video_id, url.len());
         Ok(url.to_string())
     }
 
@@ -200,9 +256,47 @@ mod tests {
     }
 
     #[test]
+    fn test_parse_ndjson_success_with_bulk_id_field() {
+        let line = r#"{"id":"abc123","url":"https://example.com/stream","itag":141}"#;
+        let (id, result) = YtxExtractor::parse_ndjson_line(line).unwrap();
+        assert_eq!(id, "abc123");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap(), "https://example.com/stream");
+    }
+
+    #[test]
+    fn test_parse_ndjson_error_with_bulk_id_field() {
+        let line = r#"{"id":"abc123","error":"video not playable: ERROR"}"#;
+        let (id, result) = YtxExtractor::parse_ndjson_line(line).unwrap();
+        assert_eq!(id, "abc123");
+        assert_eq!(result.unwrap_err().to_string(), "ytx error: video not playable: ERROR");
+    }
+
+    #[test]
     fn test_empty_batch() {
         let extractor = YtxExtractor::new();
         let results = extractor.extract_batch(&[]);
         assert!(results.is_empty());
+    }
+
+    #[test]
+    fn test_summarize_bulk_stderr_prefers_json_error() {
+        let stderr = "noise\n{\"error\":\"bulk auth failed\"}";
+        assert_eq!(
+            YtxExtractor::summarize_bulk_stderr(stderr).as_deref(),
+            Some("bulk auth failed")
+        );
+    }
+
+    #[test]
+    fn test_build_bulk_failure_error_includes_status_and_summary() {
+        let status = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("exit 7")
+            .status()
+            .expect("status should be available");
+
+        let err = YtxExtractor::build_bulk_failure_error("abc123", Some(status), Some("quota"));
+        assert_eq!(err.to_string(), "ytx bulk failed for abc123 (exit 7): quota");
     }
 }

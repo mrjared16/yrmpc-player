@@ -37,7 +37,7 @@ use crate::{
     ctx::Ctx,
     domain::{ContentType, DetailItem, SearchResultsContent, SearchableContent, Song},
     mpd::mpd_client::Filter,
-    shared::{key_event::KeyEvent, mouse_event::MouseEvent},
+    shared::{key_event::KeyEvent, macros::status_info, mouse_event::MouseEvent},
     ui::{
         Enqueue, UiEvent,
         panes::{
@@ -438,6 +438,11 @@ impl SearchPaneV2 {
                 // PANE INTERPRETS: What does activation mean for this item?
                 self.resolve_action(ctx, item)?;
             }
+            ContentAction::PlayScope(item) => {
+                if matches!(self.resolve_play_scope_action(ctx, item), PaneAction::Handled) {
+                    ctx.render()?;
+                }
+            }
             ContentAction::Mark(items) => {
                 // Marks are handled internally by SectionList, nothing to do
                 ctx.render()?;
@@ -586,6 +591,54 @@ impl SearchPaneV2 {
             shuffle: false,
             source: Some(ContextSource::Search { query }),
         });
+    }
+
+    fn resolve_play_scope_action(&mut self, ctx: &mut Ctx, item: DetailItem) -> PaneAction {
+        let Some(level) = self.view.current() else {
+            return PaneAction::Handled;
+        };
+
+        if level.section_list.has_marked() {
+            let songs: Vec<_> = level
+                .section_list
+                .marked_items()
+                .iter()
+                .filter_map(|i| i.as_song().cloned())
+                .collect();
+
+            if !songs.is_empty() {
+                let query = self.get_current_query_string();
+                ctx.queue_store().play(PlayIntent::Context {
+                    tracks: songs,
+                    offset: 0,
+                    shuffle: ctx.status.random,
+                    source: Some(ContextSource::Search { query }),
+                });
+                if let Some(level) = self.view.current_mut() {
+                    level.section_list.clear_marks();
+                }
+                status_info!("Play selected songs");
+                return PaneAction::Handled;
+            }
+        }
+
+        if let DetailItem::Ref(content_ref) = item {
+            if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist) {
+                let entity_type = match content_ref.content_type {
+                    ContentType::Album => DetailId::Album,
+                    ContentType::Playlist => DetailId::Playlist,
+                    _ => unreachable!(),
+                };
+                return PaneAction::PlayRef(EntityRef {
+                    entity_type,
+                    id: content_ref.id,
+                    name: content_ref.name,
+                });
+            }
+        }
+
+        status_info!("Play scope only supports marked songs on this page");
+        PaneAction::Handled
     }
 
     fn fetch_playlist_detail(&self, ctx: &Ctx, playlist_id: String) {
@@ -1316,6 +1369,9 @@ impl NavigatorPane for SearchPaneV2 {
                             ContentAction::Activate(item) => {
                                 // Interpret activation in pane context
                                 return Ok(self.action_for_item(item));
+                            }
+                            ContentAction::PlayScope(item) => {
+                                return Ok(self.resolve_play_scope_action(ctx, item));
                             }
                             ContentAction::Mark(_) => return Ok(PaneAction::Handled),
                             ContentAction::MoveUp(_)

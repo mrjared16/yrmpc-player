@@ -40,6 +40,25 @@ impl StagingPipeline {
             .context("Failed to resolve stream URL")
     }
 
+    pub(super) async fn resolve_stream_url_fresh(&self, track_id: String) -> Result<String> {
+        let resolver = Arc::clone(&self.url_resolver);
+        let track_id_for_blocking = track_id;
+        tokio::task::spawn_blocking(move || resolver.get_url_fresh(&track_id_for_blocking))
+            .await
+            .context("spawn_blocking failed")?
+            .context("Failed to resolve fresh stream URL")
+    }
+
+    pub(super) async fn resolve_stream_urls(
+        &self,
+        track_ids: Vec<String>,
+    ) -> Result<std::collections::HashMap<String, Result<String>>> {
+        let resolver = Arc::clone(&self.url_resolver);
+        tokio::task::spawn_blocking(move || resolver.get_urls(&track_ids))
+            .await
+            .context("spawn_blocking failed")
+    }
+
     pub(super) fn prefetch_stream_urls(&self, track_ids: Vec<String>) {
         self.url_resolver.prefetch(track_ids);
     }

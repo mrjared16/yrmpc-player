@@ -57,11 +57,22 @@ impl<P: Extractor, F: Extractor> Extractor for FallbackExtractor<P, F> {
 
         // 3. Retry failed IDs with fallback
         if !failed_ids.is_empty() {
+            let sample_failures: Vec<String> = failed_ids
+                .iter()
+                .take(3)
+                .filter_map(|id| {
+                    results
+                        .get(id)
+                        .and_then(|result| result.as_ref().err())
+                        .map(|err| format!("track_id={id}: {err}"))
+                })
+                .collect();
             log::info!(
-                "Primary extractor ({}) failed for {} IDs, trying fallback ({})...",
+                "Primary extractor ({}) failed for {} IDs, trying fallback ({})... sample_errors={:?}",
                 self.primary.name(),
                 failed_ids.len(),
-                self.fallback.name()
+                self.fallback.name(),
+                sample_failures
             );
 
             let fallback_results = self.fallback.extract_batch(&failed_ids);
@@ -89,7 +100,7 @@ impl<P: Extractor, F: Extractor> Extractor for FallbackExtractor<P, F> {
             Ok(url) => Ok(url),
             Err(primary_err) => {
                 log::info!(
-                    "Primary extractor ({}) failed for {}, trying fallback ({})...",
+                    "Primary extractor ({}) failed for track_id={}, trying fallback ({})...",
                     self.primary.name(),
                     video_id,
                     self.fallback.name()

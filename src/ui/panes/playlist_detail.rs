@@ -13,7 +13,7 @@ use crate::{
     backends::youtube::protocol::play_intent::{ContextSource, PlayIntent},
     ctx::Ctx,
     domain::{DetailItem, PlaylistContent, content::ContentType},
-    shared::key_event::KeyEvent,
+    shared::{key_event::KeyEvent, macros::status_info},
     ui::{
         panes::navigator_types::{
             ContentAction, DetailId, DetailPane, EntityContent, EntityRef, InputMode,
@@ -66,6 +66,7 @@ impl NavigatorPane for PlaylistDetailPane {
             ContentAction::Handled => PaneAction::Handled,
             ContentAction::Back => PaneAction::BackPane,
             ContentAction::Activate(item) => self.resolve_action(item, ctx),
+            ContentAction::PlayScope(item) => self.resolve_play_scope_action(item, ctx),
             ContentAction::Mark(_) => PaneAction::Handled,
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 PaneAction::Handled
@@ -130,6 +131,85 @@ impl PlaylistDetailPane {
             }
         }
     }
+
+    fn resolve_play_scope_action(&mut self, item: DetailItem, ctx: &mut Ctx) -> PaneAction {
+        if let DetailItem::Ref(content_ref) = &item {
+            if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist) {
+                let entity_type = match content_ref.content_type {
+                    ContentType::Album => DetailId::Album,
+                    ContentType::Playlist => DetailId::Playlist,
+                    _ => unreachable!(),
+                };
+                return PaneAction::PlayRef(EntityRef {
+                    entity_type,
+                    id: content_ref.id.clone(),
+                    name: content_ref.name.clone(),
+                });
+            }
+        }
+
+        let Some(level) = self.view.current() else {
+            return PaneAction::Handled;
+        };
+
+        let playlist_id = level.content.id.clone();
+        let playlist_title = level.content.title.clone();
+        let full_tracks = level.content.tracks.clone();
+        let has_marked = level.section_list.has_marked();
+        let marked_tracks =
+            if has_marked { level.section_list.get_selection().songs_cloned() } else { vec![] };
+
+        let Some((intent, used_marks)) = build_detail_play_scope_intent(
+            &item,
+            marked_tracks,
+            full_tracks,
+            ctx.status.random,
+            ContextSource::Playlist { playlist_id },
+        ) else {
+            return PaneAction::Handled;
+        };
+
+        ctx.queue_store().play(intent);
+        if used_marks {
+            if let Some(level) = self.view.current_mut() {
+                level.section_list.clear_marks();
+            }
+            status_info!("Play selected songs");
+        } else {
+            status_info!("Play {}", playlist_title);
+        }
+
+        PaneAction::Handled
+    }
+}
+
+fn build_detail_play_scope_intent(
+    item: &DetailItem,
+    marked_tracks: Vec<crate::domain::Song>,
+    full_tracks: Vec<crate::domain::Song>,
+    shuffle: bool,
+    source: ContextSource,
+) -> Option<(PlayIntent, bool)> {
+    if !marked_tracks.is_empty() {
+        return Some((
+            PlayIntent::Context { tracks: marked_tracks, offset: 0, shuffle, source: Some(source) },
+            true,
+        ));
+    }
+
+    if matches!(item, DetailItem::Ref(content_ref) if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist))
+    {
+        return None;
+    }
+
+    if full_tracks.is_empty() {
+        return None;
+    }
+
+    Some((
+        PlayIntent::Context { tracks: full_tracks, offset: 0, shuffle, source: Some(source) },
+        false,
+    ))
 }
 
 // =============================================================================
@@ -175,7 +255,10 @@ impl DetailPane for PlaylistDetailPane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::content::Extensions;
+    use crate::{
+        domain::{Song, content::Extensions},
+        tests::fixtures,
+    };
 
     fn make_test_playlist() -> PlaylistContent {
         PlaylistContent {
@@ -189,6 +272,13 @@ mod tests {
             duration_text: None,
             extensions: Extensions::default(),
         }
+    }
+
+    fn make_song(uri: &str, title: &str) -> Song {
+        let mut song = Song::default();
+        song.uri = uri.to_string();
+        song.metadata.insert("title".to_string(), vec![title.to_string()]);
+        song
     }
 
     #[test]
@@ -241,5 +331,107 @@ mod tests {
         let pane = PlaylistDetailPane::new();
         assert_eq!(pane.id(), PaneId::Detail(DetailId::Playlist));
         assert_eq!(pane.detail_id(), DetailId::Playlist);
+    }
+
+    #[test]
+    fn play_scope_intent_uses_marked_tracks_before_full_playlist() {
+        let item = DetailItem::Song(make_song("song-2", "Song 2"));
+        let marked = vec![make_song("song-1", "Song 1"), make_song("song-2", "Song 2")];
+        let full = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+
+        let (intent, used_marks) = build_detail_play_scope_intent(
+            &item,
+            marked.clone(),
+            full,
+            true,
+            ContextSource::Playlist { playlist_id: "playlist123".into() },
+        )
+        .expect("marked tracks should build a play-scope intent");
+
+        assert!(used_marks);
+        assert!(matches!(
+            intent,
+            PlayIntent::Context {
+                tracks,
+                offset: 0,
+                shuffle: true,
+                source: Some(ContextSource::Playlist { playlist_id })
+            } if playlist_id == "playlist123" && tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
+        ));
+    }
+
+    #[test]
+    fn play_scope_marks_clear_after_successful_marked_play() {
+        let mut pane = PlaylistDetailPane::new();
+        let mut playlist = make_test_playlist();
+        playlist.tracks = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+        pane.push(EntityContent::Playlist(playlist));
+
+        let selected_item = {
+            let level = pane.view.current_mut().expect("playlist content should exist");
+            level.section_list.select_first();
+            level.section_list.list_view_mut().toggle_mark();
+            level.section_list.select_next();
+            level.section_list.list_view_mut().toggle_mark();
+            level.section_list.selected_item().cloned().expect("song should be selected")
+        };
+
+        let mut ctx = fixtures::ctx();
+        ctx.status.random = true;
+
+        assert!(matches!(
+            pane.resolve_play_scope_action(selected_item, &mut ctx),
+            PaneAction::Handled
+        ));
+        let queue = ctx.queue_store().read();
+        assert_eq!(queue.len(), 2);
+        assert_eq!(queue[0].uri, "song-1");
+        assert_eq!(queue[1].uri, "song-2");
+        drop(queue);
+        assert!(
+            !pane.view.current().expect("playlist content should exist").section_list.has_marked()
+        );
+    }
+
+    #[test]
+    fn play_scope_without_marks_plays_full_playlist_from_start() {
+        let mut pane = PlaylistDetailPane::new();
+        let mut playlist = make_test_playlist();
+        playlist.tracks = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+        pane.push(EntityContent::Playlist(playlist));
+
+        let selected_item = pane
+            .view
+            .current()
+            .expect("playlist content should exist")
+            .section_list
+            .selected_item()
+            .cloned()
+            .expect("song should be selected");
+
+        let mut ctx = fixtures::ctx();
+        ctx.status.random = true;
+
+        assert!(matches!(
+            pane.resolve_play_scope_action(selected_item, &mut ctx),
+            PaneAction::Handled
+        ));
+        let queue = ctx.queue_store().read();
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue[0].uri, "song-1");
+        assert_eq!(queue[1].uri, "song-2");
+        assert_eq!(queue[2].uri, "song-3");
     }
 }

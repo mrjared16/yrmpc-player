@@ -531,6 +531,13 @@ impl SelectableList {
                     }
                     return ListAction::Handled;
                 }
+                CommonAction::PlayScope => {
+                    key.stop_propagation();
+                    if let Some(idx) = self.selected() {
+                        return ListAction::PlayScope(idx);
+                    }
+                    return ListAction::Handled;
+                }
                 CommonAction::Close => {
                     // Esc in Normal mode
                     match self.handle_esc() {

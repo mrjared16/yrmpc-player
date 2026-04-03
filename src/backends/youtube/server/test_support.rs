@@ -1,12 +1,15 @@
 #![cfg(test)]
 
-use std::sync::OnceLock;
+use std::{collections::HashSet, sync::OnceLock};
 
 use anyhow::{Result, bail};
 use async_trait::async_trait;
 use parking_lot::{Mutex, MutexGuard};
 
-use crate::backends::youtube::media::{MediaPreparer, PreloadTier, PreparedMedia};
+use crate::backends::youtube::{
+    config::BackgroundExtractMode,
+    media::{MediaPreparationPlan, MediaPreparer, PreloadTier, PreparedMedia},
+};
 
 static MPV_TEST_LOCK: OnceLock<Mutex<()>> = OnceLock::new();
 
@@ -23,6 +26,10 @@ pub(crate) struct RecordingMediaPreparer {
     pub(crate) warmed: Mutex<Vec<String>>,
     pub(crate) warmed_batches: Mutex<Vec<Vec<String>>>,
     pub(crate) activated_windows: Mutex<Vec<Vec<String>>>,
+    last_active_window: Mutex<Option<Vec<String>>>,
+    last_extract_scope: Mutex<Option<Vec<String>>>,
+    last_extract_scope_generation: Mutex<Option<u64>>,
+    last_prefix_targets: Mutex<Option<Vec<String>>>,
     fail_on_prepare: bool,
 }
 
@@ -57,5 +64,67 @@ impl MediaPreparer for RecordingMediaPreparer {
 
     fn activate_playback_window(&self, track_ids: &[String]) {
         self.activated_windows.lock().push(track_ids.to_vec());
+        *self.last_active_window.lock() = Some(track_ids.to_vec());
+    }
+
+    fn apply_plan(&self, plan: MediaPreparationPlan) {
+        let should_activate = {
+            let mut last_active_window = self.last_active_window.lock();
+            let should_activate = !(plan.active_window.is_empty() && last_active_window.is_none())
+                && last_active_window.as_ref() != Some(&plan.active_window);
+            if should_activate {
+                *last_active_window = Some(plan.active_window.clone());
+            }
+            should_activate
+        };
+        if should_activate {
+            self.activated_windows.lock().push(plan.active_window.clone());
+        }
+
+        {
+            let mut last_prefix_targets = self.last_prefix_targets.lock();
+            if last_prefix_targets.as_ref() != Some(&plan.prefix_targets) {
+                for track_id in &plan.prefix_targets {
+                    self.prepared.lock().push((track_id.clone(), PreloadTier::Background));
+                }
+                *last_prefix_targets = Some(plan.prefix_targets.clone());
+            }
+        }
+
+        match plan.background_extract_mode {
+            BackgroundExtractMode::Balanced => {
+                let prepared_tracks: HashSet<String> =
+                    self.prepared.lock().iter().map(|(track_id, _)| track_id.clone()).collect();
+                let mut last_extract_scope = self.last_extract_scope.lock();
+                if last_extract_scope.as_ref() == Some(&plan.extract_scope) {
+                    return;
+                }
+                for track_id in &plan.extract_scope {
+                    if prepared_tracks.contains(track_id) {
+                        continue;
+                    }
+                    self.warm(track_id);
+                }
+                *last_extract_scope = Some(plan.extract_scope);
+            }
+            BackgroundExtractMode::Performance => {
+                let prepared_tracks: HashSet<String> =
+                    self.prepared.lock().iter().map(|(track_id, _)| track_id.clone()).collect();
+                let mut last_generation = self.last_extract_scope_generation.lock();
+                if *last_generation == Some(plan.extract_scope_generation) {
+                    return;
+                }
+                let filtered_scope: Vec<String> = plan
+                    .extract_scope
+                    .iter()
+                    .filter(|track_id| !prepared_tracks.contains(track_id.as_str()))
+                    .cloned()
+                    .collect();
+                if !filtered_scope.is_empty() {
+                    self.warm_many(&filtered_scope);
+                }
+                *last_generation = Some(plan.extract_scope_generation);
+            }
+        }
     }
 }

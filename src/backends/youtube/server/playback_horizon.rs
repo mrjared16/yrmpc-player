@@ -28,6 +28,17 @@ impl ResolvedPlaybackHorizon {
     }
 
     #[must_use]
+    pub fn extract_scope_from_queue_service(queue: &QueueService, start_idx: usize) -> Vec<String> {
+        queue
+            .compute_background_extract_scope(start_idx)
+            .into_iter()
+            .filter_map(|idx| queue.get_by_index(idx).ok())
+            .map(|song| stable_track_id(&song.uri))
+            .filter(|track_id| !track_id.is_empty())
+            .collect()
+    }
+
+    #[must_use]
     pub fn from_play_queue(
         play_queue: &PlayQueue,
         play_order: &[QueueId],
@@ -67,6 +78,15 @@ impl ResolvedPlaybackHorizon {
         Self::new(
             track_ids[start_pos..].iter().chain(track_ids[..start_pos].iter()).cloned().collect(),
         )
+    }
+
+    #[must_use]
+    pub fn extract_scope_from_play_queue_track_id(
+        play_queue: &PlayQueue,
+        play_order: &[QueueId],
+        current_track: Option<&str>,
+    ) -> Vec<String> {
+        Self::from_play_queue_track_id(play_queue, play_order, current_track).track_ids().to_vec()
     }
 
     #[must_use]
@@ -145,6 +165,17 @@ mod tests {
 
         let horizon = ResolvedPlaybackHorizon::from_queue_service(&queue, 1);
         assert_eq!(horizon.track_ids(), ["b", "c"]);
+    }
+
+    #[test]
+    fn extract_scope_from_queue_service_rotates_full_queue() {
+        let queue = QueueService::new();
+        queue.add(test_song("youtube://a"), None);
+        queue.add(test_song("youtube://b"), None);
+        queue.add(test_song("youtube://c"), None);
+
+        let extract_scope = ResolvedPlaybackHorizon::extract_scope_from_queue_service(&queue, 1);
+        assert_eq!(extract_scope, ["b", "c", "a"]);
     }
 
     #[test]

@@ -495,6 +495,7 @@ where
                 self.fetch_data_internal(ctx);
                 ctx.render()?;
             }
+            CommonAction::PlayScope => {}
             CommonAction::InvertSelection => {
                 self.stack_mut().current_mut().invert_marked();
 

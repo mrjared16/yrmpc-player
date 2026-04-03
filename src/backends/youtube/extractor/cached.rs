@@ -45,7 +45,7 @@ fn should_replace(existing: &CacheEntry, new_version: u64, new_immediate: bool) 
     new_version > existing.version
 }
 
-fn log_cache_miss(video_id: &str, version: u64) {
+fn log_cache_miss(track_id: &str, version: u64) {
     if log::log_enabled!(log::Level::Trace) {
         let bt = std::backtrace::Backtrace::force_capture();
         let bt_summary: String = bt
@@ -56,13 +56,13 @@ fn log_cache_miss(video_id: &str, version: u64) {
             .collect::<Vec<_>>()
             .join(" <- ");
         log::trace!(
-            "[EXTRACT] cache_miss video_id={} version={} callers=[{}]",
-            video_id,
+            "[EXTRACT] cache_miss track_id={} version={} callers=[{}]",
+            track_id,
             version,
             bt_summary
         );
     } else {
-        log::info!("[EXTRACT] cache_miss video_id={} version={}", video_id, version);
+        log::info!("[EXTRACT] cache_miss track_id={} version={}", track_id, version);
     }
 }
 
@@ -203,30 +203,61 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         let mut results = HashMap::new();
         let version = self.next_version.fetch_add(1, Ordering::Relaxed);
         let mut uncached = Vec::new();
+        let mut leaders = Vec::new();
+        let mut followers = Vec::new();
 
         for id in video_ids {
             if let Some(url) = self.get_cached(id) {
-                log::debug!("Cache hit for {}", id);
+                log::debug!("[EXTRACT] cache_hit track_id={}", id);
                 results.insert(id.clone(), Ok(url));
             } else {
-                uncached.push(id.clone());
+                match self.dedup.sync_singleflight(id.clone()) {
+                    SyncFlight::Leader(leader) => {
+                        uncached.push(id.clone());
+                        leaders.push((id.clone(), leader));
+                    }
+                    SyncFlight::Follower(follower) => {
+                        followers.push((id.clone(), follower));
+                    }
+                }
             }
         }
 
-        if uncached.is_empty() {
-            return results;
-        }
+        let mut batch_results = if uncached.is_empty() {
+            HashMap::new()
+        } else {
+            log::debug!(
+                total = video_ids.len(),
+                cache_hits = video_ids.len().saturating_sub(uncached.len()),
+                uncached = uncached.len(),
+                extractor = self.inner.name();
+                "[EXTRACT] batch_start"
+            );
+            self.inner.extract_batch(&uncached)
+        };
 
-        let mut batch_results = self.inner.extract_batch(&uncached);
-
-        for id in uncached {
+        for (id, leader) in leaders {
             let batch_result: Result<String, String> = match batch_results.remove(&id) {
                 Some(Ok(url)) => Ok(url),
                 Some(Err(err)) => Err(err.to_string()),
                 None => Err(format!("Inner extractor omitted batch result for {id}")),
             };
 
-            let result = self.dedup.publish_or_wait_sync(id.clone(), batch_result);
+            let result = leader.complete(batch_result);
+
+            match result {
+                Ok(url) => {
+                    self.try_cache(&id, url.clone(), version, false);
+                    results.insert(id, Ok(url));
+                }
+                Err(error) => {
+                    results.insert(id, Err(anyhow!(error)));
+                }
+            }
+        }
+
+        for (id, follower) in followers {
+            let result = follower.wait();
 
             match result {
                 Ok(url) => {
@@ -250,7 +281,7 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         let start = std::time::Instant::now();
 
         if let Some(url) = self.get_cached(video_id) {
-            log::info!("[EXTRACT] cache_hit video_id={} elapsed={:?}", video_id, start.elapsed());
+            log::info!("[EXTRACT] cache_hit track_id={} elapsed={:?}", video_id, start.elapsed());
             return Ok(url);
         }
 
@@ -263,7 +294,7 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
                     Ok(url) => {
                         self.try_cache(video_id, url.clone(), version, true);
                         log::info!(
-                            "[EXTRACT] complete video_id={} elapsed={:?}",
+                            "[EXTRACT] complete track_id={} elapsed={:?}",
                             video_id,
                             start.elapsed()
                         );
@@ -271,7 +302,7 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
                     }
                     Err(e) => {
                         log::warn!(
-                            "[EXTRACT] failed video_id={} elapsed={:?} error={}",
+                            "[EXTRACT] failed track_id={} elapsed={:?} error={}",
                             video_id,
                             start.elapsed(),
                             e
@@ -288,6 +319,43 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         match result {
             Ok(url) => Ok(url),
             Err(e) => Err(anyhow!("{}", e)),
+        }
+    }
+
+    fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
+        let start = std::time::Instant::now();
+
+        if let Some(url) = self.get_cached(video_id) {
+            log::info!("[EXTRACT] cache_hit track_id={} elapsed={:?}", video_id, start.elapsed());
+            return Ok(url);
+        }
+
+        let version = self.next_version.fetch_add(1, Ordering::Relaxed);
+        log::info!(
+            "[EXTRACT] fresh_start track_id={} version={} reason=demand_takeover",
+            video_id,
+            version,
+        );
+
+        match self.inner.extract_one_fresh(video_id) {
+            Ok(url) => {
+                self.try_cache(video_id, url.clone(), version, true);
+                log::info!(
+                    "[EXTRACT] fresh_complete track_id={} elapsed={:?}",
+                    video_id,
+                    start.elapsed()
+                );
+                Ok(url)
+            }
+            Err(error) => {
+                log::warn!(
+                    "[EXTRACT] fresh_failed track_id={} elapsed={:?} error={}",
+                    video_id,
+                    start.elapsed(),
+                    error,
+                );
+                Err(error)
+            }
         }
     }
 
@@ -310,14 +378,14 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         // If the URL was extracted recently, a 403 is likely a CDN/network
         // issue, not URL expiry. Return the cached URL without re-extracting.
         if let Some(url) = self.get_cached_if_fresh(video_id) {
-            log::info!("[EXTRACT] refresh_skipped video_id={} reason=url_still_fresh", video_id,);
+            log::info!("[EXTRACT] refresh_skipped track_id={} reason=url_still_fresh", video_id,);
             return Ok(url);
         }
 
         // Only invalidate the cache entry, NOT the dedup slot.
         // This ensures concurrent callers coalesce instead of each
         // triggering a separate yt-dlp extraction.
-        log::info!("[EXTRACT] refresh_extracting video_id={}", video_id);
+        log::info!("[EXTRACT] refresh_extracting track_id={}", video_id);
         self.cache.lock().invalidate(video_id);
         self.extract_one(video_id)
     }
@@ -509,7 +577,7 @@ mod tests {
 
         let batch_cached = Arc::clone(&cached);
         let batch_handle = thread::spawn(move || {
-            let ids = vec!["shared_id".to_string()];
+            let ids = vec!["shared_id".to_string(), "other_id".to_string()];
             batch_cached.extract_batch(&ids)
         });
 
@@ -533,7 +601,7 @@ mod tests {
     }
 
     #[test]
-    fn test_extract_one_does_not_wait_for_prefetch() {
+    fn test_extract_one_coalesces_with_inflight_batch_for_same_track() {
         // Given: A slow extractor where batch takes much longer than single
         let extractor = CountingExtractor::new(Duration::from_millis(50));
         let cached = Arc::new(CachedExtractor::new(extractor));
@@ -554,24 +622,26 @@ mod tests {
 
         prefetch_handle.join().unwrap();
 
-        // Then: extract_one should complete fast (single extraction ~50ms, not waiting
-        // for batch ~250ms)
+        // Then: extract_one should coalesce with the in-flight batch instead of launching
+        // its own competing extraction.
         assert!(
-            elapsed < Duration::from_millis(150),
-            "extract_one should not wait for prefetch, took {:?}",
+            elapsed >= Duration::from_millis(35),
+            "extract_one should wait for the in-flight batch instead of racing it, took {:?}",
             elapsed
         );
 
-        // And: URL should be from single extraction (single_N), not batch (batch_N)
+        // And: URL should come from the batch path, not a competing single extraction.
         assert!(
-            url.contains("single_"),
-            "URL should be from fast path single extraction, got: {}",
+            url.contains("batch_"),
+            "URL should be from the shared batch extraction, got: {}",
             url
         );
+
+        assert_eq!(cached.inner().extract_one_count(), 0);
     }
 
     #[test]
-    fn test_prefetch_does_not_overwrite_extract_one_result() {
+    fn test_batch_result_populates_cache_for_joined_extract_one() {
         // Given: An extractor with controllable delays
         struct DelayedExtractor {
             single_delay: Duration,
@@ -622,23 +692,20 @@ mod tests {
 
         thread::sleep(Duration::from_millis(5));
 
-        // And: extract_one runs and completes BEFORE prefetch
-        let fast_url = cached.extract_one("contested_id").unwrap();
-        assert!(fast_url.contains("single_"), "Fast path should use single extraction");
+        // And: extract_one joins the in-flight batch instead of competing with it.
+        let joined_url = cached.extract_one("contested_id").unwrap();
+        assert!(joined_url.contains("batch_"), "Joined path should use batch extraction");
 
-        // Wait for prefetch to complete (it should NOT overwrite)
+        // Wait for prefetch to complete.
         prefetch_handle.join().unwrap();
 
-        // Then: Cache should still have the fast path result
+        // Then: Cache should contain the shared batch result.
         let cached_url = cached.extract_one("contested_id").unwrap();
 
-        // If version priority works: cached_url == fast_url (from cache, same URL)
-        // If broken: cached_url might be batch_X or single_3 (cache was overwritten,
-        // then re-extracted)
         assert_eq!(
-            cached_url, fast_url,
-            "Cache should preserve fast path result. Expected: {}, Got: {}",
-            fast_url, cached_url
+            cached_url, joined_url,
+            "Cache should preserve the shared batch result. Expected: {}, Got: {}",
+            joined_url, cached_url
         );
     }
 

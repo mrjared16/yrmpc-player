@@ -120,7 +120,14 @@ mod tests {
         let state_tracker = Arc::new(PlaybackStateTracker::new());
         let recording = Arc::new(RecordingMediaPreparer::default());
         let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
-        let orchestrator = Orchestrator::new(playback, queue, state_tracker, media_preparer);
+        let orchestrator = Orchestrator::new(
+            playback,
+            queue,
+            state_tracker,
+            media_preparer,
+            crate::backends::youtube::config::BackgroundExtractMode::Balanced,
+            2,
+        );
 
         (mpv_guard, temp_dir, orchestrator, recording)
     }

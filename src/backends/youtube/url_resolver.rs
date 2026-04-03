@@ -99,18 +99,20 @@ impl UrlResolver {
         enable_fallback: bool,
         ytdlp_config: YtDlpExtractorConfig,
     ) -> Self {
+        let ytx_extractor =
+            ytdlp_config.cookies_path.clone().map(YtxExtractor::with_cookies).unwrap_or_default();
         let inner: Arc<dyn Extractor> = match extractor_type {
             ExtractorType::Ytx => {
                 if enable_fallback {
                     Arc::new(CachedExtractor::with_config(
                         FallbackExtractor::new(
-                            YtxExtractor::new(),
+                            ytx_extractor,
                             YtDlpExtractor::with_options(ytdlp_config.cookies_path.clone()),
                         ),
                         cache_config,
                     ))
                 } else {
-                    Arc::new(CachedExtractor::with_config(YtxExtractor::new(), cache_config))
+                    Arc::new(CachedExtractor::with_config(ytx_extractor, cache_config))
                 }
             }
             ExtractorType::YtDlp => {
@@ -138,6 +140,14 @@ impl UrlResolver {
         Self { inner, extractor_type }
     }
 
+    #[cfg(test)]
+    pub(crate) fn from_cached_extractor<E: Extractor + 'static>(
+        inner: E,
+        extractor_type: ExtractorType,
+    ) -> Self {
+        Self { inner: Arc::new(CachedExtractor::new(inner)), extractor_type }
+    }
+
     /// Create with custom cache TTL.
     ///
     /// # Visibility
@@ -160,6 +170,10 @@ impl UrlResolver {
     /// Get stream URL for a video ID, using cache if available.
     pub fn get_url(&self, video_id: &str) -> Result<String> {
         self.inner.extract_one(video_id)
+    }
+
+    pub fn get_url_fresh(&self, video_id: &str) -> Result<String> {
+        self.inner.extract_one_fresh(video_id)
     }
 
     pub fn get_stream_info(&self, video_id: &str) -> Result<UrlStreamInfo> {

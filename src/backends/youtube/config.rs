@@ -40,6 +40,17 @@ impl AudioDeliveryMode {
     }
 }
 
+/// Background URL extraction policy for queued tracks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundExtractMode {
+    /// Extract only a bounded near-future window after playback is confirmed.
+    #[default]
+    Balanced,
+    /// Extract URLs for the full remaining queue as soon as startup is armed.
+    Performance,
+}
+
 /// Audio streaming configuration
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
@@ -53,6 +64,10 @@ pub struct AudioConfig {
     pub prefix_size: u64,
     /// Maximum cache size in bytes (default: 200MB)
     pub max_cache_size: u64,
+    /// Background extraction policy for queued tracks.
+    pub background_extract_mode: BackgroundExtractMode,
+    /// Number of future tracks to include in bounded extract/prefix windows.
+    pub future_track_count: usize,
 }
 
 impl Default for AudioConfig {
@@ -62,6 +77,8 @@ impl Default for AudioConfig {
             cache_dir: None,
             prefix_size: 204_800,
             max_cache_size: 209_715_200,
+            background_extract_mode: BackgroundExtractMode::default(),
+            future_track_count: 2,
         }
     }
 }
@@ -211,7 +228,7 @@ impl YouTubeConfig {
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioConfig, AudioDeliveryMode};
+    use super::{AudioConfig, AudioDeliveryMode, BackgroundExtractMode};
 
     #[test]
     fn audio_delivery_mode_accepts_current_values() {
@@ -248,5 +265,34 @@ mod tests {
     #[test]
     fn audio_delivery_mode_default_is_auto() {
         assert_eq!(AudioDeliveryMode::default(), AudioDeliveryMode::Auto);
+    }
+
+    #[test]
+    fn background_extract_mode_defaults_to_balanced() {
+        assert_eq!(AudioConfig::default().background_extract_mode, BackgroundExtractMode::Balanced);
+    }
+
+    #[test]
+    fn background_extract_mode_accepts_current_values() {
+        let balanced: AudioConfig =
+            toml::from_str("background_extract_mode = \"balanced\"").expect("parse balanced");
+        let performance: AudioConfig =
+            toml::from_str("background_extract_mode = \"performance\"").expect("parse performance");
+
+        assert_eq!(balanced.background_extract_mode, BackgroundExtractMode::Balanced);
+        assert_eq!(performance.background_extract_mode, BackgroundExtractMode::Performance);
+    }
+
+    #[test]
+    fn future_track_count_defaults_to_two() {
+        assert_eq!(AudioConfig::default().future_track_count, 2);
+    }
+
+    #[test]
+    fn future_track_count_accepts_configured_value() {
+        let configured: AudioConfig =
+            toml::from_str("future_track_count = 4").expect("parse future_track_count");
+
+        assert_eq!(configured.future_track_count, 4);
     }
 }

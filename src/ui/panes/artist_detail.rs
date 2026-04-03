@@ -12,9 +12,10 @@ use anyhow::Result;
 use ratatui::{Frame, prelude::Rect};
 
 use crate::{
+    backends::youtube::protocol::play_intent::{ContextSource, PlayIntent},
     ctx::Ctx,
     domain::{ArtistContent, DetailItem, content::ContentType},
-    shared::key_event::KeyEvent,
+    shared::{key_event::KeyEvent, macros::status_info},
     ui::{
         panes::navigator_types::{
             ContentAction, DetailId, DetailPane, EntityContent, EntityRef, InputMode,
@@ -69,6 +70,7 @@ impl NavigatorPane for ArtistDetailPane {
             ContentAction::Handled => PaneAction::Handled,
             ContentAction::Back => PaneAction::BackPane,
             ContentAction::Activate(item) => self.resolve_action(item),
+            ContentAction::PlayScope(item) => self.resolve_play_scope_action(item, ctx),
             ContentAction::Mark(_) => PaneAction::Handled,
             ContentAction::MoveUp(_) | ContentAction::MoveDown(_) | ContentAction::Delete(_) => {
                 PaneAction::Handled
@@ -118,6 +120,92 @@ impl ArtistDetailPane {
             }
         }
     }
+
+    fn resolve_play_scope_action(&mut self, item: DetailItem, ctx: &mut Ctx) -> PaneAction {
+        if let DetailItem::Ref(content_ref) = &item {
+            if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist) {
+                let entity_type = match content_ref.content_type {
+                    ContentType::Album => DetailId::Album,
+                    ContentType::Playlist => DetailId::Playlist,
+                    _ => unreachable!(),
+                };
+                return PaneAction::PlayRef(EntityRef {
+                    entity_type,
+                    id: content_ref.id.clone(),
+                    name: content_ref.name.clone(),
+                });
+            }
+        }
+
+        let Some(level) = self.view.current() else {
+            return PaneAction::Handled;
+        };
+
+        let artist_id = level.content.id.clone();
+        let artist_name = level.content.name.clone();
+        let top_songs = level.content.top_songs.clone();
+        let has_marked = level.section_list.has_marked();
+        let selection = has_marked.then(|| level.section_list.get_selection());
+        let marked_tracks =
+            selection.as_ref().map(|selection| selection.songs_cloned()).unwrap_or_default();
+        let ignored_marked_refs =
+            selection.as_ref().map(|selection| selection.refs().len()).unwrap_or(0);
+
+        if ignored_marked_refs > 0 {
+            log::trace!(artist_id = artist_id.as_str(), artist_name = artist_name.as_str(), ignored_marked_refs = ignored_marked_refs; "Artist detail play-scope ignoring non-song marked items");
+        }
+
+        let Some((intent, used_marks)) = build_artist_play_scope_intent(
+            &item,
+            marked_tracks,
+            top_songs,
+            ctx.status.random,
+            ContextSource::Artist { artist_id },
+        ) else {
+            return PaneAction::Handled;
+        };
+
+        ctx.queue_store().play(intent);
+        if used_marks {
+            if let Some(level) = self.view.current_mut() {
+                level.section_list.clear_marks();
+            }
+            status_info!("Play selected songs");
+        } else {
+            status_info!("Play {}", artist_name);
+        }
+
+        PaneAction::Handled
+    }
+}
+
+fn build_artist_play_scope_intent(
+    item: &DetailItem,
+    marked_tracks: Vec<crate::domain::Song>,
+    top_songs: Vec<crate::domain::Song>,
+    shuffle: bool,
+    source: ContextSource,
+) -> Option<(PlayIntent, bool)> {
+    if !marked_tracks.is_empty() {
+        return Some((
+            PlayIntent::Context { tracks: marked_tracks, offset: 0, shuffle, source: Some(source) },
+            true,
+        ));
+    }
+
+    if matches!(item, DetailItem::Ref(content_ref) if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist))
+    {
+        return None;
+    }
+
+    if top_songs.is_empty() {
+        return None;
+    }
+
+    Some((
+        PlayIntent::Context { tracks: top_songs, offset: 0, shuffle, source: Some(source) },
+        false,
+    ))
 }
 
 // =============================================================================
@@ -163,7 +251,17 @@ impl DetailPane for ArtistDetailPane {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::content::Extensions;
+    use crate::{
+        domain::{ContentRef, Song, content::Extensions},
+        tests::fixtures,
+    };
+
+    fn make_song(uri: &str, title: &str) -> Song {
+        let mut song = Song::default();
+        song.uri = uri.to_string();
+        song.metadata.insert("title".to_string(), vec![title.to_string()]);
+        song
+    }
 
     fn make_test_artist() -> ArtistContent {
         ArtistContent {
@@ -226,5 +324,128 @@ mod tests {
         let pane = ArtistDetailPane::new();
         assert_eq!(pane.id(), PaneId::Detail(DetailId::Artist));
         assert_eq!(pane.detail_id(), DetailId::Artist);
+    }
+
+    #[test]
+    fn play_scope_intent_uses_marked_tracks_before_top_songs() {
+        let item = DetailItem::song(make_song("song-2", "Song 2"));
+        let marked = vec![make_song("song-2", "Song 2"), make_song("song-3", "Song 3")];
+        let top_songs = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+
+        let (intent, used_marks) = build_artist_play_scope_intent(
+            &item,
+            marked.clone(),
+            top_songs,
+            true,
+            ContextSource::Artist { artist_id: "artist123".into() },
+        )
+        .expect("marked songs should build an artist play-scope intent");
+
+        assert!(used_marks);
+        assert!(matches!(
+            intent,
+            PlayIntent::Context {
+                tracks,
+                offset: 0,
+                shuffle: true,
+                source: Some(ContextSource::Artist { artist_id })
+            } if artist_id == "artist123" && tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
+        ));
+    }
+
+    #[test]
+    fn play_scope_marks_clear_after_successful_marked_play() {
+        let mut pane = ArtistDetailPane::new();
+        let mut artist = make_test_artist();
+        artist.top_songs = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+        artist.extensions = Extensions::builder()
+            .related_playlists("Featured", vec![ContentRef::playlist("playlist-1", "Mix 1")])
+            .build();
+        pane.push(EntityContent::Artist(artist));
+
+        let selected_item = {
+            let level = pane.view.current_mut().expect("artist content should exist");
+            level.section_list.select_first();
+            level.section_list.list_view_mut().toggle_mark();
+            while !matches!(
+                level.section_list.selected_item(),
+                Some(DetailItem::Ref(content_ref)) if content_ref.content_type == ContentType::Playlist
+            ) {
+                level.section_list.select_next();
+            }
+            level.section_list.list_view_mut().toggle_mark();
+            level.section_list.select_first();
+            level.section_list.selected_item().cloned().expect("song should be selected")
+        };
+
+        let mut ctx = fixtures::ctx();
+        ctx.status.random = true;
+
+        assert!(matches!(
+            pane.resolve_play_scope_action(selected_item, &mut ctx),
+            PaneAction::Handled
+        ));
+        let queue = ctx.queue_store().read();
+        assert_eq!(queue.len(), 1);
+        assert_eq!(queue[0].uri, "song-1");
+        drop(queue);
+        assert!(
+            !pane.view.current().expect("artist content should exist").section_list.has_marked()
+        );
+    }
+
+    #[test]
+    fn play_scope_without_marks_plays_top_songs_from_start() {
+        let mut pane = ArtistDetailPane::new();
+        let mut artist = make_test_artist();
+        artist.top_songs = vec![
+            make_song("song-1", "Song 1"),
+            make_song("song-2", "Song 2"),
+            make_song("song-3", "Song 3"),
+        ];
+        pane.push(EntityContent::Artist(artist));
+
+        let selected_item = {
+            let level = pane.view.current_mut().expect("artist content should exist");
+            level.section_list.select_first();
+            level.section_list.selected_item().cloned().expect("song should be selected")
+        };
+
+        let mut ctx = fixtures::ctx();
+        ctx.status.random = false;
+
+        assert!(matches!(
+            pane.resolve_play_scope_action(selected_item, &mut ctx),
+            PaneAction::Handled
+        ));
+        let queue = ctx.queue_store().read();
+        assert_eq!(queue.len(), 3);
+        assert_eq!(queue[0].uri, "song-1");
+        assert_eq!(queue[1].uri, "song-2");
+        assert_eq!(queue[2].uri, "song-3");
+    }
+
+    #[test]
+    fn play_scope_defers_album_playlist_refs_to_direct_play_bead() {
+        let item = DetailItem::playlist("playlist-1", "Mix 1");
+        let top_songs = vec![make_song("song-1", "Song 1")];
+
+        let intent = build_artist_play_scope_intent(
+            &item,
+            vec![],
+            top_songs,
+            false,
+            ContextSource::Artist { artist_id: "artist123".into() },
+        );
+
+        assert!(intent.is_none());
     }
 }

@@ -503,6 +503,21 @@ impl QueueService {
         indices
     }
 
+    pub fn compute_background_extract_scope(&self, start_idx: usize) -> Vec<usize> {
+        let len = self.len();
+        if len == 0 {
+            return Vec::new();
+        }
+
+        self.ensure_shuffle_order(start_idx);
+
+        (0..len)
+            .filter_map(|offset| {
+                self.get_next_in_playback_order(start_idx, offset, RepeatMode::All)
+            })
+            .collect()
+    }
+
     pub fn set_prefetch_indices(&self, indices: Vec<usize>) {
         self.playback_window.lock().prefetch_indices = indices;
     }
@@ -929,6 +944,16 @@ mod tests {
 
         assert_eq!(indices, vec![0, 1, 2]);
         assert_eq!(queue.get_prefetched_at(0), None);
+    }
+
+    #[test]
+    fn compute_background_extract_scope_rotates_full_queue() {
+        let queue = QueueService::new();
+        queue.add(create_test_song("one"), None);
+        queue.add(create_test_song("two"), None);
+        queue.add(create_test_song("three"), None);
+
+        assert_eq!(queue.compute_background_extract_scope(1), vec![1, 2, 0]);
     }
 
     #[test]

@@ -225,8 +225,14 @@ mod tests {
         let state_tracker = Arc::new(PlaybackStateTracker::new());
         let recording = Arc::new(RecordingMediaPreparer::default());
         let media_preparer: Arc<dyn MediaPreparer> = recording.clone();
-        let orchestrator =
-            Arc::new(Orchestrator::new(playback, queue, state_tracker, media_preparer));
+        let orchestrator = Arc::new(Orchestrator::new(
+            playback,
+            queue,
+            state_tracker,
+            media_preparer,
+            crate::backends::youtube::config::BackgroundExtractMode::Balanced,
+            2,
+        ));
         let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
         let queue_event_handler = Mutex::new(
             QueueEventHandler::new(

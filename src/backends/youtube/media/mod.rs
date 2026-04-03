@@ -15,10 +15,12 @@ mod resolver;
 mod staging_pipeline;
 mod upstream_plan;
 
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use crate::backends::youtube::config::BackgroundExtractMode;
 use anyhow::Result;
 use async_trait::async_trait;
+pub use job_registry::ExtractRegistryState;
 pub use loader::AudioLoader;
 pub use output::{MpvInput, MpvInputBuilder};
 pub use preparer::{CacheRequest, PrepareResult, YouTubeMediaPreparer, YouTubeMediaPreparerHandle};
@@ -43,6 +45,15 @@ pub enum PrepareStatus {
     InProgress { started: Instant, tier: PreloadTier },
     Ready,
     Failed { error: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MediaPreparationPlan {
+    pub background_extract_mode: BackgroundExtractMode,
+    pub active_window: Vec<String>,
+    pub prefix_targets: Vec<String>,
+    pub extract_scope_generation: u64,
+    pub extract_scope: Vec<String>,
 }
 
 /// Core trait for preparing media for playback
@@ -78,9 +89,24 @@ pub trait MediaPreparer: Send + Sync {
         }
     }
 
+    fn extract_state(&self, _track_id: &str) -> ExtractRegistryState {
+        ExtractRegistryState::Ready
+    }
+
+    fn wait_for_extract_state_change(
+        &self,
+        _track_id: &str,
+        observed: ExtractRegistryState,
+        _timeout: Duration,
+    ) -> ExtractRegistryState {
+        observed
+    }
+
     fn invalidate(&self, _track_id: &str) {}
 
     fn activate_playback_window(&self, _track_ids: &[String]) {}
+
+    fn apply_plan(&self, _plan: MediaPreparationPlan) {}
 }
 
 /// Prepared media result

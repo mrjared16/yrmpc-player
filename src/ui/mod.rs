@@ -7,13 +7,18 @@ use modals::{
     input_modal::InputModal, keybinds::KeybindsModal, menu::modal::MenuModal,
     outputs::OutputsModal,
 };
-use panes::{PaneContainer, Panes, navigator::Navigator, pane_call};
+use panes::{
+    PaneContainer, Panes,
+    navigator::Navigator,
+    navigator_types::{PaneId, TabId},
+    pane_call,
+};
 use ratatui::{
     Frame,
     layout::Rect,
     style::{Color, Style},
     symbols::border,
-    widgets::{Block, Borders},
+    widgets::{Block, Borders, Paragraph},
 };
 use tab_screen::TabScreen;
 
@@ -228,9 +233,56 @@ impl<'ui> Ui<'ui> {
             modal.render(frame, ctx)?;
         }
 
+        self.render_footer_key_hints(frame, full_area, ctx);
+
         self.debug_log_ui(ctx);
 
         Ok(())
+    }
+
+    fn render_footer_key_hints(&self, frame: &mut Frame, full_area: Rect, ctx: &Ctx) {
+        let Some(hint) = self.footer_hint_text(ctx) else {
+            return;
+        };
+
+        if full_area.height == 0 || full_area.width <= 2 {
+            return;
+        }
+
+        let hint_area = Rect {
+            x: full_area.x.saturating_add(1),
+            y: full_area.y.saturating_add(full_area.height.saturating_sub(1)),
+            width: full_area.width.saturating_sub(2),
+            height: 1,
+        };
+
+        let style =
+            ctx.config.theme.text_color.map(|color| Style::default().fg(color)).unwrap_or_default();
+
+        frame.render_widget(
+            Paragraph::new(hint).alignment(ratatui::layout::Alignment::Right).style(style),
+            hint_area,
+        );
+    }
+
+    fn footer_hint_text(&self, ctx: &Ctx) -> Option<&'static str> {
+        if !ctx.config.show_footer_key_hints
+            || !self.modals.is_empty()
+            || self.has_active_status_message(ctx)
+        {
+            return None;
+        }
+
+        match self.navigator.as_ref().map(Navigator::active_pane_id) {
+            Some(PaneId::Tab(TabId::Search) | PaneId::Detail(_)) => {
+                Some("Enter: Open • P: Play scope")
+            }
+            _ => None,
+        }
+    }
+
+    fn has_active_status_message(&self, ctx: &Ctx) -> bool {
+        ctx.messages.last().is_some_and(|status| status.created.elapsed() < status.timeout)
     }
 
     fn debug_log_ui(&mut self, ctx: &mut Ctx) {
