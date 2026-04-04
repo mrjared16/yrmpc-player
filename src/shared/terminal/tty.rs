@@ -75,6 +75,19 @@ impl Read for TtyReader {
     }
 }
 
+/// Guard that restores the original terminal settings on drop.
+struct TermiosGuard {
+    orig: rustix::termios::Termios,
+}
+
+impl Drop for TermiosGuard {
+    fn drop(&mut self) {
+        let stdin = rustix::stdio::stdin();
+        let _ =
+            rustix::termios::tcsetattr(stdin, rustix::termios::OptionalActions::Now, &self.orig);
+    }
+}
+
 impl Tty {
     pub fn query_term(query: &str, read_until: impl Fn((u8, &str)) -> bool) -> Result<String> {
         let query = if *IS_TMUX {
@@ -86,20 +99,23 @@ impl Tty {
         let stdin = rustix::stdio::stdin();
         let termios_orig = rustix::termios::tcgetattr(stdin)?;
         let mut termios = termios_orig.clone();
-
         termios.local_modes &= !rustix::termios::LocalModes::ICANON;
         termios.local_modes &= !rustix::termios::LocalModes::ECHO;
         termios.special_codes[rustix::termios::SpecialCodeIndex::VTIME] = 1;
         termios.special_codes[rustix::termios::SpecialCodeIndex::VMIN] = 0;
 
         rustix::termios::tcsetattr(stdin, rustix::termios::OptionalActions::Drain, &termios)?;
+        let _guard = TermiosGuard { orig: termios_orig };
 
         rustix::io::write(rustix::stdio::stdout(), query.as_bytes())?;
 
         let mut buf: String = String::new();
         loop {
             let mut charbuffer = [0; 1];
-            rustix::io::read(stdin, &mut charbuffer)?;
+            let bytes_read = rustix::io::read(stdin, &mut charbuffer)?;
+            if bytes_read == 0 {
+                break;
+            }
 
             buf.push(charbuffer[0].into());
 
@@ -107,8 +123,6 @@ impl Tty {
                 break;
             }
         }
-
-        rustix::termios::tcsetattr(stdin, rustix::termios::OptionalActions::Now, &termios_orig)?;
 
         Ok(buf)
     }
