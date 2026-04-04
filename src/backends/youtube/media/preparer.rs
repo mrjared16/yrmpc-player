@@ -200,6 +200,43 @@ fn direct_bypass_for_inflight_prefix(
     None
 }
 
+fn take_over_queue_warm_with_demand_extract(
+    pipeline: &Arc<StagingPipeline>,
+    internal_tx: &mpsc::UnboundedSender<InternalEvent>,
+    transport: crate::backends::youtube::audio::AudioTransportTarget,
+    track_id: &str,
+    job: &Arc<InFlightJob>,
+    trigger: &'static str,
+    tier: PreloadTier,
+    reason: &'static str,
+) -> bool {
+    if job.replace_queue_warm_lease_with_demand().is_none() {
+        return false;
+    }
+
+    log::debug!(
+        track_id = track_id,
+        trigger = trigger,
+        tier:? = tier,
+        reason = reason;
+        "[TRACE] Demand prepare taking over queue-warm resolution; stale queue-warm result will be dropped"
+    );
+
+    spawn_url_resolution_task(
+        Arc::clone(pipeline),
+        internal_tx.clone(),
+        transport,
+        track_id.to_string(),
+        Arc::clone(job),
+        trigger,
+        "extract_one_preempted",
+        next_trace_id(),
+        ResolutionSource::Demand,
+        true,
+    );
+    true
+}
+
 fn spawn_url_resolution_task(
     pipeline: Arc<StagingPipeline>,
     internal_tx: mpsc::UnboundedSender<InternalEvent>,
@@ -1017,6 +1054,21 @@ impl YouTubeMediaPreparer {
             match job.progress() {
                 JobProgress::ResolvingUrl => {
                     if job.current_resolution_source() == ResolutionSource::QueueWarm {
+                        if tier == PreloadTier::Immediate {
+                            if take_over_queue_warm_with_demand_extract(
+                                &pipeline,
+                                &internal_tx,
+                                transport,
+                                &track_id,
+                                &job,
+                                trigger,
+                                tier,
+                                "immediate_preempts_queue_warm",
+                            ) {
+                                continue;
+                            }
+                        }
+
                         match tokio::time::timeout(
                             SHARED_JOB_JOIN_TIMEOUT,
                             job.wait_for_update(JobProgress::ResolvingUrl),
@@ -1025,29 +1077,16 @@ impl YouTubeMediaPreparer {
                         {
                             Ok(()) => {}
                             Err(_) => {
-                                if let Some(_resolution_token) =
-                                    job.replace_queue_warm_lease_with_demand()
-                                {
-                                    log::warn!(
-                                        track_id = track_id.as_str(),
-                                        trigger = trigger,
-                                        tier:? = tier,
-                                        timeout_ms = SHARED_JOB_JOIN_TIMEOUT.as_millis() as u64;
-                                        "[TRACE] Shared queue-warm job timed out; starting demand extract"
-                                    );
-                                    spawn_url_resolution_task(
-                                        Arc::clone(&pipeline),
-                                        internal_tx.clone(),
-                                        transport,
-                                        track_id.clone(),
-                                        Arc::clone(&job),
-                                        trigger,
-                                        "extract_one_timeout_replacement",
-                                        next_trace_id(),
-                                        ResolutionSource::Demand,
-                                        true,
-                                    );
-                                }
+                                take_over_queue_warm_with_demand_extract(
+                                    &pipeline,
+                                    &internal_tx,
+                                    transport,
+                                    &track_id,
+                                    &job,
+                                    trigger,
+                                    tier,
+                                    "queue_warm_join_timeout",
+                                );
                             }
                         }
                     } else {
@@ -2005,6 +2044,48 @@ mod tests {
             job.snapshot(),
             JobState::Completed(PrepareResult::Direct { ref stream_url })
                 if stream_url == "https://example.com/single/queue-warm-timeout"
+        ));
+    }
+
+    #[tokio::test]
+    async fn immediate_prepare_does_not_wait_for_queue_warm_join_timeout() {
+        let extractor = Arc::new(SlowBatchExtractor::new(Duration::from_millis(150)));
+        let resolver = Arc::new(UrlResolver::from_cached_extractor(
+            extractor.as_ref().clone(),
+            ExtractorType::Ytx,
+        ));
+        let (_temp_dir, mut preparer) =
+            build_test_preparer_with_resolver(AudioDeliveryMode::Direct, resolver);
+        let track_id = "queue-warm-immediate-preempt";
+
+        preparer.handle_warm_batch_request(vec![track_id.to_string()]);
+
+        let result = tokio::time::timeout(
+            Duration::from_millis(45),
+            preparer.prepare(
+                track_id.to_string(),
+                PreloadTier::Immediate,
+                Some(Duration::from_secs(1)),
+            ),
+        )
+        .await
+        .expect("immediate prepare should not wait for queue-warm join timeout");
+
+        assert!(matches!(
+            result,
+            PrepareResult::Direct { ref stream_url }
+                if stream_url == "https://example.com/single/queue-warm-immediate-preempt"
+        ));
+        assert_eq!(extractor.batch_count(), 1);
+        assert_eq!(extractor.one_count(), 1);
+
+        // Verify late batch result is dropped and demand result wins
+        tokio::time::sleep(Duration::from_millis(175)).await;
+        let job = preparer.job_registry.get(track_id).expect("job should remain registered");
+        assert!(matches!(
+            job.snapshot(),
+            JobState::Completed(PrepareResult::Direct { ref stream_url })
+                if stream_url == "https://example.com/single/queue-warm-immediate-preempt"
         ));
     }
 

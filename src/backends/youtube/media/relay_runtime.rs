@@ -256,7 +256,7 @@ fn handle_connection(
     };
 
     entry.spec.state = RelaySessionState::Streaming;
-    let spec = entry.spec.clone();
+    let mut spec = entry.spec.clone();
     drop(entry);
 
     let strategy = RelayPlanner::from_session(&spec);
@@ -283,13 +283,24 @@ fn handle_connection(
         context.upstream_url,
     );
 
-    let stream_err =
-        stream_strategy_response(&mut writer, &strategy, &spec, &plan, http_client, &context);
+    let stream_err = stream_strategy_response(
+        &mut writer,
+        &strategy,
+        &mut spec,
+        &plan,
+        http_client,
+        url_resolver,
+        &context,
+    );
 
     let failure_kind = stream_err.as_ref().err().map(classify_stream_error);
+    let refreshed_url_in_request = spec.upstream.url != context.upstream_url;
 
     if let Some(mut entry) = sessions.get_mut(&session_key) {
         entry.active_connection = false;
+        if refreshed_url_in_request {
+            entry.spec.upstream.url = spec.upstream.url.clone();
+        }
         match failure_kind {
             None => {
                 entry.spec.state = RelaySessionState::AwaitingRequest;
@@ -308,9 +319,11 @@ fn handle_connection(
                 entry.spec.state = RelaySessionState::AwaitingRequest;
                 entry.expires_at = Instant::now() + SESSION_TTL;
 
-                if matches!(failure_kind, Some(RelayStreamFailureKind::ExpiredUrl)) {
+                if matches!(failure_kind, Some(RelayStreamFailureKind::ExpiredUrl))
+                    && !refreshed_url_in_request
+                {
                     if let Some(url_resolver) = url_resolver {
-                        match url_resolver.refresh_url(&spec.track_id) {
+                        match url_resolver.get_url_fresh(&spec.track_id) {
                             Ok(fresh_url) => {
                                 log::info!(
                                     "[RELAY] refreshed URL for session={} track={} old_host={} new_host={} old_url={} new_url={}",
@@ -386,18 +399,41 @@ fn promote_tee_prefix_to_cache(
         return Ok(());
     };
 
-    let prefix_bytes = std::fs::metadata(&prefix_target.path)
-        .with_context(|| format!("read tee prefix metadata {}", prefix_target.path.display()))?
-        .len();
+    let prefix_bytes = match std::fs::metadata(&prefix_target.path) {
+        Ok(metadata) => metadata.len(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("read tee prefix metadata {}", prefix_target.path.display())
+            });
+        }
+    };
 
-    if prefix_bytes == 0 {
-        return Err(anyhow!("tee prefix promotion produced empty cache file for {}", track_id));
+    if prefix_bytes < prefix_target.size {
+        log::info!(
+            "[RELAY] skip tee prefix promotion for incomplete prefix: track={} bytes={} target={} path={}",
+            track_id,
+            prefix_bytes,
+            prefix_target.size,
+            prefix_target.path.display(),
+        );
+        return Ok(());
+    }
+
+    if prefix_bytes > prefix_target.size {
+        log::warn!(
+            "[RELAY] tee prefix larger than target during promotion: track={} bytes={} target={} path={}",
+            track_id,
+            prefix_bytes,
+            prefix_target.size,
+            prefix_target.path.display(),
+        );
     }
 
     audio_cache.register_prefix(
         track_id,
         prefix_target.path.clone(),
-        prefix_bytes,
+        prefix_bytes.min(prefix_target.size),
         spec.upstream.content_length,
     );
     audio_cache.evict_lru()?;
@@ -430,19 +466,37 @@ fn write_planned_response_headers(
 fn stream_strategy_response(
     writer: &mut TcpStream,
     strategy: &RelayPlayStrategy,
-    spec: &RelaySessionSpec,
+    spec: &mut RelaySessionSpec,
     plan: &super::RelayResponsePlan,
     http_client: &reqwest::blocking::Client,
+    url_resolver: Option<&UrlResolver>,
     context: &RelayRequestContext,
 ) -> Result<()> {
     write_planned_response_headers(writer, plan, spec.upstream.content_length)?;
 
     match strategy {
         RelayPlayStrategy::TeeMissRelay { prefix_target, .. } => {
-            stream_tee_response(writer, http_client, spec, plan, prefix_target, context)?;
+            stream_tee_response(
+                writer,
+                http_client,
+                strategy,
+                spec,
+                plan,
+                prefix_target,
+                url_resolver,
+                context,
+            )?;
         }
         RelayPlayStrategy::CacheHitRelay { .. } => {
-            stream_cache_hit_response(writer, http_client, strategy, spec, plan, context)?;
+            stream_cache_hit_response(
+                writer,
+                http_client,
+                strategy,
+                spec,
+                plan,
+                url_resolver,
+                context,
+            )?;
         }
         RelayPlayStrategy::DirectFallback { .. } => {
             return Err(anyhow!("direct fallback must be handled outside relay runtime"));
@@ -456,15 +510,17 @@ fn stream_strategy_response(
 fn stream_tee_response(
     writer: &mut TcpStream,
     http_client: &reqwest::blocking::Client,
-    spec: &RelaySessionSpec,
+    strategy: &RelayPlayStrategy,
+    spec: &mut RelaySessionSpec,
     plan: &super::RelayResponsePlan,
     prefix_target: &super::RelayTeePrefix,
+    url_resolver: Option<&UrlResolver>,
     context: &RelayRequestContext,
 ) -> Result<()> {
     let requested_upstream =
         plan.upstream.ok_or_else(|| anyhow!("tee relay expected an upstream segment"))?;
 
-    stream_tee_upstream(
+    match stream_tee_upstream(
         writer,
         http_client,
         &spec.upstream.url,
@@ -472,7 +528,33 @@ fn stream_tee_response(
         prefix_target,
         context,
         requested_upstream,
-    )?;
+    ) {
+        Ok(_) => {}
+        Err(err) => {
+            cleanup_incomplete_tee_prefix(prefix_target, context);
+
+            let Some(failure) = relay_stream_failure(&err) else {
+                return Err(err);
+            };
+            if failure.scope != RelayStreamFailureScope::Upstream {
+                return Err(err);
+            }
+
+            let resume_start = requested_upstream.start + failure.bytes_written;
+            if resume_start < requested_upstream.end {
+                stream_upstream_with_fresh_url_recovery(
+                    writer,
+                    http_client,
+                    strategy,
+                    spec,
+                    super::RelayByteRange { start: resume_start, end: requested_upstream.end },
+                    url_resolver,
+                    context,
+                )?;
+            }
+        }
+    }
+
     Ok(())
 }
 
@@ -480,22 +562,118 @@ fn stream_cache_hit_response(
     writer: &mut TcpStream,
     http_client: &reqwest::blocking::Client,
     strategy: &RelayPlayStrategy,
-    spec: &RelaySessionSpec,
+    spec: &mut RelaySessionSpec,
     plan: &super::RelayResponsePlan,
+    url_resolver: Option<&UrlResolver>,
     context: &RelayRequestContext,
 ) -> Result<()> {
     if let Some(staged) = plan.staged {
         stream_staged_segment(writer, &spec.staged.path, staged.start, staged.len())?;
     }
     if let Some(upstream) = plan.upstream {
-        let continuation_plans = strategy.continuation_plans(upstream.start, upstream.end);
-        stream_upstream_with_recovery_plans(
+        stream_upstream_with_fresh_url_recovery(
+            writer,
+            http_client,
+            strategy,
+            spec,
+            upstream,
+            url_resolver,
+            context,
+        )?;
+    }
+
+    Ok(())
+}
+
+fn stream_upstream_with_fresh_url_recovery(
+    writer: &mut TcpStream,
+    http_client: &reqwest::blocking::Client,
+    strategy: &RelayPlayStrategy,
+    spec: &mut RelaySessionSpec,
+    requested_range: super::RelayByteRange,
+    url_resolver: Option<&UrlResolver>,
+    context: &RelayRequestContext,
+) -> Result<()> {
+    let mut resume_start = requested_range.start;
+    let end = requested_range.end;
+    let mut refreshed_once = false;
+
+    while resume_start < end {
+        let plans = strategy.continuation_plans(resume_start, end);
+        let result = stream_upstream_with_recovery_plans(
             writer,
             http_client,
             &spec.upstream.url,
-            continuation_plans.as_slice(),
+            plans.as_slice(),
             context,
-        )?;
+        );
+
+        match result {
+            Ok(_bytes_written) => {
+                break;
+            }
+            Err(err) => {
+                let Some(failure) = relay_stream_failure(&err) else {
+                    return Err(err);
+                };
+
+                if failure.scope != RelayStreamFailureScope::Upstream {
+                    return Err(err);
+                }
+
+                resume_start += failure.bytes_written;
+                if resume_start >= end {
+                    break;
+                }
+
+                if failure.bytes_written > 0 {
+                    log::info!(
+                        "[RELAY] upstream progress before retry: session={} track={} resumed_at={} remaining={} host={} url={}",
+                        context.session_id,
+                        context.track_id,
+                        resume_start,
+                        end - resume_start,
+                        upstream_host(&spec.upstream.url),
+                        spec.upstream.url,
+                    );
+                    continue;
+                }
+
+                if refreshed_once {
+                    return Err(err);
+                }
+
+                let Some(url_resolver) = url_resolver else {
+                    return Err(err);
+                };
+
+                let old_url = spec.upstream.url.clone();
+                let old_host = upstream_host(&old_url);
+                let fresh_url = url_resolver.get_url_fresh(&spec.track_id).map_err(|refresh_err| {
+                    relay_failure(
+                        RelayStreamFailureKind::Retryable,
+                        format!(
+                            "force refresh relay URL after fallback exhaustion failed at offset {}: {}",
+                            resume_start, refresh_err,
+                        ),
+                    )
+                })?;
+
+                log::info!(
+                    "[RELAY] forcing fresh URL after fallback exhaustion: session={} track={} offset={} old_host={} new_host={} old_url={} new_url={}",
+                    context.session_id,
+                    context.track_id,
+                    resume_start,
+                    old_host,
+                    upstream_host(&fresh_url),
+                    old_url,
+                    fresh_url,
+                );
+
+                spec.upstream.url = fresh_url;
+                refreshed_once = true;
+            }
+        }
     }
 
     Ok(())
@@ -506,7 +684,8 @@ fn stream_staged_segment(writer: &mut TcpStream, path: &Path, start: u64, len: u
         .with_context(|| format!("open staged artifact {}", path.display()))?;
     file.seek(SeekFrom::Start(start))
         .with_context(|| format!("seek staged artifact {}", path.display()))?;
-    copy_exact(&mut file, writer, len)
+    copy_exact(&mut file, writer, len)?;
+    Ok(())
 }
 
 /// Tee mode: opens ONE upstream connection, writes first `tee.size` bytes to
@@ -519,7 +698,7 @@ fn stream_tee_upstream(
     tee: &super::RelayTeePrefix,
     context: &RelayRequestContext,
     requested_range: super::RelayByteRange,
-) -> Result<()> {
+) -> Result<u64> {
     let start_byte = requested_range.start;
     let end_byte = requested_range.end;
     let mut remaining = requested_range.len();
@@ -562,7 +741,14 @@ fn stream_tee_upstream(
         .get(upstream_url)
         .header(reqwest::header::RANGE, format!("bytes={start_byte}-{range_end}"))
         .send()
-        .with_context(|| format!("tee upstream request to {upstream_url}"))?;
+        .map_err(|err| {
+            relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
+                RelayStreamFailureKind::Retryable,
+                0,
+                format!("tee upstream request to {upstream_url}: {err}"),
+            )
+        })?;
 
     let status = response.status();
     let content_range = response
@@ -601,10 +787,19 @@ fn stream_tee_upstream(
 
     while remaining > 0 {
         let chunk_len = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
-        let n = response.read(&mut buf[..chunk_len]).with_context(|| "read from tee upstream")?;
-        if n == 0 {
-            return Err(relay_failure(
+        let n = response.read(&mut buf[..chunk_len]).map_err(|err| {
+            relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
                 RelayStreamFailureKind::Retryable,
+                total_written,
+                format!("read from tee upstream: {err}"),
+            )
+        })?;
+        if n == 0 {
+            return Err(relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
+                RelayStreamFailureKind::Retryable,
+                total_written,
                 format!(
                     "unexpected EOF from tee upstream: copied {} of {} bytes for bytes={start_byte}-{range_end}",
                     total_written,
@@ -633,9 +828,10 @@ fn stream_tee_upstream(
             }
         }
 
-        writer.write_all(&buf[..n]).with_context(|| "write to MPV downstream")?;
-        total_written += n as u64;
-        remaining -= n as u64;
+        let written =
+            write_all_to_client(writer, &buf[..n], total_written, "write to MPV downstream")?;
+        total_written += written;
+        remaining -= written;
     }
 
     log::info!(
@@ -648,7 +844,49 @@ fn stream_tee_upstream(
         requested_range.len(),
     );
 
-    Ok(())
+    Ok(total_written)
+}
+
+fn cleanup_incomplete_tee_prefix(tee: &super::RelayTeePrefix, context: &RelayRequestContext) {
+    let prefix_bytes = match std::fs::metadata(&tee.path) {
+        Ok(metadata) => metadata.len(),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return,
+        Err(err) => {
+            log::warn!(
+                "[RELAY] failed to inspect tee prefix after error: session={} track={} path={} err={}",
+                context.session_id,
+                context.track_id,
+                tee.path.display(),
+                err,
+            );
+            return;
+        }
+    };
+
+    if prefix_bytes >= tee.size {
+        return;
+    }
+
+    match std::fs::remove_file(&tee.path) {
+        Ok(()) => log::info!(
+            "[RELAY] dropped incomplete tee prefix after stream failure: session={} track={} bytes={} target={} path={}",
+            context.session_id,
+            context.track_id,
+            prefix_bytes,
+            tee.size,
+            tee.path.display(),
+        ),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {}
+        Err(err) => log::warn!(
+            "[RELAY] failed to drop incomplete tee prefix after stream failure: session={} track={} bytes={} target={} path={} err={}",
+            context.session_id,
+            context.track_id,
+            prefix_bytes,
+            tee.size,
+            tee.path.display(),
+            err,
+        ),
+    }
 }
 
 fn validate_tee_upstream_response(
@@ -704,7 +942,7 @@ fn stream_upstream_with_recovery_plans(
     upstream_url: &str,
     plans: &[UpstreamReadPlan],
     context: &RelayRequestContext,
-) -> Result<()> {
+) -> Result<u64> {
     let mut last_err = None;
 
     for (attempt_idx, plan) in plans.iter().enumerate() {
@@ -718,22 +956,32 @@ fn stream_upstream_with_recovery_plans(
             attempt_idx + 1,
             plans.len(),
         ) {
-            Ok(()) => return Ok(()),
+            Ok(bytes_written) => return Ok(bytes_written),
             Err(err) => {
+                let (failure_scope, bytes_written) = relay_stream_failure(&err)
+                    .map(|failure| (failure.scope, failure.bytes_written))
+                    .unwrap_or((RelayStreamFailureScope::Local, 0));
                 log::warn!(
-                    "[RELAY] upstream retry failed: session={} track={} host={} strategy={} client_range={:?} attempt={}/{} plan={:?} elapsed_ms={} url={} err={}",
+                    "[RELAY] upstream retry failed: session={} track={} host={} strategy={} client_range={:?} attempt={}/{} plan={:?} elapsed_ms={} bytes_written={} scope={:?} url={} err={}",
                     context.session_id,
                     context.track_id,
-                    context.upstream_host,
+                    upstream_host(upstream_url),
                     context.strategy,
                     context.client_range,
                     attempt_idx + 1,
                     plans.len(),
                     plan,
                     started.elapsed().as_millis(),
-                    context.upstream_url,
+                    bytes_written,
+                    failure_scope,
+                    upstream_url,
                     err,
                 );
+
+                if failure_scope == RelayStreamFailureScope::Upstream && bytes_written > 0 {
+                    return Err(err);
+                }
+
                 last_err = Some(err);
             }
         }
@@ -750,7 +998,7 @@ fn stream_upstream_segment(
     context: &RelayRequestContext,
     attempt: usize,
     attempt_total: usize,
-) -> Result<()> {
+) -> Result<u64> {
     match plan {
         UpstreamReadPlan::QueryRange { start, end } => {
             let query_end = end.saturating_sub(1);
@@ -802,13 +1050,17 @@ fn stream_upstream_single_query_range(
     upstream_url: &str,
     start: u64,
     end: u64,
-) -> Result<()> {
+) -> Result<u64> {
     let query_end = end.saturating_sub(1);
     let ranged_url = format!("{upstream_url}&range={start}-{query_end}");
-    let mut response = http_client
-        .get(&ranged_url)
-        .send()
-        .with_context(|| format!("single query-range request to {ranged_url}"))?;
+    let mut response = http_client.get(&ranged_url).send().map_err(|err| {
+        relay_failure_with_scope(
+            RelayStreamFailureScope::Upstream,
+            RelayStreamFailureKind::Retryable,
+            0,
+            format!("single query-range request to {ranged_url}: {err}"),
+        )
+    })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -827,13 +1079,17 @@ fn stream_upstream_query_range_from_zero(
     upstream_url: &str,
     start: u64,
     end: u64,
-) -> Result<()> {
+) -> Result<u64> {
     let query_end = end.saturating_sub(1);
     let ranged_url = format!("{upstream_url}&range=0-{query_end}");
-    let mut response = http_client
-        .get(&ranged_url)
-        .send()
-        .with_context(|| format!("anchored query-range request to {ranged_url}"))?;
+    let mut response = http_client.get(&ranged_url).send().map_err(|err| {
+        relay_failure_with_scope(
+            RelayStreamFailureScope::Upstream,
+            RelayStreamFailureKind::Retryable,
+            0,
+            format!("anchored query-range request to {ranged_url}: {err}"),
+        )
+    })?;
 
     let status = response.status();
     if !status.is_success() {
@@ -857,20 +1113,25 @@ fn stream_upstream_chunked_range(
     upstream_url: &str,
     start: u64,
     end: u64,
-) -> Result<()> {
+) -> Result<u64> {
     let total = end.saturating_sub(start);
     let mut pos = start;
     let mut chunk_num = 0u32;
+    let mut total_written = 0u64;
 
     while pos < end {
         let chunk_end = (pos + RANGE_CHUNK_SIZE).min(end).saturating_sub(1);
         let ranged_url = format!("{upstream_url}&range={pos}-{chunk_end}&rn={chunk_num}");
         log::debug!("[RELAY] chunked &range={}-{} (chunk {})", pos, chunk_end, chunk_num);
 
-        let mut response = http_client
-            .get(&ranged_url)
-            .send()
-            .with_context(|| format!("chunked range request chunk {chunk_num}"))?;
+        let mut response = http_client.get(&ranged_url).send().map_err(|err| {
+            relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
+                RelayStreamFailureKind::Retryable,
+                total_written,
+                format!("chunked range request chunk {chunk_num}: {err}"),
+            )
+        })?;
 
         let status = response.status();
         if !status.is_success() {
@@ -885,11 +1146,19 @@ fn stream_upstream_chunked_range(
         let mut buf = [0u8; 64 * 1024];
         while remaining > 0 {
             let to_read = (remaining as usize).min(buf.len());
-            let n =
-                response.read(&mut buf[..to_read]).with_context(|| "read from chunked upstream")?;
-            if n == 0 {
-                return Err(relay_failure(
+            let n = response.read(&mut buf[..to_read]).map_err(|err| {
+                relay_failure_with_scope(
+                    RelayStreamFailureScope::Upstream,
                     RelayStreamFailureKind::Retryable,
+                    total_written,
+                    format!("read from chunked upstream: {err}"),
+                )
+            })?;
+            if n == 0 {
+                return Err(relay_failure_with_scope(
+                    RelayStreamFailureScope::Upstream,
+                    RelayStreamFailureKind::Retryable,
+                    total_written,
                     format!(
                         "unexpected EOF from chunked upstream: chunk={} copied={} expected_chunk_bytes={} global_range={}-{}",
                         chunk_num,
@@ -900,8 +1169,10 @@ fn stream_upstream_chunked_range(
                     ),
                 ));
             }
-            writer.write_all(&buf[..n]).with_context(|| "write chunked data to MPV")?;
-            remaining -= n as u64;
+            let wrote =
+                write_all_to_client(writer, &buf[..n], total_written, "write chunked data to MPV")?;
+            total_written += wrote;
+            remaining -= wrote;
         }
 
         pos = chunk_end + 1;
@@ -909,7 +1180,7 @@ fn stream_upstream_chunked_range(
     }
 
     log::info!("[RELAY] chunked &range= complete: {} bytes in {} chunks", total, chunk_num);
-    Ok(())
+    Ok(total_written)
 }
 
 fn prune_expired_sessions(sessions: &DashMap<String, RelaySessionRecord>) {
@@ -927,17 +1198,26 @@ fn reason_phrase(status: u16) -> &'static str {
     }
 }
 
-fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<()> {
+fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Result<u64> {
     let mut remaining = len;
     let mut copied = 0u64;
     let mut buf = [0_u8; 64 * 1024];
 
     while remaining > 0 {
         let chunk = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
-        let read = reader.read(&mut buf[..chunk]).context("read relay segment")?;
-        if read == 0 {
-            return Err(relay_failure(
+        let read = reader.read(&mut buf[..chunk]).map_err(|err| {
+            relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
                 RelayStreamFailureKind::Retryable,
+                copied,
+                format!("read relay segment: {err}"),
+            )
+        })?;
+        if read == 0 {
+            return Err(relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
+                RelayStreamFailureKind::Retryable,
+                copied,
                 format!(
                     "unexpected EOF while streaming relay segment: copied {} of {} bytes (remaining {})",
                     copied, len, remaining,
@@ -945,13 +1225,13 @@ fn copy_exact(reader: &mut impl Read, writer: &mut impl Write, len: u64) -> Resu
             ));
         }
 
-        writer.write_all(&buf[..read]).context("write relay segment to client")?;
-        let read = u64::try_from(read).unwrap_or(0);
-        copied += read;
-        remaining -= read;
+        let written =
+            write_all_to_client(writer, &buf[..read], copied, "write relay segment to client")?;
+        copied += written;
+        remaining -= written;
     }
 
-    Ok(())
+    Ok(copied)
 }
 
 fn discard_exact(reader: &mut impl Read, len: u64) -> Result<()> {
@@ -961,10 +1241,19 @@ fn discard_exact(reader: &mut impl Read, len: u64) -> Result<()> {
 
     while remaining > 0 {
         let chunk = usize::try_from(remaining.min(buf.len() as u64)).unwrap_or(buf.len());
-        let read = reader.read(&mut buf[..chunk]).context("discard relay prefix bytes")?;
-        if read == 0 {
-            return Err(relay_failure(
+        let read = reader.read(&mut buf[..chunk]).map_err(|err| {
+            relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
                 RelayStreamFailureKind::Retryable,
+                0,
+                format!("discard relay prefix bytes: {err}"),
+            )
+        })?;
+        if read == 0 {
+            return Err(relay_failure_with_scope(
+                RelayStreamFailureScope::Upstream,
+                RelayStreamFailureKind::Retryable,
+                0,
                 format!(
                     "unexpected EOF while discarding relay prefix bytes: discarded {} of {} bytes (remaining {})",
                     discarded, len, remaining,
@@ -979,6 +1268,40 @@ fn discard_exact(reader: &mut impl Read, len: u64) -> Result<()> {
     Ok(())
 }
 
+fn write_all_to_client(
+    writer: &mut impl Write,
+    buf: &[u8],
+    bytes_written: u64,
+    context: &str,
+) -> Result<u64> {
+    let mut offset = 0usize;
+    while offset < buf.len() {
+        match writer.write(&buf[offset..]) {
+            Ok(0) => {
+                return Err(relay_failure_with_scope(
+                    RelayStreamFailureScope::Downstream,
+                    RelayStreamFailureKind::Retryable,
+                    bytes_written + offset as u64,
+                    format!("{context}: wrote 0 bytes"),
+                ));
+            }
+            Ok(written) => {
+                offset += written;
+            }
+            Err(err) => {
+                return Err(relay_failure_with_scope(
+                    RelayStreamFailureScope::Downstream,
+                    RelayStreamFailureKind::Retryable,
+                    bytes_written + offset as u64,
+                    format!("{context}: {err}"),
+                ));
+            }
+        }
+    }
+
+    Ok(offset as u64)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum RelayStreamFailureKind {
     Retryable,
@@ -986,9 +1309,18 @@ enum RelayStreamFailureKind {
     Terminal,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RelayStreamFailureScope {
+    Upstream,
+    Downstream,
+    Local,
+}
+
 #[derive(Debug)]
 struct RelayStreamFailure {
     kind: RelayStreamFailureKind,
+    scope: RelayStreamFailureScope,
+    bytes_written: u64,
     message: String,
 }
 
@@ -1001,7 +1333,27 @@ impl std::fmt::Display for RelayStreamFailure {
 impl std::error::Error for RelayStreamFailure {}
 
 fn relay_failure(kind: RelayStreamFailureKind, message: impl Into<String>) -> anyhow::Error {
-    anyhow::Error::new(RelayStreamFailure { kind, message: message.into() })
+    relay_failure_with_scope(RelayStreamFailureScope::Upstream, kind, 0, message)
+}
+
+fn relay_failure_with_scope(
+    scope: RelayStreamFailureScope,
+    kind: RelayStreamFailureKind,
+    bytes_written: u64,
+    message: impl Into<String>,
+) -> anyhow::Error {
+    anyhow::Error::new(RelayStreamFailure { kind, scope, bytes_written, message: message.into() })
+}
+
+fn relay_stream_failure(err: &anyhow::Error) -> Option<RelayStreamFailure> {
+    err.chain().find_map(|cause| {
+        cause.downcast_ref::<RelayStreamFailure>().map(|failure| RelayStreamFailure {
+            kind: failure.kind,
+            scope: failure.scope,
+            bytes_written: failure.bytes_written,
+            message: failure.message.clone(),
+        })
+    })
 }
 
 fn classify_upstream_status(status: reqwest::StatusCode) -> RelayStreamFailureKind {
@@ -1152,16 +1504,20 @@ mod tests {
 
     use super::{
         RANGE_CHUNK_SIZE, RelayRequestContext, RelayRuntime, copy_exact, discard_exact,
-        extract_session_id_from_path, promote_tee_prefix_to_cache, stream_tee_upstream,
-        stream_upstream_segment, stream_upstream_with_recovery_plans,
+        extract_session_id_from_path, promote_tee_prefix_to_cache, stream_tee_response,
+        stream_tee_upstream, stream_upstream_segment, stream_upstream_with_fresh_url_recovery,
+        stream_upstream_with_recovery_plans,
     };
     use crate::backends::youtube::{
         audio::{CacheConfig, cache::AudioCache},
+        config::ExtractorType,
+        extractor::Extractor,
         media::{
-            RelayByteRange, RelayPlayStrategy, RelaySessionSpec, RelaySessionState,
-            RelayStagedArtifact, RelayTeePrefix, RelayTransportContract, RelayUpstreamStream,
-            UpstreamReadPlan,
+            RelayByteRange, RelayPlayStrategy, RelayResponsePlan, RelaySessionSpec,
+            RelaySessionState, RelayStagedArtifact, RelayTeePrefix, RelayTransportContract,
+            RelayUpstreamStream, UpstreamReadPlan,
         },
+        url_resolver::UrlResolver,
     };
 
     fn tcp_pair() -> (TcpStream, TcpStream) {
@@ -1643,6 +1999,297 @@ mod tests {
 
         let prefix = std::fs::read(&tee_path).expect("read prefix file");
         assert_eq!(prefix, vec![7u8; 10]);
+
+        server.join().expect("join upstream server");
+    }
+
+    #[test]
+    fn tee_failure_drops_incomplete_prefix_and_continues_uncached() {
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
+        let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
+
+        let server = thread::spawn(move || {
+            let started = Instant::now();
+            let mut handled = 0usize;
+            while started.elapsed() < Duration::from_secs(3) {
+                let (mut stream, _) = match upstream_listener.accept() {
+                    Ok(conn) => conn,
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        if handled >= 2 {
+                            break;
+                        }
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+                handled += 1;
+
+                let request = read_http_request(&mut stream);
+                let request_line = request.lines().next().unwrap_or_default().to_string();
+
+                if handled == 1 {
+                    let body: Vec<u8> = (0..20).map(|i| (i % 251) as u8).collect();
+                    let headers = format!(
+                        "HTTP/1.1 206 Partial Content\r\nContent-Length: {}\r\nContent-Range: bytes 0-49/1000\r\nConnection: close\r\n\r\n",
+                        50
+                    );
+                    stream.write_all(headers.as_bytes()).expect("write first response headers");
+                    stream.write_all(&body).expect("write partial tee body");
+                    stream.shutdown(Shutdown::Both).ok();
+                    continue;
+                }
+
+                let (start, end) =
+                    parse_query_range(&request_line).expect("continuation query range");
+                assert_eq!((start, end), (20, 49));
+                let body: Vec<u8> = (start..=end).map(|i| (i % 251) as u8).collect();
+                write_http_response(&mut stream, "200 OK", &body);
+                break;
+            }
+        });
+
+        let temp_dir = TempDir::new().expect("create temp dir");
+        let prefix_path = temp_dir.path().join("prefix.webm");
+        let prefix = RelayTeePrefix { path: prefix_path.clone(), size: 40 };
+        let upstream_url = format!("http://{upstream_addr}/videoplayback?foo=bar");
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
+        let (mut writer, mut reader) = tcp_pair();
+        let strategy = RelayPlayStrategy::TeeMissRelay {
+            track_id: "track-123".to_string(),
+            stream_url: upstream_url.clone(),
+            prefix_target: prefix.clone(),
+        };
+        let mut spec = RelaySessionSpec {
+            track_id: "track-123".to_string(),
+            staged: RelayStagedArtifact {
+                path: temp_dir.path().join("staged.webm"),
+                available: RelayByteRange { start: 0, end: 0 },
+            },
+            upstream: RelayUpstreamStream { url: upstream_url, content_length: 1_000 },
+            contract: RelayTransportContract::default(),
+            state: RelaySessionState::AwaitingRequest,
+            tee_prefix: Some(prefix.clone()),
+        };
+        let plan = RelayResponsePlan {
+            response: RelayByteRange { start: 0, end: 50 },
+            staged: None,
+            upstream: Some(RelayByteRange { start: 0, end: 50 }),
+            content_length: 1_000,
+        };
+
+        stream_tee_response(
+            &mut writer,
+            &client,
+            &strategy,
+            &mut spec,
+            &plan,
+            &prefix,
+            None,
+            &test_request_context(),
+        )
+        .expect("tee response should continue uncached after partial failure");
+
+        writer.shutdown(Shutdown::Write).expect("shutdown writer");
+        let mut streamed = Vec::new();
+        reader.read_to_end(&mut streamed).expect("read streamed bytes");
+
+        let expected: Vec<u8> = (0..50).map(|i| (i % 251) as u8).collect();
+        assert_eq!(streamed, expected);
+        assert!(!prefix_path.exists(), "incomplete tee prefix should be deleted");
+
+        server.join().expect("join upstream server");
+    }
+
+    #[test]
+    fn promote_tee_prefix_skips_missing_or_incomplete_prefix() {
+        let temp_dir = TempDir::new().expect("tempdir");
+        let cache = AudioCache::new(CacheConfig {
+            cache_dir: temp_dir.path().to_path_buf(),
+            prefix_size: 204_800,
+            max_cache_size: 209_715_200,
+        })
+        .expect("cache");
+        let prefix_path = temp_dir.path().join("track-skip.webm");
+
+        let strategy = RelayPlayStrategy::TeeMissRelay {
+            track_id: "track-skip".to_string(),
+            stream_url: "https://example.com/stream".to_string(),
+            prefix_target: RelayTeePrefix { path: prefix_path.clone(), size: 1024 },
+        };
+        let spec = RelaySessionSpec {
+            track_id: "track-skip".to_string(),
+            staged: RelayStagedArtifact {
+                path: temp_dir.path().join("staged.webm"),
+                available: RelayByteRange { start: 0, end: 0 },
+            },
+            upstream: RelayUpstreamStream {
+                url: "https://example.com/stream".to_string(),
+                content_length: 10_000,
+            },
+            contract: RelayTransportContract::default(),
+            state: RelaySessionState::AwaitingRequest,
+            tee_prefix: Some(RelayTeePrefix { path: prefix_path.clone(), size: 1024 }),
+        };
+
+        promote_tee_prefix_to_cache(&cache, &strategy, &spec)
+            .expect("missing prefix should be ignored");
+
+        std::fs::write(&prefix_path, vec![1u8; 512]).expect("write partial prefix");
+        promote_tee_prefix_to_cache(&cache, &strategy, &spec)
+            .expect("incomplete prefix should be ignored");
+        assert!(cache.get_prefix_metadata("track-skip").is_none());
+    }
+
+    #[derive(Clone)]
+    struct FreshUrlExtractor {
+        stale_url: String,
+        fresh_url: String,
+        fresh_calls: Arc<AtomicUsize>,
+    }
+
+    impl Extractor for FreshUrlExtractor {
+        fn extract_batch(
+            &self,
+            video_ids: &[String],
+        ) -> std::collections::HashMap<String, anyhow::Result<String>> {
+            video_ids
+                .iter()
+                .map(|video_id| (video_id.clone(), self.extract_one(video_id)))
+                .collect()
+        }
+
+        fn name(&self) -> &'static str {
+            "fresh-url-extractor"
+        }
+
+        fn extract_one(&self, _video_id: &str) -> anyhow::Result<String> {
+            Ok(self.stale_url.clone())
+        }
+
+        fn extract_one_fresh(&self, _video_id: &str) -> anyhow::Result<String> {
+            self.fresh_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(self.fresh_url.clone())
+        }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
+    }
+
+    #[test]
+    fn fresh_url_retry_resumes_from_last_streamed_byte_after_plan_exhaustion() {
+        let stale_requests = Arc::new(AtomicUsize::new(0));
+        let stale_requests_server = Arc::clone(&stale_requests);
+        let fresh_requests = Arc::new(AtomicUsize::new(0));
+        let fresh_requests_server = Arc::clone(&fresh_requests);
+        let fresh_calls = Arc::new(AtomicUsize::new(0));
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
+        let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
+
+        let server = thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(3) {
+                let (mut stream, _) = match upstream_listener.accept() {
+                    Ok(conn) => conn,
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+
+                let request = read_http_request(&mut stream);
+                let request_line = request.lines().next().unwrap_or_default().to_string();
+                let target = request_line.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let range = parse_query_range(&request_line).expect("query range");
+
+                if target.contains("/stale") {
+                    let stale_idx = stale_requests_server.fetch_add(1, Ordering::SeqCst);
+                    match stale_idx {
+                        0 => {
+                            let body: Vec<u8> =
+                                (range.0..range.0 + 20).map(|i| (i % 251) as u8).collect();
+                            write_http_response(&mut stream, "200 OK", &body);
+                        }
+                        1 | 2 | 3 => {
+                            write_http_response(&mut stream, "403 Forbidden", b"");
+                        }
+                        _ => break,
+                    }
+                    continue;
+                }
+
+                if target.contains("/fresh") {
+                    fresh_requests_server.fetch_add(1, Ordering::SeqCst);
+                    let body: Vec<u8> = (range.0..=range.1).map(|i| (i % 251) as u8).collect();
+                    write_http_response(&mut stream, "200 OK", &body);
+                    break;
+                }
+            }
+        });
+
+        let stale_url = format!("http://{upstream_addr}/stale?videoplayback=1");
+        let fresh_url = format!("http://{upstream_addr}/fresh?videoplayback=1");
+        let resolver = UrlResolver::from_extractor(
+            Arc::new(FreshUrlExtractor {
+                stale_url: stale_url.clone(),
+                fresh_url: fresh_url.clone(),
+                fresh_calls: Arc::clone(&fresh_calls),
+            }),
+            ExtractorType::Ytx,
+        );
+
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
+        let (mut writer, mut reader) = tcp_pair();
+        let requested_range = RelayByteRange { start: 100, end: 150 };
+        let strategy = RelayPlayStrategy::CacheHitRelay {
+            track_id: "track-123".to_string(),
+            stream_url: stale_url.clone(),
+            prefix: RelayStagedArtifact {
+                path: PathBuf::from("/tmp/prefix.webm"),
+                available: RelayByteRange { start: 0, end: 100 },
+            },
+        };
+        let mut spec = RelaySessionSpec {
+            track_id: "track-123".to_string(),
+            staged: RelayStagedArtifact {
+                path: PathBuf::from("/tmp/prefix.webm"),
+                available: RelayByteRange { start: 0, end: 100 },
+            },
+            upstream: RelayUpstreamStream { url: stale_url, content_length: 1_000 },
+            contract: RelayTransportContract::default(),
+            state: RelaySessionState::AwaitingRequest,
+            tee_prefix: None,
+        };
+
+        stream_upstream_with_fresh_url_recovery(
+            &mut writer,
+            &client,
+            &strategy,
+            &mut spec,
+            requested_range,
+            Some(&resolver),
+            &test_request_context(),
+        )
+        .expect("fresh url recovery should succeed");
+
+        writer.shutdown(Shutdown::Write).expect("shutdown writer");
+        let mut streamed = Vec::new();
+        reader.read_to_end(&mut streamed).expect("read streamed bytes");
+
+        let expected: Vec<u8> = (100..150).map(|i| (i % 251) as u8).collect();
+        assert_eq!(streamed, expected);
+        assert_eq!(stale_requests.load(Ordering::SeqCst), 4);
+        assert_eq!(fresh_requests.load(Ordering::SeqCst), 1);
+        assert_eq!(fresh_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(spec.upstream.url, fresh_url);
 
         server.join().expect("join upstream server");
     }

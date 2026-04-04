@@ -137,8 +137,11 @@ impl PlaybackService {
         audio_source_plan: AudioDeliveryPlan,
         relay_runtime: Option<Arc<RelayRuntime>>,
     ) -> Result<Self> {
-        let (mpv, mpv_process) =
-            Self::connect_or_spawn_mpv(socket_path, audio_source_plan.enable_mpv_reconnect)?;
+        let (mpv, mpv_process) = Self::connect_or_spawn_mpv(
+            socket_path,
+            audio_source_plan.transport,
+            audio_source_plan.enable_mpv_reconnect,
+        )?;
 
         Ok(Self {
             mpv: Mutex::new(mpv),
@@ -298,6 +301,7 @@ impl PlaybackService {
     /// Connect to existing MPV or spawn new process
     fn connect_or_spawn_mpv(
         socket_path: &Path,
+        transport: AudioTransportTarget,
         enable_reconnect: bool,
     ) -> Result<(MpvIpc, Option<Child>)> {
         log::info!("Checking for existing MPV at socket: {}", socket_path.display());
@@ -314,7 +318,7 @@ impl PlaybackService {
         Self::cleanup_stale_socket(socket_path)?;
 
         log::info!("Spawning NEW MPV process with socket: {}", socket_path.display());
-        let args = Self::build_mpv_args(socket_path, enable_reconnect);
+        let args = Self::build_mpv_args(socket_path, transport, enable_reconnect);
         let mut child = Command::new("mpv").args(&args).spawn().context("Failed to spawn MPV")?;
         let mpv = Self::wait_for_spawned_mpv(socket_path, &mut child)?;
 
@@ -351,7 +355,11 @@ impl PlaybackService {
         Ok(())
     }
 
-    fn build_mpv_args(socket_path: &Path, enable_reconnect: bool) -> Vec<String> {
+    fn build_mpv_args(
+        socket_path: &Path,
+        transport: AudioTransportTarget,
+        enable_reconnect: bool,
+    ) -> Vec<String> {
         let socket_str = socket_path.to_string_lossy();
         let mut args = vec![
             "--no-config".to_string(),
@@ -360,7 +368,6 @@ impl PlaybackService {
             "--vo=null".to_string(),
             "--no-terminal".to_string(),
             "--gapless-audio=yes".to_string(),
-            "--prefetch-playlist=yes".to_string(),
             "--cache=yes".to_string(),
             "--cache-secs=60".to_string(),
             "--cache-pause=yes".to_string(),
@@ -374,6 +381,10 @@ impl PlaybackService {
             "--script=/usr/lib/mpv-mpris/mpris.so".to_string(),
             format!("--input-ipc-server={}", socket_str),
         ];
+
+        if transport != AudioTransportTarget::LocalRelay {
+            args.push("--prefetch-playlist=yes".to_string());
+        }
 
         if enable_reconnect {
             args.push("--stream-lavf-o-append=reconnect=1".to_string());
@@ -659,7 +670,7 @@ impl Drop for PlaybackService {
 mod tests {
     use std::path::PathBuf;
 
-    use super::{RuntimeInputRoute, runtime_input_from_prepared};
+    use super::{PlaybackService, RuntimeInputRoute, runtime_input_from_prepared};
     use crate::backends::youtube::{
         audio::AudioTransportTarget,
         media::{PreparedMedia, RelayRuntime},
@@ -726,5 +737,27 @@ mod tests {
 
         assert_eq!(decision.route, RuntimeInputRoute::Relay);
         assert!(decision.input.url.contains("/relay/"));
+    }
+
+    #[test]
+    fn relay_transport_disables_mpv_playlist_prefetch() {
+        let args = PlaybackService::build_mpv_args(
+            std::path::Path::new("/tmp/rmpc.sock"),
+            AudioTransportTarget::LocalRelay,
+            true,
+        );
+
+        assert!(!args.iter().any(|arg| arg == "--prefetch-playlist=yes"));
+    }
+
+    #[test]
+    fn non_relay_transports_keep_mpv_playlist_prefetch() {
+        let args = PlaybackService::build_mpv_args(
+            std::path::Path::new("/tmp/rmpc.sock"),
+            AudioTransportTarget::PreparedInput,
+            true,
+        );
+
+        assert!(args.iter().any(|arg| arg == "--prefetch-playlist=yes"));
     }
 }
