@@ -49,17 +49,25 @@ pub(super) fn detect_ueberzug_x11() -> bool {
 }
 
 pub(super) fn detect_kitty_graphics() -> Result<bool> {
-    let buf = Tty::query_device_attrs("\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c")?;
-    let result = buf.contains("_Gi=31;OK");
-    log::debug!(kitty_graphics: ? = result; "Kitty graphics protocol support");
+    let kitty_graphics = if *IS_TMUX {
+        false
+    } else {
+        let buf = Tty::query_device_attrs("\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\\x1b[c")?;
+        buf.contains("_Gi=31;OK")
+    };
+    log::debug!(kitty_graphics: ?; "Kitty graphics protocol support");
 
-    Ok(result)
+    Ok(kitty_graphics)
 }
 
 pub(super) fn detect_sixel() -> Result<bool> {
-    let buf = Tty::query_device_attrs("\x1b[c")?;
-    let result = buf.contains(";4;") || buf.contains(";4c");
-    log::debug!(sixel: ? = result; "Sixel graphics protocol support");
+    let sixel = if *IS_TMUX {
+        false
+    } else {
+        let buf = Tty::query_device_attrs("\x1b[c")?;
+        buf.contains(";4;") || buf.contains(";4c")
+    };
+    log::debug!(sixel: ?; "Sixel graphics protocol support");
 
-    Ok(result)
+    Ok(sixel)
 }

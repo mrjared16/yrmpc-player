@@ -22,27 +22,35 @@ pub enum Emulator {
 
 impl Emulator {
     pub fn detect() -> Result<Emulator> {
-        // XTVERSION - https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
-        let response = Tty::query_device_attrs("\x1b[>q")?;
-        let from_dev_attr = if response.contains("ghostty") {
-            Some(Emulator::Ghostty)
-        } else if response.contains("Konsole") {
-            Some(Emulator::Konsole)
-        } else if response.contains("foot") {
-            Some(Emulator::Foot)
-        } else if response.contains("kitty") {
-            Some(Emulator::Kitty)
-        } else if response.contains("WezTerm") {
-            Some(Emulator::WezTerm)
-        } else if response.contains("iTerm2") {
-            Some(Emulator::Iterm2)
+        // Skip active probing inside tmux - escape sequences can leak and cause
+        // terminal artifacts (split panes, garbage output). Rely on env-based detection only.
+        if *IS_TMUX {
+            log::debug!(
+                "Skipping active terminal detection inside tmux, using env-based detection"
+            );
         } else {
-            None
-        };
+            // XTVERSION - https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+            let response = Tty::query_device_attrs("\x1b[>q")?;
+            let from_dev_attr = if response.contains("ghostty") {
+                Some(Emulator::Ghostty)
+            } else if response.contains("Konsole") {
+                Some(Emulator::Konsole)
+            } else if response.contains("foot") {
+                Some(Emulator::Foot)
+            } else if response.contains("kitty") {
+                Some(Emulator::Kitty)
+            } else if response.contains("WezTerm") {
+                Some(Emulator::WezTerm)
+            } else if response.contains("iTerm2") {
+                Some(Emulator::Iterm2)
+            } else {
+                None
+            };
 
-        if let Some(emul) = from_dev_attr {
-            log::debug!(emul:?; "Detected terminal emulator from DA1 response");
-            return Ok(emul);
+            if let Some(emul) = from_dev_attr {
+                log::debug!(emul:?; "Detected terminal emulator from DA1 response");
+                return Ok(emul);
+            }
         }
 
         let env = if *IS_TMUX {

@@ -163,9 +163,13 @@ pub fn enable_passthrough() -> anyhow::Result<()> {
     }
 
     let mut cmd = std::process::Command::new("tmux");
-    let cmd = cmd.args(["set", "-p", "allow-passthrough"]);
+    let cmd = cmd.args(["set", "-p", "allow-passthrough", "on"]);
     match cmd.output() {
-        Ok(_) => Ok(()),
+        Ok(output) if output.status.success() => Ok(()),
+        Ok(output) => Err(anyhow::anyhow!(
+            "Failed to enable tmux passthrough: '{}'",
+            String::from_utf8_lossy(&output.stderr)
+        )),
         Err(e) => Err(anyhow::anyhow!("Failed to enable tmux passthrough, '{e}'")),
     }
 }
