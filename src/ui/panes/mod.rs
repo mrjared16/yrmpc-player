@@ -1016,12 +1016,12 @@ pub(crate) mod browser {
                     ),
                     StatusProperty::QueueLength { thousands_separator } => {
                         Some(Either::Left(Span::styled(
-                            ctx.queue_store().len().with_thousands_separator(thousands_separator),
+                            ctx.queue_state().len().with_thousands_separator(thousands_separator),
                             style,
                         )))
                     }
                     StatusProperty::QueueTimeTotal { separator } => {
-                        let queue = ctx.queue_store().read();
+                        let queue = ctx.queue_state().read();
                         let sum: Duration = queue.iter().filter_map(|s| s.duration).sum();
                         let formatted = match separator {
                             Some(sep) => sum.format_to_duration(sep),
@@ -1033,7 +1033,7 @@ pub(crate) mod browser {
                         let remaining_time = ctx.find_current_song_in_queue().map_or(
                             Duration::default(),
                             |(current_song_idx, current_song)| {
-                                let queue = ctx.queue_store().read();
+                                let queue = ctx.queue_state().read();
                                 let total_remaining: Duration = queue
                                     .iter()
                                     .skip(current_song_idx)
@@ -1968,7 +1968,7 @@ pub(crate) mod browser {
                     added: None,
                 });
 
-                ctx.queue_store().reconcile(queue);
+                ctx.queue_state().reconcile_from_backend(queue);
                 ctx.status = Status {
                     elapsed,
                     duration: Duration::from_secs(123),
@@ -2004,7 +2004,7 @@ pub(crate) mod browser {
                     default: None,
                 };
 
-                ctx.queue_store().reconcile(vec![]);
+                ctx.queue_state().reconcile_from_backend(vec![]);
                 ctx.status = Status { state: State::Stop, ..Default::default() };
 
                 let result = format.as_span(None, &ctx, "", TagResolutionStrategy::All);
@@ -2041,7 +2041,7 @@ pub(crate) mod browser {
                     added: None,
                 };
 
-                ctx.queue_store().reconcile(vec![song_no_duration.clone()]);
+                ctx.queue_state().reconcile_from_backend(vec![song_no_duration.clone()]);
                 ctx.status = Status { state: State::Play, song: Some(0), ..Default::default() };
 
                 let result =

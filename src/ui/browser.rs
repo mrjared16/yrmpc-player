@@ -548,7 +548,7 @@ where
             CommonAction::AddOptions { kind: AddKind::Action(options) } => {
                 let (enqueue, hovered_idx) = self.enqueue_items(options.all);
                 if !enqueue.is_empty() {
-                    let queue_len = ctx.queue_store().len();
+                    let queue_len = ctx.queue_state().len();
                     let current_song_idx = ctx.find_current_song_in_queue().map(|(i, _)| i);
 
                     BackendDispatcher::resolve_and_enqueue(
@@ -789,7 +789,7 @@ where
                                 "Starting radio from seed: {}. Note: auto-extend not implemented in v1",
                                 song.title()
                             );
-                            ctx.queue_store().play(PlayIntent::Radio {
+                            ctx.queue_mutator().play(PlayIntent::Radio {
                                 seed: song,
                                 mix_type: MixType::SongRadio,
                             });

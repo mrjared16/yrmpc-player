@@ -12,7 +12,7 @@ use ratatui::{
 use crate::{
     config::keys::{CommonAction, GlobalAction},
     ctx::Ctx,
-    domain::ContentType,
+    domain::{ContentType, Song},
     shared::{
         events::AppEvent,
         id::{self, Id},
@@ -31,11 +31,96 @@ use crate::{
 pub struct QueueModal {
     id: Id,
     list_view: SelectableList,
+    selection_anchor: Option<QueueSelectionAnchor>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct QueueSelectionAnchor {
+    song_id: Option<u32>,
+    song_uri: String,
+    same_uri_ordinal: usize,
+}
+
+impl QueueSelectionAnchor {
+    fn from_queue(queue: &[Song], idx: usize) -> Option<Self> {
+        let song = queue.get(idx)?;
+        let same_uri_ordinal = queue
+            .iter()
+            .take(idx + 1)
+            .filter(|candidate| candidate.uri == song.uri)
+            .count()
+            .saturating_sub(1);
+
+        Some(Self { song_id: song.id, song_uri: song.uri.clone(), same_uri_ordinal })
+    }
+
+    fn find_index(&self, queue: &[Song]) -> Option<usize> {
+        if let Some(song_id) = self.song_id
+            && let Some(idx) = queue.iter().position(|song| song.id == Some(song_id))
+        {
+            return Some(idx);
+        }
+
+        let mut same_uri_ordinal = 0;
+        for (idx, song) in queue.iter().enumerate() {
+            if song.uri != self.song_uri {
+                continue;
+            }
+
+            if same_uri_ordinal == self.same_uri_ordinal {
+                return Some(idx);
+            }
+
+            same_uri_ordinal += 1;
+        }
+
+        None
+    }
 }
 
 impl QueueModal {
     pub fn new() -> Self {
-        Self { id: id::new(), list_view: SelectableList::new() }
+        Self { id: id::new(), list_view: SelectableList::new(), selection_anchor: None }
+    }
+
+    fn update_anchor_from_selection(&mut self, queue: &[Song]) {
+        self.selection_anchor =
+            self.list_view.selected().and_then(|idx| QueueSelectionAnchor::from_queue(queue, idx));
+    }
+
+    fn sync_selection(&mut self, ctx: &Ctx) {
+        let current_idx = ctx.find_current_song_in_queue().map(|(idx, _)| idx);
+        let queue = ctx.queue_state().read();
+
+        if queue.is_empty() {
+            self.list_view.select(None);
+            self.selection_anchor = None;
+            return;
+        }
+
+        if let Some(anchor) = self.selection_anchor.as_ref()
+            && let Some(idx) = anchor.find_index(&queue)
+        {
+            self.list_view.select(Some(idx));
+            self.selection_anchor = QueueSelectionAnchor::from_queue(&queue, idx);
+            return;
+        }
+
+        if let Some(idx) = self.list_view.selected() {
+            let idx = idx.min(queue.len() - 1);
+            self.list_view.select(Some(idx));
+            self.update_anchor_from_selection(&queue);
+            return;
+        }
+
+        if let Some(idx) = current_idx.filter(|&idx| idx < queue.len()) {
+            self.list_view.select(Some(idx));
+            self.update_anchor_from_selection(&queue);
+            return;
+        }
+
+        self.list_view.select(Some(0));
+        self.update_anchor_from_selection(&queue);
     }
 
     /// Navigate to artist details for the selected queue item.
@@ -46,7 +131,7 @@ impl QueueModal {
         let Some(idx) = self.list_view.selected() else {
             return;
         };
-        let Some(song) = ctx.queue_store().get(idx) else {
+        let Some(song) = ctx.queue_state().get(idx) else {
             return;
         };
 
@@ -90,6 +175,8 @@ impl Modal for QueueModal {
     }
 
     fn render(&mut self, frame: &mut Frame, ctx: &mut Ctx) -> Result<()> {
+        self.sync_selection(ctx);
+
         // Calculate responsive width
         let total_width = frame.area().width;
         let width_percent: u16 = match total_width {
@@ -115,7 +202,7 @@ impl Modal for QueueModal {
         let current_song_id = ctx.find_current_song_in_queue().map(|(_, song)| song.id);
 
         // Get queue snapshot for rendering
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
 
         // Render using InteractiveListView
         self.list_view.render(frame, area, ctx, &*queue, Some("Queue"), |_idx, song| {
@@ -151,18 +238,22 @@ impl Modal for QueueModal {
             }
         }
 
+        self.sync_selection(ctx);
+
         // Check for common navigation actions
         if let Some(action) = key.as_common_action(ctx) {
             match action {
                 CommonAction::Up => {
-                    let queue = ctx.queue_store().read();
+                    let queue = ctx.queue_state().read();
                     self.list_view.select_prev(&*queue, NavConfig::default());
+                    self.update_anchor_from_selection(&queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
                 CommonAction::Down => {
-                    let queue = ctx.queue_store().read();
+                    let queue = ctx.queue_state().read();
                     self.list_view.select_next(&*queue, NavConfig::default());
+                    self.update_anchor_from_selection(&queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
@@ -181,14 +272,16 @@ impl Modal for QueueModal {
                     ctx.render()?;
                 }
                 CommonAction::Top => {
-                    let queue = ctx.queue_store().read();
+                    let queue = ctx.queue_state().read();
                     self.list_view.select_first(&*queue);
+                    self.update_anchor_from_selection(&queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
                 CommonAction::Bottom => {
-                    let queue = ctx.queue_store().read();
+                    let queue = ctx.queue_state().read();
                     self.list_view.select_last(&*queue);
+                    self.update_anchor_from_selection(&queue);
                     key.stop_propagation();
                     ctx.render()?;
                 }
@@ -309,7 +402,7 @@ mod tests {
         let mut ctx = create_test_ctx();
 
         let song = Song { id: Some(1), uri: "test_song_uri".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song]);
+        ctx.queue_state().reconcile_from_backend(vec![song]);
 
         // Create modal and select first item
         let mut modal = QueueModal::new();
@@ -357,7 +450,7 @@ mod tests {
         let mut ctx = create_test_ctx();
 
         let song = Song { id: Some(1), uri: "test_song_uri".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song]);
+        ctx.queue_state().reconcile_from_backend(vec![song]);
 
         let mut modal = QueueModal::new();
         modal.list_view.select(Some(0));
@@ -383,5 +476,63 @@ mod tests {
         // backend. We verify the key was recognized (we can't easily
         // check queue modification without mocking the client command
         // sender)
+    }
+
+    #[test]
+    fn sync_selection_tracks_selected_song_across_queue_reorder() {
+        let ctx = create_test_ctx();
+        let song1 = Song { id: Some(1), uri: "uri1".to_string(), ..Default::default() };
+        let song2 = Song { id: Some(2), uri: "uri2".to_string(), ..Default::default() };
+
+        ctx.queue_state().reconcile_from_backend(vec![song1.clone(), song2.clone()]);
+
+        let mut modal = QueueModal::new();
+        modal.list_view.select(Some(1));
+        modal.sync_selection(&ctx);
+
+        ctx.queue_state().reconcile_from_backend(vec![song2, song1]);
+        modal.sync_selection(&ctx);
+
+        assert_eq!(modal.list_view.selected(), Some(0));
+    }
+
+    #[test]
+    fn sync_selection_uses_uri_anchor_until_backend_ids_arrive() {
+        let ctx = create_test_ctx();
+        let song1 = Song { id: None, uri: "uri1".to_string(), ..Default::default() };
+        let song2 = Song { id: None, uri: "uri2".to_string(), ..Default::default() };
+
+        ctx.queue_state().reconcile_from_backend(vec![song1, song2]);
+
+        let mut modal = QueueModal::new();
+        modal.list_view.select(Some(1));
+        modal.sync_selection(&ctx);
+
+        let synced_song2 = Song { id: Some(22), uri: "uri2".to_string(), ..Default::default() };
+        let synced_song1 = Song { id: Some(11), uri: "uri1".to_string(), ..Default::default() };
+        ctx.queue_state().reconcile_from_backend(vec![synced_song2, synced_song1]);
+        modal.sync_selection(&ctx);
+
+        assert_eq!(modal.list_view.selected(), Some(0));
+        assert_eq!(modal.selection_anchor.as_ref().and_then(|anchor| anchor.song_id), Some(22));
+    }
+
+    #[test]
+    fn sync_selection_keeps_duplicate_uri_occurrence_stable() {
+        let ctx = create_test_ctx();
+        let first = Song { id: None, uri: "dup".to_string(), ..Default::default() };
+        let second = Song { id: None, uri: "dup".to_string(), ..Default::default() };
+
+        ctx.queue_state().reconcile_from_backend(vec![first.clone(), second.clone()]);
+
+        let mut modal = QueueModal::new();
+        modal.list_view.select(Some(1));
+        modal.sync_selection(&ctx);
+
+        ctx.queue_state().reconcile_from_backend(vec![first, second]);
+        modal.sync_selection(&ctx);
+
+        assert_eq!(modal.list_view.selected(), Some(1));
+        assert_eq!(modal.selection_anchor.as_ref().map(|anchor| anchor.same_uri_ordinal), Some(1));
     }
 }

@@ -43,7 +43,7 @@ impl Handler for QueueHandler {
                 if songs.is_empty() {
                     return Ok(HandleResult::NotApplicable("No songs to add"));
                 }
-                ctx.queue_store().play(PlayIntent::Append { tracks: songs });
+                ctx.queue_mutator().play(PlayIntent::Append { tracks: songs });
                 Ok(HandleResult::Done)
             }
 
@@ -53,7 +53,7 @@ impl Handler for QueueHandler {
                 if ids.is_empty() {
                     return Ok(HandleResult::NotApplicable("No songs to remove"));
                 }
-                ctx.queue_store().remove_ids(&ids);
+                ctx.queue_mutator().delete_ids(&ids);
                 Ok(HandleResult::Done)
             }
 

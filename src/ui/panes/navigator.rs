@@ -389,7 +389,7 @@ impl Navigator {
         };
 
         self.pending_play_scope = Some(pending.clone());
-        ctx.queue_store().reconcile(vec![]);
+        ctx.queue_state().reconcile_from_backend(vec![]);
         ctx.command(|client| {
             client.clear()?;
             Ok(())
@@ -430,7 +430,7 @@ impl Navigator {
                     return;
                 }
 
-                ctx.queue_store()
+                ctx.queue_mutator()
                     .play(crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
                     tracks: details.tracks,
                     offset: 0,
@@ -454,7 +454,7 @@ impl Navigator {
                     return;
                 }
 
-                ctx.queue_store().play(
+                ctx.queue_mutator().play(
                     crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
                         tracks: details.tracks,
                         offset: 0,
@@ -607,7 +607,7 @@ impl Navigator {
     }
 
     fn execute_queue_delete(&mut self, ctx: &mut Ctx, ids: Vec<u32>) -> Result<()> {
-        ctx.queue_store().remove_ids(&ids);
+        ctx.queue_mutator().delete_ids(&ids);
         ctx.render()?;
         Ok(())
     }
@@ -1064,7 +1064,7 @@ mod tests {
 
         assert_eq!(navigator.active, PaneId::Tab(TabId::Library));
         assert!(navigator.pending_play_scope.is_none());
-        assert_eq!(ctx.queue_store().len(), 1);
+        assert_eq!(ctx.queue_state().len(), 1);
     }
 
     #[test]
@@ -1096,7 +1096,7 @@ mod tests {
 
         assert_eq!(navigator.active, PaneId::Tab(TabId::Search));
         assert!(navigator.pending_play_scope.is_none());
-        assert_eq!(ctx.queue_store().len(), 1);
+        assert_eq!(ctx.queue_state().len(), 1);
     }
 
     #[test]

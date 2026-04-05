@@ -80,7 +80,7 @@ impl QueuePaneV2 {
     /// Sync ContentView with current queue state from Ctx
     fn sync_queue(&mut self, ctx: &Ctx) {
         let current_idx = ctx.find_current_song_in_queue().map(|(idx, _)| idx);
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         let content = QueueContent::new(queue.clone(), current_idx);
 
         self.view.clear();
@@ -105,7 +105,7 @@ impl QueuePaneV2 {
         self.view.current().and_then(|level| {
             level.section_list.selected_item().and_then(|item| {
                 if let DetailItem::Song(song) = item {
-                    let queue = ctx.queue_store().read();
+                    let queue = ctx.queue_state().read();
                     queue.iter().find(|s| s.uri == song.uri).cloned()
                 } else {
                     None
@@ -202,7 +202,7 @@ impl QueuePaneV2 {
 
     /// Convert indices to queue IDs
     fn indices_to_ids(&self, indices: &[usize], ctx: &Ctx) -> Result<Vec<u32>> {
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         let mut ids = Vec::new();
         for &idx in indices {
             match queue.get(idx).and_then(|s| s.id) {
@@ -372,19 +372,11 @@ impl Pane for QueuePaneV2 {
                 PaneAction::Handled => ctx.render()?,
                 PaneAction::Play(song) => {
                     if let Some(id) = song.id {
-                        ctx.command(move |client| {
-                            client.play_id(id)?;
-                            Ok(())
-                        });
+                        ctx.queue_mutator().play_id(id);
                     }
                 }
                 PaneAction::QueueDelete(ids) => {
-                    for id in ids {
-                        ctx.command(move |client| {
-                            client.delete_id(id)?;
-                            Ok(())
-                        });
-                    }
+                    ctx.queue_mutator().delete_ids(&ids);
                 }
                 _ => {}
             }
@@ -409,10 +401,7 @@ impl Pane for QueuePaneV2 {
                 // For legacy Pane, we just trigger the action directly
                 if let PaneAction::Play(song) = pane_action {
                     if let Some(id) = song.id {
-                        ctx.command(move |client| {
-                            client.play_id(id)?;
-                            Ok(())
-                        });
+                        ctx.queue_mutator().play_id(id);
                     }
                 }
             }
@@ -420,12 +409,7 @@ impl Pane for QueuePaneV2 {
                 let ids: Vec<u32> =
                     items.iter().filter_map(|i| i.as_song()).filter_map(|s| s.id).collect();
                 if !ids.is_empty() {
-                    for id in ids {
-                        ctx.command(move |client| {
-                            client.delete_id(id)?;
-                            Ok(())
-                        });
-                    }
+                    ctx.queue_mutator().delete_ids(&ids);
                 }
             }
             ContentAction::MoveUp(items) | ContentAction::MoveDown(items) => {
@@ -619,7 +603,7 @@ mod tests {
         let pane = QueuePaneV2::new(&ctx);
 
         let song = Song { id: Some(1), uri: "test_uri".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song.clone()]);
+        ctx.queue_state().reconcile_from_backend(vec![song.clone()]);
         ctx.status.songid = Some(1);
         ctx.status.state = PlaybackState::Play;
 
@@ -640,7 +624,7 @@ mod tests {
 
         let song1 = Song { id: Some(1), uri: "uri1".to_string(), ..Default::default() };
         let song2 = Song { id: Some(2), uri: "uri2".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song1.clone(), song2.clone()]);
+        ctx.queue_state().reconcile_from_backend(vec![song1.clone(), song2.clone()]);
 
         ctx.status.songid = Some(1);
         ctx.status.state = PlaybackState::Play;
@@ -660,7 +644,7 @@ mod tests {
         let pane = QueuePaneV2::new(&ctx);
 
         let song = Song { id: Some(100), uri: "uri".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song]);
+        ctx.queue_state().reconcile_from_backend(vec![song]);
 
         let indices = vec![0, 1];
         let result = pane.indices_to_ids(&indices, &ctx);
@@ -675,7 +659,7 @@ mod tests {
         let pane = QueuePaneV2::new(&ctx);
 
         let song = Song { id: Some(1), uri: "test_uri".to_string(), ..Default::default() };
-        ctx.queue_store().reconcile(vec![song.clone()]);
+        ctx.queue_state().reconcile_from_backend(vec![song.clone()]);
         ctx.status.songid = Some(1);
         ctx.status.state = PlaybackState::Pause;
 

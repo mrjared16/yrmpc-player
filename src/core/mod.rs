@@ -5,7 +5,7 @@ pub mod controllers;
 pub mod event_loop;
 pub mod headless;
 pub mod input;
-pub mod queue_store;
+pub mod queue_state;
 pub mod scheduler;
 pub mod socket;
 pub mod work;

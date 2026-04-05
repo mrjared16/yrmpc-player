@@ -165,7 +165,7 @@ impl ArtistDetailPane {
             return PaneAction::Handled;
         };
 
-        ctx.queue_store().play(intent);
+        ctx.queue_mutator().play(intent);
         if used_marks {
             if let Some(level) = self.view.current_mut() {
                 level.section_list.clear_marks();
@@ -393,7 +393,7 @@ mod tests {
             pane.resolve_play_scope_action(selected_item, &mut ctx),
             PaneAction::Handled
         ));
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         assert_eq!(queue.len(), 1);
         assert_eq!(queue[0].uri, "song-1");
         drop(queue);
@@ -426,7 +426,7 @@ mod tests {
             pane.resolve_play_scope_action(selected_item, &mut ctx),
             PaneAction::Handled
         ));
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         assert_eq!(queue.len(), 3);
         assert_eq!(queue[0].uri, "song-1");
         assert_eq!(queue[1].uri, "song-2");

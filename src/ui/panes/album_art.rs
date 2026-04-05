@@ -203,8 +203,10 @@ mod tests {
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue_store()
-            .reconcile(vec![Song { id: Some(selected_song_id), ..Default::default() }]);
+        ctx.queue_state().reconcile_from_backend(vec![Song {
+            id: Some(selected_song_id),
+            ..Default::default()
+        }]);
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);
@@ -245,8 +247,10 @@ mod tests {
         let mut config = Config::default();
         config.album_art.method = method;
         ctx.config = std::sync::Arc::new(config);
-        ctx.queue_store()
-            .reconcile(vec![Song { id: Some(selected_song_id), ..Default::default() }]);
+        ctx.queue_state().reconcile_from_backend(vec![Song {
+            id: Some(selected_song_id),
+            ..Default::default()
+        }]);
         ctx.status.songid = Some(selected_song_id);
         ctx.status.state = State::Play;
         let mut screen = AlbumArtPane::new(&ctx);

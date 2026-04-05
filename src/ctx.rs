@@ -12,15 +12,18 @@ use crossbeam::channel::{SendError, Sender, bounded};
 
 use crate::{
     AppEvent, PlayerCommand, Query, QueryResult, WorkRequest,
-    backends::{BackendActions, BackendDispatcher, QuerySync, api::Capability},
+    backends::{
+        BackendActions, BackendDispatcher, QuerySync, api::Capability, interaction::Enqueue,
+    },
     config::{
         Config,
         album_art::ImageMethod,
+        keys::actions::{AddOpts, AutoplayKind, Position},
         tabs::{PaneType, TabName},
     },
     core::{
         controllers::Controllers,
-        queue_store::QueueStore,
+        queue_state::QueueState,
         scheduler::{Scheduler, time_provider::DefaultTimeProvider},
     },
     domain::{PlaybackState as State, Song, Status},
@@ -169,8 +172,12 @@ impl Ctx {
         self.debug_ui_log = path;
     }
 
-    pub fn queue_store(&self) -> &QueueStore {
-        &self.controllers.queue
+    pub fn queue_state(&self) -> &QueueState {
+        &self.controllers.queue_state
+    }
+
+    pub fn queue_mutator(&self) -> QueueMutator<'_> {
+        QueueMutator::new(self)
     }
 
     // =========================================================================
@@ -310,7 +317,7 @@ impl Ctx {
         }
 
         self.status.songid.and_then(|id| {
-            self.queue_store()
+            self.queue_state()
                 .read()
                 .iter()
                 .enumerate()
@@ -383,6 +390,94 @@ impl Ctx {
         log::debug!("Refreshing queue from backend");
 
         self.query().id("queue_refresh").query(move |client| {
+            let queue = client.playlist_info()?;
+            Ok(QueryResult::Queue(Some(queue)))
+        });
+    }
+}
+
+pub struct QueueMutator<'a> {
+    ctx: &'a Ctx,
+}
+
+impl<'a> QueueMutator<'a> {
+    fn new(ctx: &'a Ctx) -> Self {
+        Self { ctx }
+    }
+
+    pub fn add(&self, songs: Vec<Song>) {
+        self.ctx.queue_state().add(songs);
+    }
+
+    pub fn add_and_play(&self, songs: Vec<Song>) {
+        self.ctx.queue_state().add_and_play(songs);
+    }
+
+    pub fn play(&self, intent: crate::backends::youtube::protocol::play_intent::PlayIntent) {
+        self.ctx.queue_state().play(intent);
+    }
+
+    pub fn delete_ids(&self, ids: &[u32]) {
+        self.ctx.queue_state().remove_ids(ids);
+    }
+
+    pub fn move_id(&self, id: u32, to_index: usize) {
+        self.ctx.queue_state().move_id(id, to_index);
+    }
+
+    pub fn clear(&self) {
+        self.ctx.queue_state().clear();
+    }
+
+    pub fn play_id(&self, id: u32) {
+        self.run_backend_queue_query("queue_play_id_action", move |client| {
+            client.play_id(id)?;
+            Ok(())
+        });
+    }
+
+    pub fn play_id_from_start(&self, id: u32) {
+        self.run_backend_queue_query("queue_play_from_start_action", move |client| {
+            client.play_id(id)?;
+            client.seek_current(crate::mpd::commands::SeekPosition::Absolute(0.0))?;
+            Ok(())
+        });
+    }
+
+    pub fn resolve_and_enqueue(
+        &self,
+        items: Vec<Enqueue>,
+        position: Position,
+        autoplay: AutoplayKind,
+        current_song_idx: Option<usize>,
+        hovered_song_idx: Option<usize>,
+    ) {
+        let opts = AddOpts { autoplay, position, all: false };
+        let replace = matches!(position, Position::Replace);
+        let queue = self.ctx.queue_state().read();
+        let (autoplay_idx, position) =
+            match opts.autoplay_idx_and_queue_position(&*queue, current_song_idx, hovered_song_idx)
+            {
+                Ok(v) => v,
+                Err(err) => {
+                    status_warn!("{}", err);
+                    return;
+                }
+            };
+
+        self.run_backend_queue_query("queue_enqueue_action", move |client| {
+            client.enqueue_multiple(items, autoplay_idx, position, replace)?;
+            Ok(())
+        });
+    }
+
+    fn run_backend_queue_query(
+        &self,
+        id: &'static str,
+        callback: impl FnOnce(&mut BackendDispatcher<'_>) -> Result<()> + Send + 'static,
+    ) {
+        self.ctx.query().id(id).replace_id(id).query(move |client| {
+            callback(client)?;
             let queue = client.playlist_info()?;
             Ok(QueryResult::Queue(Some(queue)))
         });

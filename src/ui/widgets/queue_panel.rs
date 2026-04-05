@@ -86,7 +86,7 @@ impl<'a> QueuePanel<'a> {
         let current_song_id = self.ctx.find_current_song_in_queue().map(|(_, song)| song.id);
 
         // Get queue snapshot for rendering
-        let queue = self.ctx.queue_store().read();
+        let queue = self.ctx.queue_state().read();
 
         // Create wrapper items with playing context
         let items: Vec<PanelSongView<'_>> = queue

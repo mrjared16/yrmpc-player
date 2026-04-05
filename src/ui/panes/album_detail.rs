@@ -99,7 +99,7 @@ impl AlbumDetailPane {
                 if songs.len() > 1 {
                     // Multiple songs selected - play all starting from activated song
                     let start_index = selection.find_song_index(&song.uri).unwrap_or(0);
-                    ctx.queue_store().play(PlayIntent::Context {
+                    ctx.queue_mutator().play(PlayIntent::Context {
                         tracks: songs,
                         offset: start_index,
                         shuffle: false,
@@ -107,7 +107,7 @@ impl AlbumDetailPane {
                     });
                 } else {
                     // Single song - play it
-                    ctx.queue_store().play(PlayIntent::Context {
+                    ctx.queue_mutator().play(PlayIntent::Context {
                         tracks: vec![song],
                         offset: 0,
                         shuffle: false,
@@ -169,7 +169,7 @@ impl AlbumDetailPane {
             return PaneAction::Handled;
         };
 
-        ctx.queue_store().play(intent);
+        ctx.queue_mutator().play(intent);
         if used_marks {
             if let Some(level) = self.view.current_mut() {
                 level.section_list.clear_marks();
@@ -394,7 +394,7 @@ mod tests {
             pane.resolve_play_scope_action(selected_item, &mut ctx),
             PaneAction::Handled
         ));
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         assert_eq!(queue.len(), 2);
         assert_eq!(queue[0].uri, "song-1");
         assert_eq!(queue[1].uri, "song-2");
@@ -431,7 +431,7 @@ mod tests {
             pane.resolve_play_scope_action(selected_item, &mut ctx),
             PaneAction::Handled
         ));
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         assert_eq!(queue.len(), 3);
         assert_eq!(queue[0].uri, "song-1");
         assert_eq!(queue[1].uri, "song-2");

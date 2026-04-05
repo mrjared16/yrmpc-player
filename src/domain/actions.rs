@@ -78,17 +78,17 @@ impl QueueItemOps for Song {
     }
 
     fn execute_queue_action(&self, action: QueueItemAction, ctx: &mut Ctx) -> Result<()> {
+        let queue_id =
+            || self.id.ok_or_else(|| anyhow!("Queue item is not synced with backend yet"));
+
         match action {
             QueueItemAction::Play => {
-                let id = self.id.unwrap_or_default();
-                ctx.command(move |client| {
-                    client.play_id(id)?;
-                    Ok(())
-                });
+                let id = queue_id()?;
+                ctx.queue_mutator().play_id(id);
                 Ok(())
             }
             QueueItemAction::PlayOrToggle => {
-                let id = self.id.unwrap_or_default();
+                let id = queue_id()?;
                 let current_id = ctx.find_current_song_in_queue().and_then(|(_, s)| s.id);
 
                 if current_id == Some(id) {
@@ -96,57 +96,37 @@ impl QueueItemOps for Song {
                     ctx.command(|client| Ok(client.pause_toggle()?));
                 } else {
                     // Different song - play from start (seek to 0)
-                    ctx.command(move |client| {
-                        client.play_id(id)?;
-                        // Seek to start to avoid resume-from-last-position
-                        client.seek_current(crate::mpd::commands::SeekPosition::Absolute(0.0))?;
-                        Ok(())
-                    });
+                    ctx.queue_mutator().play_id_from_start(id);
                 }
                 Ok(())
             }
             QueueItemAction::Delete => {
-                let id = self.id.unwrap_or_default();
-                // Use query (not command) to return updated queue for instant UI refresh
-                ctx.query().id("queue_delete_action").query(move |client| {
-                    client.delete_id(id)?;
-                    let queue = client.playlist_info()?;
-                    Ok(crate::QueryResult::Queue(Some(queue)))
-                });
+                let id = queue_id()?;
+                ctx.queue_mutator().delete_ids(&[id]);
                 Ok(())
             }
             QueueItemAction::MoveUp => {
-                let id = self.id.unwrap_or_default();
+                let id = queue_id()?;
                 // Find current index in queue
-                let current_idx = ctx.queue_store().read().iter().position(|s| s.id == Some(id));
+                let current_idx = ctx.queue_state().read().iter().position(|s| s.id == Some(id));
 
                 if let Some(idx) = current_idx {
                     if idx > 0 {
                         let new_idx = idx - 1;
-                        // Use query for instant UI refresh
-                        ctx.query().id("queue_move_action").query(move |client| {
-                            client.move_id(id, new_idx as u32)?;
-                            let queue = client.playlist_info()?;
-                            Ok(crate::QueryResult::Queue(Some(queue)))
-                        });
+                        ctx.queue_mutator().move_id(id, new_idx);
                     }
                 }
                 Ok(())
             }
             QueueItemAction::MoveDown => {
-                let id = self.id.unwrap_or_default();
+                let id = queue_id()?;
                 // Find current index in queue
-                let current_idx = ctx.queue_store().read().iter().position(|s| s.id == Some(id));
+                let current_idx = ctx.queue_state().read().iter().position(|s| s.id == Some(id));
 
                 if let Some(idx) = current_idx {
-                    if idx < ctx.queue_store().len().saturating_sub(1) {
+                    if idx < ctx.queue_state().len().saturating_sub(1) {
                         let new_idx = idx + 1;
-                        // Use query for instant UI refresh
-                        ctx.query().id("queue_move_action").query(move |client| {
-                            client.move_id(id, new_idx as u32)?;
-                            let queue = client.playlist_info()?;
-                            Ok(crate::QueryResult::Queue(Some(queue)))
-                        });
+                        ctx.queue_mutator().move_id(id, new_idx);
                     }
                 }
                 Ok(())

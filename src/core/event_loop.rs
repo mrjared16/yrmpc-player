@@ -505,7 +505,7 @@ fn main_task<B: Backend + std::io::Write>(
                                     let prev_song_file = (previous_status.state != State::Stop)
                                         .then(|| {
                                             previous_status.songid.and_then(|id| {
-                                                ctx.queue_store()
+                                                ctx.queue_state()
                                                     .read()
                                                     .iter()
                                                     .find(|song| song.id == Some(id))
@@ -565,9 +565,9 @@ fn main_task<B: Backend + std::io::Write>(
                         // Handle Queue result from ANY query - result type determines state update
                         (id, _, QueryResult::Queue(queue)) => {
                             let queue = queue.unwrap_or_default();
-                            ctx.queue_store().reconcile(queue);
+                            ctx.queue_state().reconcile_from_backend(queue);
                             render_wanted = true;
-                            log::debug!(id, len = ctx.queue_store().len(); "Queue updated");
+                            log::debug!(id, len = ctx.queue_state().len(); "Queue updated");
                             if let Err(err) = ui.on_event(UiEvent::QueueChanged, &mut ctx) {
                                 status_error!(error:? = err; "Ui failed to handle queue changed event, error: '{}'", err.to_status());
                             }

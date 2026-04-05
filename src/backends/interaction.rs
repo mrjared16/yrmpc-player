@@ -77,23 +77,13 @@ pub trait BackendActions {
         current_song_idx: Option<usize>,
         hovered_song_idx: Option<usize>,
     ) {
-        let opts = AddOpts { autoplay, position, all: false };
-        let replace = matches!(position, Position::Replace);
-        let queue = ctx.queue_store().read();
-        let (autoplay_idx, position) =
-            match opts.autoplay_idx_and_queue_position(&*queue, current_song_idx, hovered_song_idx)
-            {
-                Ok(v) => v,
-                Err(err) => {
-                    status_warn!("{}", err);
-                    return;
-                }
-            };
-
-        ctx.command(move |client| {
-            client.enqueue_multiple(items, autoplay_idx, position, replace)?;
-            Ok(())
-        });
+        ctx.queue_mutator().resolve_and_enqueue(
+            items,
+            position,
+            autoplay,
+            current_song_idx,
+            hovered_song_idx,
+        );
     }
 
     fn play_position_safe(&mut self, queue_len: usize) -> Result<(), MpdError>;
@@ -775,7 +765,7 @@ mod tests {
                     ..Default::default()
                 });
             }
-            ctx.queue_store().reconcile(songs);
+            ctx.queue_state().reconcile_from_backend(songs);
             ctx
         }
 
@@ -787,7 +777,7 @@ mod tests {
             let hovered = None;
             let opts = AddOpts { autoplay, position, all: false };
 
-            let queue = ctx_with_queue.queue_store().read();
+            let queue = ctx_with_queue.queue_state().read();
             let (autoplay_idx, queue_position) =
                 opts.autoplay_idx_and_queue_position(&*queue, current_song_idx, hovered).unwrap();
 

@@ -83,9 +83,21 @@ impl ListViewState {
         self.scrollbar =
             self.scrollbar.content_length(content_len).viewport_content_length(viewport_len);
 
+        self.marked.retain(|&idx| idx < content_len);
+
+        self.selected = match self.selected {
+            Some(_) if content_len == 0 => None,
+            Some(selected) if selected >= content_len => Some(content_len - 1),
+            selected => selected,
+        };
+
         // Clamp offset if content shrunk
         if self.offset > 0 && self.offset + viewport_len > content_len {
             self.offset = content_len.saturating_sub(viewport_len);
+        }
+
+        if let Some(selected) = self.selected {
+            self.ensure_visible(selected, 0);
         }
     }
 
@@ -352,5 +364,20 @@ mod tests {
         assert!(state.marked.contains(&4)); // was 5
         assert!(state.marked.contains(&6)); // was 7
         assert!(!state.marked.contains(&5));
+    }
+
+    #[test]
+    fn set_content_and_viewport_len_clamps_selection_and_marks() {
+        let mut state = ListViewState::new();
+        state.set_content_and_viewport_len(10, 5);
+        state.select(Some(9), 0);
+        state.marked.insert(2);
+        state.marked.insert(9);
+
+        state.set_content_and_viewport_len(3, 5);
+
+        assert_eq!(state.selected(), Some(2));
+        assert!(state.marked.contains(&2));
+        assert!(!state.marked.contains(&9));
     }
 }

@@ -136,8 +136,8 @@ impl QueueView {
         use crate::domain::{QueueItemAction, QueueItemOps};
 
         if let Some(idx) = self.selected() {
-            // Clone song to release borrow on queue_store before calling execute
-            let song = ctx.queue_store().get(idx);
+            // Clone song to release borrow on queue_state before calling execute
+            let song = ctx.queue_state().get(idx);
             if let Some(song) = song {
                 // Use the trait method - Tell, Don't Ask!
                 if song.execute_queue_action(QueueItemAction::PlayOrToggle, ctx).is_ok() {
@@ -153,13 +153,13 @@ impl QueueView {
         use crate::domain::{QueueItemAction, QueueItemOps};
 
         if let Some(idx) = self.selected() {
-            // Clone song to release borrow on queue_store before calling execute
-            let song = ctx.queue_store().get(idx);
+            // Clone song to release borrow on queue_state before calling execute
+            let song = ctx.queue_state().get(idx);
             if let Some(song) = song {
                 // Use the trait method - Tell, Don't Ask!
                 if song.execute_queue_action(QueueItemAction::Delete, ctx).is_ok() {
                     // Adjust selection after delete
-                    let queue_len = ctx.queue_store().len();
+                    let queue_len = ctx.queue_state().len();
                     if idx > 0 && queue_len > 1 {
                         self.select_previous(queue_len);
                     }
@@ -192,7 +192,7 @@ impl QueueView {
         let current_song_id = ctx.find_current_song_in_queue().map(|(_, song)| song.id);
 
         // Get queue snapshot for rendering
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
 
         // Create items with playing context
         let items: Vec<QueueSongView<'_>> = queue

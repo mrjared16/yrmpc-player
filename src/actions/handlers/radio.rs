@@ -42,7 +42,7 @@ impl Handler for RadioHandler {
             seed.title()
         );
 
-        ctx.queue_store().play(PlayIntent::Radio { seed, mix_type: MixType::SongRadio });
+        ctx.queue_mutator().play(PlayIntent::Radio { seed, mix_type: MixType::SongRadio });
 
         Ok(HandleResult::Done)
     }

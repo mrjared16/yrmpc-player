@@ -2,7 +2,7 @@ use std::sync::Arc;
 
 use crossbeam::channel::Sender;
 
-use super::queue_store::QueueDaemon;
+use super::queue_state::QueueDaemon;
 use crate::{
     AppEvent, Query, QueryResult,
     backends::youtube::protocol::{
@@ -110,12 +110,12 @@ impl QueueDaemon for CtxQueueDaemon {
 }
 
 pub struct Controllers {
-    pub queue: super::queue_store::QueueStore,
+    pub queue_state: super::queue_state::QueueState,
 }
 
 impl std::fmt::Debug for Controllers {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("Controllers").field("queue", &"QueueStore { ... }").finish()
+        f.debug_struct("Controllers").field("queue_state", &"QueueState { ... }").finish()
     }
 }
 
@@ -126,7 +126,7 @@ impl Controllers {
         client_request_sender: Sender<ClientRequest>,
     ) -> Self {
         let daemon = Arc::new(CtxQueueDaemon::new(client_request_sender));
-        let queue = super::queue_store::QueueStore::new(initial_queue, app_event_tx, daemon);
-        Self { queue }
+        let queue_state = super::queue_state::QueueState::new(initial_queue, app_event_tx, daemon);
+        Self { queue_state }
     }
 }

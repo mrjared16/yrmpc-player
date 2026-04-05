@@ -21,7 +21,7 @@ impl<'a> PaneActionExecutor<'a> {
         }
 
         log::info!("PaneActionExecutor: Deleting {} items from queue", ids.len());
-        ctx.queue_store().remove_ids(&ids);
+        ctx.queue_mutator().delete_ids(&ids);
         ctx.render()?;
         Ok(())
     }
@@ -38,7 +38,7 @@ impl<'a> PaneActionExecutor<'a> {
 
         log::info!("PaneActionExecutor: Moving {} items {:?}", ids.len(), direction);
 
-        let queue = ctx.queue_store().read();
+        let queue = ctx.queue_state().read();
         let queue_len = queue.len();
 
         let mut positions: Vec<usize> = ids
@@ -91,7 +91,7 @@ impl<'a> PaneActionExecutor<'a> {
             target_pos
         );
 
-        ctx.queue_store().move_id(move_id, target_pos as usize);
+        ctx.queue_mutator().move_id(move_id, target_pos as usize);
         ctx.render()?;
         Ok(())
     }

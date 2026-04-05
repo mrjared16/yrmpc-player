@@ -344,7 +344,7 @@ impl SearchPaneV2 {
         let count = songs.len();
         if play {
             // Play immediately (replace queue and play)
-            ctx.queue_store().play(PlayIntent::Context {
+            ctx.queue_mutator().play(PlayIntent::Context {
                 tracks: songs,
                 offset: 0,
                 shuffle: false,
@@ -352,7 +352,7 @@ impl SearchPaneV2 {
             });
         } else {
             // Add to queue without playing
-            ctx.queue_store().play(PlayIntent::Append { tracks: songs });
+            ctx.queue_mutator().play(PlayIntent::Append { tracks: songs });
         }
 
         let _ = ctx.render();
@@ -534,7 +534,7 @@ impl SearchPaneV2 {
     fn play_all_songs(&self, ctx: &Ctx, songs: Vec<Song>, start_index: usize) {
         if !songs.is_empty() {
             let query = self.get_current_query_string();
-            ctx.queue_store().play(PlayIntent::Context {
+            ctx.queue_mutator().play(PlayIntent::Context {
                 tracks: songs,
                 offset: start_index,
                 shuffle: false,
@@ -585,7 +585,7 @@ impl SearchPaneV2 {
 
     fn play_song(&self, ctx: &Ctx, song: Song) {
         let query = self.get_current_query_string();
-        ctx.queue_store().play(PlayIntent::Context {
+        ctx.queue_mutator().play(PlayIntent::Context {
             tracks: vec![song],
             offset: 0,
             shuffle: false,
@@ -608,7 +608,7 @@ impl SearchPaneV2 {
 
             if !songs.is_empty() {
                 let query = self.get_current_query_string();
-                ctx.queue_store().play(PlayIntent::Context {
+                ctx.queue_mutator().play(PlayIntent::Context {
                     tracks: songs,
                     offset: 0,
                     shuffle: ctx.status.random,

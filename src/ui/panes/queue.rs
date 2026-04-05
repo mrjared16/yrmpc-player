@@ -140,7 +140,7 @@ impl QueuePane {
         let (header, column_widths, column_formats) = Self::init(ctx);
 
         Self {
-            queue: Dir::new(ctx.queue_store().snapshot().to_vec()),
+            queue: Dir::new(ctx.queue_state().snapshot().to_vec()),
             list_state: ListState::default(),
             render_mode: QueueRenderMode::Rich, // Default to Rich mode for streaming
             filter_input_mode: false,
@@ -634,11 +634,11 @@ impl Pane for QueuePane {
     fn on_event(&mut self, event: &mut UiEvent, is_visible: bool, ctx: &Ctx) -> Result<()> {
         match event {
             UiEvent::Database => {
-                self.queue.items = ctx.queue_store().snapshot().to_vec();
+                self.queue.items = ctx.queue_state().snapshot().to_vec();
                 self.queue.unmark_all();
             }
             UiEvent::QueueChanged => {
-                self.queue.items = ctx.queue_store().snapshot().to_vec();
+                self.queue.items = ctx.queue_state().snapshot().to_vec();
             }
             UiEvent::SongChanged => {
                 if let Some((idx, _)) = ctx.find_current_song_in_queue()
