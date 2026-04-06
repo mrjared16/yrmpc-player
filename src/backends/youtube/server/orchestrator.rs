@@ -431,14 +431,19 @@ fn media_preparation_plan(
     if let Some(current_track) = &plan.current_track {
         active_window.push(current_track.clone());
     }
-    active_window.extend(plan.prefix_window.iter().cloned());
+    let (prefix_targets, extract_scope, extract_scope_generation) = if plan.playback_started {
+        active_window.extend(plan.prefix_window.iter().cloned());
+        (plan.prefix_window.clone(), plan.extract_scope.clone(), plan.extract_scope_generation)
+    } else {
+        (Vec::new(), Vec::new(), 0)
+    };
 
     MediaPreparationPlan {
         background_extract_mode,
         active_window,
-        prefix_targets: plan.prefix_window.clone(),
-        extract_scope_generation: plan.extract_scope_generation,
-        extract_scope: plan.extract_scope.clone(),
+        prefix_targets,
+        extract_scope_generation,
+        extract_scope,
     }
 }
 
@@ -977,17 +982,14 @@ mod tests {
         orch.handle_playback_started_for_current_track();
 
         let prepared = wait_for_prepared_entries(&recording, 3);
-        let warmed = wait_for_warmed_entries(&recording, 3);
+        let warmed = wait_for_warmed_entries(&recording, 1);
 
         assert_eq!(
             orch.coordinator.lock().snapshot().extract_scope,
             vec!["video123", "video456", "video789", "video999"]
         );
         assert_eq!(orch.coordinator.lock().snapshot().prefix_window, vec!["video456", "video789"]);
-        assert_eq!(
-            warmed,
-            vec!["video456".to_string(), "video789".to_string(), "video999".to_string()]
-        );
+        assert_eq!(warmed, vec!["video999".to_string()]);
         assert!(recording.warmed_batches.lock().is_empty());
         assert_eq!(
             prepared,
@@ -1005,7 +1007,7 @@ mod tests {
     }
 
     #[test]
-    fn performance_mode_starts_queue_wide_extract_before_playback_started() {
+    fn performance_mode_waits_for_playback_started_before_queue_wide_extract() {
         let (_mpv_guard, _temp_dir, orch, recording) =
             setup_orchestrator_with_preparer_mode(BackgroundExtractMode::Performance);
 
@@ -1023,19 +1025,18 @@ mod tests {
         );
         assert!(orch.coordinator.lock().snapshot().prefix_window.is_empty());
         assert!(recording.warmed.lock().is_empty());
+        assert!(recording.warmed_batches.lock().is_empty());
+
+        orch.handle_playback_started_for_current_track();
 
         for _ in 0..50 {
-            if recording.warmed_batches.lock().contains(&vec![
-                "video456".to_string(),
-                "video789".to_string(),
-                "video999".to_string(),
-            ]) {
+            if recording.warmed_batches.lock().contains(&vec!["video999".to_string()]) {
                 return;
             }
             std::thread::sleep(Duration::from_millis(10));
         }
 
-        panic!("performance mode did not start queue-wide extract warm before playback-start");
+        panic!("performance mode did not start queue-wide extract warm after playback-start");
     }
 
     #[test]
@@ -1051,12 +1052,12 @@ mod tests {
         let response = orch.play_position_sync(0);
         assert!(matches!(response, ServerResponse::Ok));
 
+        assert!(recording.warmed_batches.lock().is_empty());
+
+        orch.handle_playback_started_for_current_track();
+
         for _ in 0..50 {
-            if recording.warmed_batches.lock().contains(&vec![
-                "video456".to_string(),
-                "video789".to_string(),
-                "video999".to_string(),
-            ]) {
+            if recording.warmed_batches.lock().contains(&vec!["video999".to_string()]) {
                 break;
             }
             std::thread::sleep(Duration::from_millis(10));

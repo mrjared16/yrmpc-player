@@ -1,8 +1,8 @@
 //! Event handlers for `PlayQueue` events (Layer 2 Bridge).
 //!
-//! This handler bridges `PlayQueue` state changes to MPV playlist operations.
-//! Key responsibility: Keep MPV's playlist synchronized with queue order
-//! changes.
+//! This handler bridges `PlayQueue` state changes into playback planning
+//! updates. It must stay non-blocking so immediate startup remains owned by
+//! orchestrator-driven playback.
 
 use std::sync::Arc;
 
@@ -11,10 +11,8 @@ use parking_lot::Mutex;
 use super::{extract_video_id, stable_track_id};
 use crate::{
     backends::youtube::{
-        audio::MpvInput,
         media::{MediaPreparer, PreloadTier},
         server::orchestrator::PREFETCH_WINDOW_SIZE,
-        server::playback_prepare::prepare_media_blocking,
         server::{
             playback_coordinator::PlaybackCoordinator, playback_horizon::ResolvedPlaybackHorizon,
         },
@@ -24,10 +22,10 @@ use crate::{
 };
 
 pub struct QueueEventHandler {
-    playback: Arc<PlaybackService>,
+    _playback: Arc<PlaybackService>,
     queue: Arc<QueueService>,
     play_queue: Arc<Mutex<PlayQueue>>,
-    media_preparer: Option<Arc<dyn MediaPreparer>>,
+    _media_preparer: Option<Arc<dyn MediaPreparer>>,
     playback_coordinator: Option<Arc<Mutex<PlaybackCoordinator>>>,
     plan_changed: Option<Arc<dyn Fn() + Send + Sync>>,
 }
@@ -40,17 +38,17 @@ impl QueueEventHandler {
         play_queue: Arc<Mutex<PlayQueue>>,
     ) -> Self {
         Self {
-            playback,
+            _playback: playback,
             queue,
             play_queue,
-            media_preparer: None,
+            _media_preparer: None,
             playback_coordinator: None,
             plan_changed: None,
         }
     }
 
     pub fn with_media_preparer(mut self, preparer: Arc<dyn MediaPreparer>) -> Self {
-        self.media_preparer = Some(preparer);
+        self._media_preparer = Some(preparer);
         self
     }
 
@@ -121,82 +119,6 @@ impl QueueEventHandler {
             sync_coordinator_horizon(coordinator, &self.play_queue.lock(), play_order, current_id);
         }
         self.publish_plan_changed();
-
-        if self.queue.current_index().is_some() {
-            log::debug!("Skipping QueueEvent::OrderChanged playback sync during active playback");
-            return;
-        }
-
-        let mpv_playlist_len = match self.playback.get_playlist_count() {
-            Ok(len) => len,
-            Err(e) => {
-                log::warn!("Failed to get MPV playlist count: {e}");
-                return;
-            }
-        };
-
-        for i in (1..mpv_playlist_len).rev() {
-            if let Err(e) = self.playback.playlist_remove(i) {
-                log::warn!("Failed to remove MPV playlist item {i}: {e}");
-            }
-        }
-
-        let current_pos = current_id.and_then(|id| play_order.iter().position(|&x| x == id));
-
-        if let Some(current_pos) = current_pos {
-            let window_end = std::cmp::min(current_pos + PREFETCH_WINDOW_SIZE, play_order.len());
-
-            for (offset, &id) in play_order[current_pos + 1..window_end].iter().enumerate() {
-                let tier = if offset == 0 { PreloadTier::Gapless } else { PreloadTier::Eager };
-                if let Some(input) = self.resolve_playback_input(id, tier) {
-                    if let Err(e) = self.playback.playlist_append_input(&input) {
-                        log::warn!("Failed to append track {id} to MPV playlist: {e}");
-                    } else {
-                        log::debug!("Appended track {id} to MPV playlist");
-                    }
-                }
-            }
-        } else if !play_order.is_empty() {
-            let window_end = std::cmp::min(PREFETCH_WINDOW_SIZE, play_order.len());
-            for (offset, &id) in play_order[..window_end].iter().enumerate() {
-                let tier = match offset {
-                    0 => PreloadTier::Immediate,
-                    1 => PreloadTier::Gapless,
-                    _ => PreloadTier::Eager,
-                };
-                if let Some(input) = self.resolve_playback_input(id, tier) {
-                    if let Err(e) = self.playback.playlist_append_input(&input) {
-                        log::warn!("Failed to append track {id} to MPV playlist: {e}");
-                    }
-                }
-            }
-        }
-    }
-
-    fn resolve_playback_input(&self, id: QueueId, tier: PreloadTier) -> Option<MpvInput> {
-        let play_queue = self.play_queue.lock();
-        let song = play_queue.get_song(id)?;
-        let video_id = stable_track_id(&song.uri);
-        if video_id.is_empty() {
-            log::warn!("Song {id} has empty video_id");
-            return None;
-        }
-        drop(play_queue);
-
-        let Some(preparer) = self.media_preparer.as_ref() else {
-            log::warn!(
-                "QueueEventHandler missing media preparer; cannot resolve media for {video_id}"
-            );
-            return None;
-        };
-
-        prepare_media_blocking(preparer, &video_id, tier)
-            .and_then(|prepared| self.playback.build_runtime_input(&video_id, &prepared))
-            .map_err(|e| {
-                log::warn!("Failed to prepare playback input for {video_id}: {e}");
-                e
-            })
-            .ok()
     }
 
     fn handle_current_changed(&mut self, from: Option<QueueId>, to: Option<QueueId>) {
@@ -219,9 +141,10 @@ impl QueueEventHandler {
         }
         self.publish_plan_changed();
         if self.plan_changed.is_none()
-            && let Some(ref preparer) = self.media_preparer
+            && let Some(ref preparer) = self._media_preparer
         {
-            preparer.activate_playback_window(&[]);
+            let empty: &[String] = &[];
+            preparer.activate_playback_window(empty);
         }
     }
 
@@ -232,9 +155,10 @@ impl QueueEventHandler {
         }
         self.publish_plan_changed();
         if self.plan_changed.is_none()
-            && let Some(ref preparer) = self.media_preparer
+            && let Some(ref preparer) = self._media_preparer
         {
-            preparer.activate_playback_window(&[]);
+            let empty: &[String] = &[];
+            preparer.activate_playback_window(empty);
         }
     }
 
@@ -681,6 +605,52 @@ mod tests {
         }
 
         assert_eq!(notifications.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn handle_order_changed_before_playback_started_has_no_media_side_effects() {
+        let (_mpv_guard, _temp_dir, playback, queue) = setup_playback_services();
+        let play_queue = Arc::new(Mutex::new(PlayQueue::new()));
+        let recording = Arc::new(RecordingMediaPreparer::fail_on_prepare());
+        let preparer: Arc<dyn MediaPreparer> = recording.clone();
+
+        let notifications = Arc::new(AtomicUsize::new(0));
+        let mut handler =
+            QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
+                .with_media_preparer(preparer)
+                .with_plan_changed({
+                    let notifications = Arc::clone(&notifications);
+                    Arc::new(move || {
+                        notifications.fetch_add(1, Ordering::SeqCst);
+                    })
+                });
+
+        let first_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
+        {
+            QueueEvent::ItemsAdded { ref ids } => ids[0],
+            _ => unreachable!(),
+        };
+        let second_id = match play_queue
+            .lock()
+            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") })[0]
+        {
+            QueueEvent::ItemsAdded { ref ids } => ids[0],
+            _ => unreachable!(),
+        };
+
+        handler.handle(QueueEvent::OrderChanged {
+            play_order: vec![first_id, second_id],
+            current_id: None,
+        });
+
+        assert_eq!(notifications.load(Ordering::SeqCst), 1);
+        assert!(recording.prepared.lock().is_empty());
+        assert!(recording.prefetched.lock().is_empty());
+        assert!(recording.warmed.lock().is_empty());
+        assert!(recording.warmed_batches.lock().is_empty());
+        assert!(recording.activated_windows.lock().is_empty());
     }
 
     #[test]

@@ -19,7 +19,6 @@ use crate::backends::youtube::{
     server::{
         handlers::stable_track_id,
         orchestrator::{Orchestrator, PREFETCH_WINDOW_SIZE},
-        playback_prepare::prepare_media_blocking,
         queue_coordinator::QueueCoordinator,
     },
 };
@@ -56,7 +55,6 @@ pub fn handle_play_with_intent(
             }
 
             queue_coordinator.apply(QueueCommand::Clear);
-            prime_startup_track(orchestrator, &tracks[*offset]);
             queue_coordinator.apply(QueueCommand::AddBatch { songs: tracks.clone() });
 
             orchestrator.queue().set_shuffle_enabled(*shuffle);
@@ -118,7 +116,6 @@ pub fn handle_play_with_intent(
             orchestrator.queue().add(seed.clone(), None);
 
             queue_coordinator.apply(QueueCommand::Clear);
-            prime_startup_track(orchestrator, seed);
             queue_coordinator.apply(QueueCommand::Add { song: seed.clone() });
 
             let _ = event_tx.send("queue".to_string());
@@ -128,21 +125,6 @@ pub fn handle_play_with_intent(
     }
 
     ServerResponse::Ok
-}
-
-fn prime_startup_track(orchestrator: &Orchestrator, song: &Song) {
-    let track_id = stable_track_id(&song.uri);
-    if track_id.is_empty() {
-        return;
-    }
-
-    if let Err(error) = prepare_media_blocking(
-        orchestrator.media_preparer(),
-        &track_id,
-        crate::backends::youtube::media::PreloadTier::Immediate,
-    ) {
-        log::warn!("[INTENT] startup track priming failed track_id={} error={}", track_id, error,);
-    }
 }
 
 fn context_source_label(intent: &PlayIntent) -> &'static str {
@@ -260,7 +242,12 @@ mod tests {
                 Arc::clone(orchestrator.queue()),
                 Arc::clone(&play_queue),
             )
-            .with_media_preparer(recording.clone()),
+            .with_media_preparer(recording.clone())
+            .with_playback_coordinator(Arc::clone(orchestrator.coordinator()))
+            .with_plan_changed({
+                let orchestrator = Arc::clone(&orchestrator);
+                Arc::new(move || orchestrator.publish_prefix_plan_changed())
+            }),
         );
         let (event_tx, _event_rx) = crossbeam::channel::unbounded();
         let queue_coordinator = Arc::new(QueueCoordinator::new(
@@ -396,7 +383,7 @@ mod tests {
     }
 
     #[test]
-    fn context_intent_primes_current_track_before_queue_batch_warm() {
+    fn context_intent_defers_future_warm_until_playback_started() {
         let (_mpv_guard, _temp_dir, orchestrator, queue_coordinator, recording, _play_queue) =
             setup_orchestrator();
         let (event_tx, _event_rx) = crossbeam::channel::unbounded();
@@ -420,15 +407,29 @@ mod tests {
             prepared.first(),
             Some(&("ctx-a".to_string(), crate::backends::youtube::media::PreloadTier::Immediate))
         );
+        assert!(recording.warmed.lock().is_empty());
+        assert!(recording.warmed_batches.lock().is_empty());
+
+        orchestrator.handle_playback_started_for_current_track();
+
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
         loop {
-            let warmed = recording.warmed.lock().clone();
-            if warmed == vec!["ctx-b".to_string(), "ctx-c".to_string()] {
+            let prepared = recording.prepared.lock().clone();
+            if prepared
+                == vec![
+                    ("ctx-a".to_string(), crate::backends::youtube::media::PreloadTier::Immediate),
+                    ("ctx-b".to_string(), crate::backends::youtube::media::PreloadTier::Background),
+                    ("ctx-c".to_string(), crate::backends::youtube::media::PreloadTier::Background),
+                ]
+            {
                 break;
             }
-            assert!(std::time::Instant::now() < deadline, "unexpected warmed list: {warmed:?}");
+            assert!(std::time::Instant::now() < deadline, "unexpected prepared list: {prepared:?}");
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
+
+        assert!(recording.warmed.lock().is_empty());
+        assert!(recording.warmed_batches.lock().is_empty());
     }
 
     #[test]
