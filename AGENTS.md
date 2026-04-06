@@ -7,6 +7,21 @@ If this file conflicts with the parent file, prefer the more specific rule here 
 
 ---
 
+## CRITICAL: Search Tool Priority
+
+**Tool priority for all search operations: codebase-memory-mcp → fff tools → default Grep/Read (last resort only)**
+
+1. **codebase-memory-mcp** — graph-based discovery (functions, classes, call paths)
+2. **fff tools** — fallback when MCP returns insufficient results:
+   - `fff_find_files` — fuzzy file name search
+   - `fff_grep` — single-pattern content search
+   - `fff_multi_grep` — multi-pattern content search (OR logic)
+3. **Default Grep/Read** — LAST RESORT only (string literals, non-code files, when fff fails)
+
+**NEVER use default Grep when fff tools would work.** The fff tools are faster and more capable for code search.
+
+---
+
 ## Scope
 
 `rmpc/` is the main Rust crate for yrmpc.
