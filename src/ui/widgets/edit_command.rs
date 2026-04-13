@@ -7,6 +7,7 @@ pub enum EditCommand {
     Insert(char),
     Backspace,
     Delete,
+    DeleteWordBackward,
     ClearAll,
     WordForward,
     WordBackward,
@@ -31,6 +32,7 @@ pub fn resolve_edit_command(key: &KeyEvent) -> EditCommand {
         KeyCode::Down => EditCommand::SuggestionsDown,
         KeyCode::Char(c) if has_ctrl => match c.to_ascii_lowercase() {
             'c' | 'l' => EditCommand::ClearAll,
+            'w' => EditCommand::DeleteWordBackward,
             'n' => EditCommand::SuggestionsDown,
             'p' => EditCommand::SuggestionsUp,
             _ => EditCommand::Nop,
@@ -65,6 +67,7 @@ pub fn apply_edit_command(
         }
         EditCommand::Backspace => remove_char_before_cursor(value, cursor),
         EditCommand::Delete => remove_char_at_cursor(value, cursor),
+        EditCommand::DeleteWordBackward => remove_previous_word(value, cursor),
         EditCommand::ClearAll => {
             if value.is_empty() && *cursor == 0 {
                 false
@@ -112,6 +115,35 @@ fn remove_char_at_cursor(value: &mut String, cursor: &mut usize) -> bool {
     let start = char_to_byte_index(value, *cursor);
     let end = char_to_byte_index(value, *cursor + 1);
     value.replace_range(start..end, "");
+
+    true
+}
+
+fn remove_previous_word(value: &mut String, cursor: &mut usize) -> bool {
+    let chars: Vec<char> = value.chars().collect();
+    let mut end = (*cursor).min(chars.len());
+
+    if end == 0 {
+        return false;
+    }
+
+    while end > 0 && !is_word_char(chars[end - 1]) {
+        end -= 1;
+    }
+
+    let mut start = end;
+    while start > 0 && is_word_char(chars[start - 1]) {
+        start -= 1;
+    }
+
+    if start == *cursor {
+        return false;
+    }
+
+    let start_byte = char_to_byte_index(value, start);
+    let cursor_byte = char_to_byte_index(value, *cursor);
+    value.replace_range(start_byte..cursor_byte, "");
+    *cursor = start;
 
     true
 }
@@ -181,6 +213,13 @@ mod tests {
     }
 
     #[test]
+    fn resolves_ctrl_w_to_delete_word_backward() {
+        let ctrl_w = KeyEvent::from(CKeyEvent::new(KeyCode::Char('w'), KeyModifiers::CONTROL));
+
+        assert_eq!(resolve_edit_command(&ctrl_w), EditCommand::DeleteWordBackward);
+    }
+
+    #[test]
     fn inserts_at_cursor_position() {
         let mut value = String::from("helo");
         let mut cursor = 2;
@@ -218,5 +257,18 @@ mod tests {
             apply_edit_command(EditCommand::WordBackward, &mut value, &mut cursor, false);
         assert!(changed_back);
         assert_eq!(cursor, 0);
+    }
+
+    #[test]
+    fn ctrl_w_deletes_previous_word() {
+        let mut value = String::from("hello   world");
+        let mut cursor = value.chars().count();
+
+        let changed =
+            apply_edit_command(EditCommand::DeleteWordBackward, &mut value, &mut cursor, false);
+
+        assert!(changed);
+        assert_eq!(value, "hello   ");
+        assert_eq!(cursor, 8);
     }
 }
