@@ -25,6 +25,7 @@ use crate::{
     },
     ui::widgets::{
         button::{Button, ButtonGroup, ButtonGroupState},
+        edit_command::{apply_edit_command, resolve_edit_command},
         input::Input,
     },
 };
@@ -37,6 +38,7 @@ pub struct AddRandomModal<'a> {
     active_input: InputType,
     input_areas: EnumMap<InputAreas, Rect>,
     count: String,
+    count_cursor: usize,
     selected_tag: AddRandom,
 }
 
@@ -92,6 +94,7 @@ impl AddRandomModal<'_> {
                 _ => Rect::default(),
             },
             count: String::from("5"),
+            count_cursor: 1,
             selected_tag: AddRandom::Song,
         }
     }
@@ -146,6 +149,7 @@ impl Modal for AddRandomModal<'_> {
             .set_label("Count: ")
             .set_label_style(ctx.config.as_text_style())
             .set_text(&self.count)
+            .set_cursor(self.count_cursor)
             .set_focused(matches!(self.active_input, InputType::CountFocused))
             .set_focused_style(ctx.config.theme.highlight_border_style)
             .set_borderless(true)
@@ -178,35 +182,24 @@ impl Modal for AddRandomModal<'_> {
     }
 
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
-        let action = key.as_common_action(ctx);
         match self.active_input {
-            InputType::CountFocused => {
-                // handle typing into input field
-                if let Some(CommonAction::Close) = action {
+            InputType::CountFocused => match resolve_edit_command(key) {
+                crate::ui::widgets::edit_command::EditCommand::Cancel => {
                     self.active_input = InputType::Count;
                     ctx.render()?;
-                    return Ok(());
-                } else if let Some(CommonAction::Confirm) = action {
+                }
+                crate::ui::widgets::edit_command::EditCommand::Accept => {
                     Self::add_random(self.selected_tag, &self.count, ctx)?;
                     self.hide(ctx)?;
-                    return Ok(());
                 }
-
-                match key.code() {
-                    KeyCode::Char(c) => {
-                        self.count.push(c);
-
+                command => {
+                    if apply_edit_command(command, &mut self.count, &mut self.count_cursor, true) {
                         ctx.render()?;
                     }
-                    KeyCode::Backspace => {
-                        self.count.pop();
-
-                        ctx.render()?;
-                    }
-                    _ => {}
                 }
-            }
+            },
             InputType::Tag => {
+                let action = key.as_common_action(ctx);
                 let Some(action) = action else {
                     return Ok(());
                 };
@@ -231,6 +224,7 @@ impl Modal for AddRandomModal<'_> {
                 }
             }
             InputType::Count => {
+                let action = key.as_common_action(ctx);
                 let Some(action) = action else {
                     return Ok(());
                 };
@@ -255,6 +249,7 @@ impl Modal for AddRandomModal<'_> {
                 }
             }
             InputType::Buttons => {
+                let action = key.as_common_action(ctx);
                 // handle switching between inputs and also handle buttons
                 let Some(action) = action else {
                     return Ok(());

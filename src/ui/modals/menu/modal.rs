@@ -23,7 +23,10 @@ use crate::{
         key_event::KeyEvent,
         mouse_event::{MouseEvent, MouseEventKind},
     },
-    ui::modals::{Modal, RectExt as _, menu::select_section::SelectSection},
+    ui::{
+        modals::{Modal, RectExt as _, menu::select_section::SelectSection},
+        widgets::edit_command::{EditCommand, apply_edit_command, resolve_edit_command},
+    },
 };
 
 #[derive(Debug)]
@@ -36,6 +39,7 @@ pub struct MenuModal<'a> {
     width: u16,
     id: Id,
     filter: Option<String>,
+    filter_cursor: usize,
     input_mode: bool,
 }
 
@@ -101,51 +105,42 @@ impl Modal for MenuModal<'_> {
 
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
         if self.input_focused {
-            let action = key.as_common_action(ctx);
-            if let Some(CommonAction::Close) = action {
-                self.input_focused = false;
-                self.sections[self.current_section_idx].unfocus();
-
-                ctx.render()?;
-                return Ok(());
-            } else if let Some(CommonAction::Confirm) = action {
-                self.sections[self.current_section_idx].confirm(ctx)?;
-
-                self.hide(ctx)?;
-                return Ok(());
+            match resolve_edit_command(key) {
+                EditCommand::Cancel => {
+                    self.input_focused = false;
+                    self.sections[self.current_section_idx].unfocus();
+                    ctx.render()?;
+                }
+                EditCommand::Accept => {
+                    self.sections[self.current_section_idx].confirm(ctx)?;
+                    self.hide(ctx)?;
+                }
+                _ => {
+                    self.sections[self.current_section_idx].key_input(key, ctx)?;
+                }
             }
-
-            self.sections[self.current_section_idx].key_input(key, ctx)?;
-
             return Ok(());
         }
 
         if let Some(filter) = &mut self.filter
             && self.input_mode
         {
-            match key.as_common_action(ctx) {
-                Some(CommonAction::Close) => {
+            match resolve_edit_command(key) {
+                EditCommand::Cancel => {
                     self.input_mode = false;
                     self.filter = None;
+                    self.filter_cursor = 0;
                     ctx.render()?;
                 }
-                Some(CommonAction::Confirm) => {
+                EditCommand::Accept => {
                     self.input_mode = false;
                     ctx.render()?;
                 }
-                _ => {
+                command => {
                     key.stop_propagation();
-                    match key.code() {
-                        KeyCode::Char(c) => {
-                            filter.push(c);
-                            self.first_result();
-                            ctx.render()?;
-                        }
-                        KeyCode::Backspace => {
-                            filter.pop();
-                            ctx.render()?;
-                        }
-                        _ => {}
+                    if apply_edit_command(command, filter, &mut self.filter_cursor, false) {
+                        self.first_result();
+                        ctx.render()?;
                     }
                 }
             }
@@ -156,6 +151,7 @@ impl Modal for MenuModal<'_> {
             match action {
                 CommonAction::EnterSearch => {
                     self.filter = Some(String::new());
+                    self.filter_cursor = 0;
                     self.input_mode = true;
                     ctx.render()?;
                 }
@@ -269,6 +265,7 @@ impl<'a> MenuModal<'a> {
             width: 40,
             id: id::new(),
             filter: None,
+            filter_cursor: 0,
             input_mode: false,
         }
     }

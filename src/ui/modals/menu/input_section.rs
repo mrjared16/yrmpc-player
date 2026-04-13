@@ -10,11 +10,19 @@ use ratatui::{
 };
 
 use super::Section;
-use crate::{ctx::Ctx, shared::key_event::KeyEvent, ui::widgets::input::Input};
+use crate::{
+    ctx::Ctx,
+    shared::key_event::KeyEvent,
+    ui::widgets::{
+        edit_command::{apply_edit_command, resolve_edit_command},
+        input::Input,
+    },
+};
 
 #[derive(derive_more::Debug, Default)]
 pub struct InputSection<'a> {
     pub value: String,
+    pub cursor: usize,
     pub label: Cow<'a, str>,
     pub area: Rect,
     pub current_item_style: Style,
@@ -30,6 +38,7 @@ impl<'a> InputSection<'a> {
             area: Rect::default(),
             current_item_style,
             value: String::new(),
+            cursor: 0,
             label: label.into(),
             action: None,
             is_current: false,
@@ -52,6 +61,7 @@ impl<'a> InputSection<'a> {
 
     pub fn add_initial_value(&mut self, value: impl Into<String>) -> &mut Self {
         self.value = value.into();
+        self.cursor = self.value.chars().count();
         self
     }
 }
@@ -89,6 +99,7 @@ impl Section for InputSection<'_> {
             if let Some(cb) = self.action.take() {
                 (cb)(ctx, std::mem::take(&mut self.value));
             }
+            self.cursor = 0;
             Ok(false)
         } else {
             self.is_focused = true;
@@ -126,6 +137,7 @@ impl Section for InputSection<'_> {
                 Style::default()
             })
             .set_focused(self.is_focused)
+            .set_cursor(self.cursor)
             .set_text(&self.value);
 
         input.render(area, buf);
@@ -151,18 +163,8 @@ impl Section for InputSection<'_> {
     }
 
     fn key_input(&mut self, key: &mut KeyEvent, ctx: &Ctx) -> Result<()> {
-        match key.code() {
-            KeyCode::Char(c) => {
-                self.value.push(c);
-
-                ctx.render()?;
-            }
-            KeyCode::Backspace => {
-                self.value.pop();
-
-                ctx.render()?;
-            }
-            _ => {}
+        if apply_edit_command(resolve_edit_command(key), &mut self.value, &mut self.cursor, false) {
+            ctx.render()?;
         }
 
         Ok(())

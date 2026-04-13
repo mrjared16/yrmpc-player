@@ -25,6 +25,7 @@ use crate::{
     },
     status_warn,
     ui::dirstack::DirState,
+    ui::widgets::edit_command::{apply_edit_command, resolve_edit_command},
 };
 
 #[derive(Debug)]
@@ -33,6 +34,7 @@ pub struct KeybindsModal {
     scrolling_state: DirState<TableState>,
     table_area: Rect,
     filter: Option<String>,
+    filter_cursor: usize,
     filter_input_mode: bool,
     filter_rows: Vec<Option<String>>,
 }
@@ -68,6 +70,7 @@ impl KeybindsModal {
             scrolling_state,
             table_area: Rect::default(),
             filter: None,
+            filter_cursor: 0,
             filter_input_mode: false,
             filter_rows: Vec::new(),
         }
@@ -332,39 +335,26 @@ impl Modal for KeybindsModal {
 
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
         if self.filter_input_mode {
-            match key.as_common_action(ctx) {
-                Some(CommonAction::Confirm) => {
+            match resolve_edit_command(key) {
+                crate::ui::widgets::edit_command::EditCommand::Accept => {
                     self.filter_input_mode = false;
-
                     ctx.render()?;
                 }
-                Some(CommonAction::Close) => {
+                crate::ui::widgets::edit_command::EditCommand::Cancel => {
                     self.filter_input_mode = false;
                     self.filter = None;
-
+                    self.filter_cursor = 0;
                     ctx.render()?;
                 }
-                _ => {
+                command => {
                     key.stop_propagation();
-                    match key.code() {
-                        KeyCode::Char(c) => {
-                            if let Some(ref mut f) = self.filter {
-                                for c in c.to_lowercase() {
-                                    f.push(c);
-                                }
-                            }
+                    if let Some(ref mut f) = self.filter {
+                        if apply_edit_command(command, f, &mut self.filter_cursor, false) {
+                            *f = f.to_lowercase();
+                            self.filter_cursor = self.filter_cursor.min(f.chars().count());
                             self.jump_first(ctx.config.scrolloff);
-
                             ctx.render()?;
                         }
-                        KeyCode::Backspace => {
-                            if let Some(ref mut f) = self.filter {
-                                f.pop();
-                            }
-
-                            ctx.render()?;
-                        }
-                        _ => {}
                     }
                 }
             }
@@ -406,6 +396,7 @@ impl Modal for KeybindsModal {
                 CommonAction::EnterSearch => {
                     self.filter_input_mode = true;
                     self.filter = Some(String::new());
+                    self.filter_cursor = 0;
 
                     ctx.render()?;
                 }
