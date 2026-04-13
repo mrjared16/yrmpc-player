@@ -47,6 +47,10 @@ impl KeyEvent {
         self.inner.code
     }
 
+    pub fn modifiers(&self) -> KeyModifiers {
+        self.inner.modifiers
+    }
+
     pub fn is_propagation_stopped(&self) -> bool {
         self.already_handled
     }

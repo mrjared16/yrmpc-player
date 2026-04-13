@@ -9,6 +9,7 @@ use ratatui::{
 #[derive(Debug, Default)]
 pub struct Input<'a> {
     text: &'a str,
+    cursor: Option<usize>,
     placeholder: Option<&'a str>,
     label: &'a str,
     label_style: Style,
@@ -65,17 +66,33 @@ impl<'a> Input<'a> {
             return Cow::Borrowed(self.placeholder.unwrap_or(""));
         }
 
-        let mut input_len = input_area.inner(Margin { horizontal: 1, vertical: 0 }).width as usize;
-
+        let mut visible_len =
+            input_area.inner(Margin { horizontal: 1, vertical: 0 }).width as usize;
         if self.focused {
-            input_len = input_len.saturating_sub(1);
+            visible_len = visible_len.saturating_sub(1);
         }
 
-        Cow::Owned(format!(
-            "{}{}",
-            self.text.chars().skip(self.text.len().saturating_sub(input_len)).collect::<String>(),
-            if self.focused { "█" } else { "" },
-        ))
+        let chars: Vec<char> = self.text.chars().collect();
+        let text_len = chars.len();
+
+        if !self.focused {
+            let start = text_len.saturating_sub(visible_len);
+            return Cow::Owned(chars[start..].iter().collect());
+        }
+
+        let cursor = self.cursor.unwrap_or(text_len).min(text_len);
+        let mut start = cursor.saturating_sub(visible_len / 2);
+        start = start.min(text_len.saturating_sub(visible_len));
+        let end = (start + visible_len).min(text_len);
+
+        let mut rendered = String::new();
+        rendered.extend(chars[start..cursor.min(end)].iter());
+        rendered.push('█');
+        if cursor < end {
+            rendered.extend(chars[cursor..end].iter());
+        }
+
+        Cow::Owned(rendered)
     }
 
     pub fn spacing(mut self, spacing: u16) -> Self {
@@ -85,6 +102,11 @@ impl<'a> Input<'a> {
 
     pub fn set_text(mut self, text: &'a str) -> Self {
         self.text = text;
+        self
+    }
+
+    pub fn set_cursor(mut self, cursor: usize) -> Self {
+        self.cursor = Some(cursor);
         self
     }
 

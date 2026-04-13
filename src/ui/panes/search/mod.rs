@@ -51,7 +51,10 @@ use crate::{
             browser::SongExt,
             search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
         },
-        widgets::browser::BrowserArea,
+        widgets::{
+            browser::BrowserArea,
+            edit_command::{EditCommand, apply_edit_command, resolve_edit_command},
+        },
     },
 };
 
@@ -1861,27 +1864,31 @@ impl Pane for SearchPane {
         match &mut self.phase {
             Phase::Search if self.inputs.insert_mode => {
                 let old_query = self.get_current_query_string();
-                match event.as_common_action(ctx) {
-                    Some(CommonAction::Close) => {
+                event.stop_propagation();
+
+                match resolve_edit_command(event) {
+                    EditCommand::Cancel => {
                         self.phase = Phase::Search;
                         self.inputs.insert_mode = false;
                         self.showing_suggestions = false;
-                        if let InputType::Numberbox(TextboxInput { value, .. }) =
+                        if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
                             self.inputs.focused_mut()
                             && value.is_empty()
                         {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
 
                         self.maybe_search_on_change(ctx);
                         ctx.render()?;
                     }
-                    Some(CommonAction::Confirm) => {
+                    EditCommand::Accept => {
                         if self.showing_suggestions {
                             if let Some(idx) = self.suggestions_state.selected() {
                                 if let Some(suggestion) = self.suggestions.get(idx) {
                                     if let InputType::Textbox(input) = self.inputs.focused_mut() {
                                         input.value = suggestion.clone();
+                                        input.cursor = input.value.chars().count();
                                     }
                                     self.showing_suggestions = false;
                                     self.search(ctx);
@@ -1894,59 +1901,53 @@ impl Pane for SearchPane {
                         self.phase = Phase::Search;
                         self.inputs.insert_mode = false;
                         self.showing_suggestions = false;
-                        if let InputType::Numberbox(TextboxInput { value, .. }) =
+                        if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
                             self.inputs.focused_mut()
                             && value.is_empty()
                         {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
 
                         self.maybe_search_on_change(ctx);
                         ctx.render()?;
                     }
-                    Some(CommonAction::Down) if self.showing_suggestions => {
-                        let next = self
-                            .suggestions_state
-                            .selected()
-                            .map_or(0, |i| (i + 1) % self.suggestions.len());
-                        self.suggestions_state.select(Some(next));
-                        ctx.render()?;
+                    EditCommand::SuggestionsDown if self.showing_suggestions => {
+                        if !self.suggestions.is_empty() {
+                            let next = self
+                                .suggestions_state
+                                .selected()
+                                .map_or(0, |i| (i + 1) % self.suggestions.len());
+                            self.suggestions_state.select(Some(next));
+                            ctx.render()?;
+                        }
                     }
-                    Some(CommonAction::Up) if self.showing_suggestions => {
-                        let prev = self
-                            .suggestions_state
-                            .selected()
-                            .map_or(self.suggestions.len() - 1, |i| {
-                                (i + self.suggestions.len() - 1) % self.suggestions.len()
-                            });
-                        self.suggestions_state.select(Some(prev));
-                        ctx.render()?;
+                    EditCommand::SuggestionsUp if self.showing_suggestions => {
+                        if !self.suggestions.is_empty() {
+                            let prev = self
+                                .suggestions_state
+                                .selected()
+                                .map_or(self.suggestions.len() - 1, |i| {
+                                    (i + self.suggestions.len() - 1) % self.suggestions.len()
+                                });
+                            self.suggestions_state.select(Some(prev));
+                            ctx.render()?;
+                        }
                     }
-                    _ => {
-                        event.stop_propagation();
-                        match event.code() {
-                            KeyCode::Char(c) => match self.inputs.focused_mut() {
-                                InputType::Textbox(TextboxInput { value, .. }) => {
-                                    value.push(c);
-                                    ctx.render()?;
-                                }
-                                InputType::Numberbox(TextboxInput { value, .. }) => {
-                                    if c.is_numeric() {
-                                        value.push(c);
-                                        ctx.render()?;
-                                    }
-                                }
-                                _ => {}
-                            },
-                            KeyCode::Backspace => match self.inputs.focused_mut() {
-                                InputType::Textbox(TextboxInput { value, .. })
-                                | InputType::Numberbox(TextboxInput { value, .. }) => {
-                                    value.pop();
-                                    ctx.render()?;
-                                }
-                                _ => {}
-                            },
+                    command => {
+                        let mut changed = false;
+                        match self.inputs.focused_mut() {
+                            InputType::Textbox(TextboxInput { value, cursor, .. }) => {
+                                changed = apply_edit_command(command, value, cursor, false);
+                            }
+                            InputType::Numberbox(TextboxInput { value, cursor, .. }) => {
+                                changed = apply_edit_command(command, value, cursor, true);
+                            }
                             _ => {}
+                        }
+
+                        if changed {
+                            ctx.render()?;
                         }
                     }
                 }

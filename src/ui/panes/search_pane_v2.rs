@@ -47,12 +47,16 @@ use crate::{
             },
             search::inputs::{ActionResult, InputGroups, InputType, TextboxInput},
         },
-        widgets::{content_view::ContentView, selectable_list::NavConfig},
+        widgets::{
+            content_view::ContentView,
+            edit_command::{EditCommand, apply_edit_command, resolve_edit_command},
+            selectable_list::NavConfig,
+        },
     },
 };
 
-const SEARCH_ID: &'static str = "search_v2";
-const SUGGESTIONS_ID: &'static str = "search_suggestions_v2";
+const SEARCH_ID: &str = "search_v2";
+const SUGGESTIONS_ID: &str = "search_suggestions_v2";
 
 /// Convert ContentType to string for logging
 fn kind_to_string(kind: ContentType) -> &'static str {
@@ -1065,31 +1069,34 @@ impl Pane for SearchPaneV2 {
         if self.phase == Phase::Search && self.inputs.insert_mode {
             // Store old query for debouncing
             let old_query = self.get_current_query_string();
+            event.stop_propagation();
 
-            match event.as_common_action(ctx) {
-                Some(CommonAction::Close) => {
+            match resolve_edit_command(event) {
+                EditCommand::Cancel => {
                     self.inputs.insert_mode = false;
                     self.autocomplete.showing = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) =
+                    if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
                         self.inputs.focused_mut()
                     {
                         if value.is_empty() {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
                     }
                     ctx.render()?;
                 }
-                Some(CommonAction::Confirm) => {
+                EditCommand::Accept => {
                     // If showing suggestions and one is selected, use it
                     if self.autocomplete.showing {
                         if let Some(idx) = self.autocomplete.state.selected() {
                             if let Some(suggestion) =
                                 self.autocomplete.suggestions.get(idx).cloned()
                             {
-                                if let InputType::Textbox(TextboxInput { value, .. }) =
+                                if let InputType::Textbox(TextboxInput { value, cursor, .. }) =
                                     self.inputs.focused_mut()
                                 {
                                     *value = suggestion;
+                                    *cursor = value.chars().count();
                                 }
                                 self.autocomplete.showing = false;
                                 self.search(ctx);
@@ -1101,18 +1108,19 @@ impl Pane for SearchPaneV2 {
 
                     self.inputs.insert_mode = false;
                     self.autocomplete.showing = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) =
+                    if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
                         self.inputs.focused_mut()
                     {
                         if value.is_empty() {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
                     }
                     // Trigger search after confirming input
                     self.search(ctx);
                     ctx.render()?;
                 }
-                Some(CommonAction::Down) if self.autocomplete.showing => {
+                EditCommand::SuggestionsDown if self.autocomplete.showing => {
                     let len = self.autocomplete.suggestions.len();
                     if len > 0 {
                         let next = self.autocomplete.state.selected().map_or(0, |i| (i + 1) % len);
@@ -1120,7 +1128,7 @@ impl Pane for SearchPaneV2 {
                         ctx.render()?;
                     }
                 }
-                Some(CommonAction::Up) if self.autocomplete.showing => {
+                EditCommand::SuggestionsUp if self.autocomplete.showing => {
                     let len = self.autocomplete.suggestions.len();
                     if len > 0 {
                         let prev = self
@@ -1132,31 +1140,20 @@ impl Pane for SearchPaneV2 {
                         ctx.render()?;
                     }
                 }
-                _ => {
-                    event.stop_propagation();
-                    match event.code() {
-                        KeyCode::Char(c) => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. }) => {
-                                value.push(c);
-                                ctx.render()?;
-                            }
-                            InputType::Numberbox(TextboxInput { value, .. }) => {
-                                if c.is_numeric() {
-                                    value.push(c);
-                                    ctx.render()?;
-                                }
-                            }
-                            _ => {}
-                        },
-                        KeyCode::Backspace => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. })
-                            | InputType::Numberbox(TextboxInput { value, .. }) => {
-                                value.pop();
-                                ctx.render()?;
-                            }
-                            _ => {}
-                        },
+                command => {
+                    let mut changed = false;
+                    match self.inputs.focused_mut() {
+                        InputType::Textbox(TextboxInput { value, cursor, .. }) => {
+                            changed = apply_edit_command(command, value, cursor, false);
+                        }
+                        InputType::Numberbox(TextboxInput { value, cursor, .. }) => {
+                            changed = apply_edit_command(command, value, cursor, true);
+                        }
                         _ => {}
+                    }
+
+                    if changed {
+                        ctx.render()?;
                     }
                 }
             }
@@ -1343,10 +1340,10 @@ impl NavigatorPane for SearchPaneV2 {
                                         self.phase = Phase::Search;
                                         key.stop_propagation();
                                         return Ok(PaneAction::Handled);
-                                    } else {
-                                        // Should have popped stack internally
-                                        return Ok(PaneAction::Handled);
                                     }
+
+                                    // Should have popped stack internally
+                                    return Ok(PaneAction::Handled);
                                 }
                                 _ => {}
                             }
@@ -1361,10 +1358,10 @@ impl NavigatorPane for SearchPaneV2 {
                                     self.phase = Phase::Search;
                                     key.stop_propagation();
                                     return Ok(PaneAction::Handled);
-                                } else {
-                                    // Should have popped stack internally
-                                    return Ok(PaneAction::Handled);
                                 }
+
+                                // Should have popped stack internally
+                                return Ok(PaneAction::Handled);
                             }
                             ContentAction::Activate(item) => {
                                 // Interpret activation in pane context

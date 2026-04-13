@@ -1,5 +1,4 @@
 use anyhow::Result;
-use crossterm::event::KeyCode;
 use ratatui::{
     Frame,
     layout::Rect,
@@ -20,6 +19,7 @@ use crate::{
     },
     ui::widgets::{
         button::{Button, ButtonGroup, ButtonGroupState},
+        edit_command::{EditCommand, apply_edit_command, resolve_edit_command},
         input::Input,
     },
 };
@@ -32,6 +32,7 @@ pub struct InputModal<'a, C: FnOnce(&Ctx, &str) -> Result<()> + 'a> {
     input_area: Rect,
     callback: Option<C>,
     value: String,
+    cursor: usize,
     title: &'a str,
     input_label: &'a str,
 }
@@ -70,6 +71,7 @@ impl<'a, C: FnOnce(&Ctx, &str) -> Result<()> + 'a> InputModal<'a, C> {
             input_area: Rect::default(),
             callback: None,
             value: String::new(),
+            cursor: 0,
             input_label: "",
             title: "",
         }
@@ -97,6 +99,7 @@ impl<'a, C: FnOnce(&Ctx, &str) -> Result<()> + 'a> InputModal<'a, C> {
     }
 
     pub fn initial_value(mut self, value: String) -> Self {
+        self.cursor = value.chars().count();
         self.value = value;
         self
     }
@@ -130,6 +133,7 @@ impl<'a, C: FnOnce(&Ctx, &str) -> Result<()> + 'a> Modal for InputModal<'a, C> {
             .set_label(self.input_label)
             .set_label_style(ctx.config.as_text_style())
             .set_text(&self.value)
+            .set_cursor(self.cursor)
             .set_focused(self.input_focused)
             .set_focused_style(ctx.config.theme.highlight_border_style)
             .set_unfocused_style(ctx.config.as_border_style());
@@ -153,65 +157,58 @@ impl<'a, C: FnOnce(&Ctx, &str) -> Result<()> + 'a> Modal for InputModal<'a, C> {
     }
 
     fn handle_key(&mut self, key: &mut KeyEvent, ctx: &mut Ctx) -> Result<()> {
-        let action = key.as_common_action(ctx);
         if self.input_focused {
-            if let Some(CommonAction::Close) = action {
-                self.input_focused = false;
-
-                ctx.render()?;
-                return Ok(());
-            } else if let Some(CommonAction::Confirm) = action {
-                if self.button_group_state.selected == 0
-                    && let Some(callback) = self.callback.take()
-                {
-                    (callback)(ctx, &self.value)?;
-                }
-                self.hide(ctx)?;
-                return Ok(());
-            }
-
-            match key.code() {
-                KeyCode::Char(c) => {
-                    self.value.push(c);
-
+            key.stop_propagation();
+            match resolve_edit_command(key) {
+                EditCommand::Cancel => {
+                    self.input_focused = false;
                     ctx.render()?;
+                    return Ok(());
                 }
-                KeyCode::Backspace => {
-                    self.value.pop();
-
-                    ctx.render()?;
-                }
-                _ => {}
-            }
-        } else if let Some(action) = action {
-            match action {
-                CommonAction::Down => {
-                    self.button_group_state.next();
-
-                    ctx.render()?;
-                }
-                CommonAction::Up => {
-                    self.button_group_state.next();
-
-                    ctx.render()?;
-                }
-                CommonAction::Close => {
-                    self.hide(ctx)?;
-                }
-                CommonAction::Confirm => {
+                EditCommand::Accept => {
                     if self.button_group_state.selected == 0
                         && let Some(callback) = self.callback.take()
                     {
                         (callback)(ctx, &self.value)?;
                     }
                     self.hide(ctx)?;
+                    return Ok(());
                 }
-                CommonAction::FocusInput => {
-                    self.input_focused = true;
-
-                    ctx.render()?;
+                command => {
+                    if apply_edit_command(command, &mut self.value, &mut self.cursor, false) {
+                        ctx.render()?;
+                    }
                 }
-                _ => {}
+            }
+        } else {
+            let action = key.as_common_action(ctx);
+            if let Some(action) = action {
+                match action {
+                    CommonAction::Down => {
+                        self.button_group_state.next();
+                        ctx.render()?;
+                    }
+                    CommonAction::Up => {
+                        self.button_group_state.prev();
+                        ctx.render()?;
+                    }
+                    CommonAction::Close => {
+                        self.hide(ctx)?;
+                    }
+                    CommonAction::Confirm => {
+                        if self.button_group_state.selected == 0
+                            && let Some(callback) = self.callback.take()
+                        {
+                            (callback)(ctx, &self.value)?;
+                        }
+                        self.hide(ctx)?;
+                    }
+                    CommonAction::FocusInput => {
+                        self.input_focused = true;
+                        ctx.render()?;
+                    }
+                    _ => {}
+                }
             }
         }
 

@@ -3,7 +3,6 @@
 //! This adapter implements the `InputZone` trait, enabling InputGroups to work
 //! with the unified `InputContentView` component from the new architecture.
 
-use crossterm::event::KeyCode;
 use ratatui::{Frame, layout::Rect};
 
 use crate::{
@@ -11,7 +10,10 @@ use crate::{
     ctx::Ctx,
     shared::key_event::KeyEvent,
     ui::panes::navigator_types::InputMode,
-    ui::widgets::input_content_view::{InputZone, InputZoneAction},
+    ui::widgets::{
+        edit_command::{EditCommand, apply_edit_command, resolve_edit_command},
+        input_content_view::{InputZone, InputZoneAction},
+    },
 };
 
 use super::inputs::{ActionResult, InputGroups, InputType, TextboxInput};
@@ -74,54 +76,44 @@ impl InputZone for SearchInputZone {
 
         // Handle insert mode (typing in text fields)
         if self.inputs.insert_mode {
-            match key.as_common_action(ctx) {
-                Some(CommonAction::Close) => {
+            key.stop_propagation();
+            match resolve_edit_command(key) {
+                EditCommand::Cancel => {
                     self.inputs.insert_mode = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                    if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
+                        self.inputs.focused_mut()
+                    {
                         if value.is_empty() {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
                     }
-                    key.stop_propagation();
                     return InputZoneAction::Handled;
                 }
-                Some(CommonAction::Confirm) => {
+                EditCommand::Accept => {
                     self.inputs.insert_mode = false;
-                    if let InputType::Numberbox(TextboxInput { value, .. }) = self.inputs.focused_mut() {
+                    if let InputType::Numberbox(TextboxInput { value, cursor, .. }) =
+                        self.inputs.focused_mut()
+                    {
                         if value.is_empty() {
                             value.push('0');
+                            *cursor = value.chars().count();
                         }
                     }
-                    key.stop_propagation();
                     // Return Submit to trigger search
                     return InputZoneAction::Submit(self.build_query_string());
                 }
-                _ => {
-                    key.stop_propagation();
-                    match key.code() {
-                        KeyCode::Char(c) => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. }) => {
-                                value.push(c);
-                                return InputZoneAction::Handled;
-                            }
-                            InputType::Numberbox(TextboxInput { value, .. }) => {
-                                if c.is_numeric() {
-                                    value.push(c);
-                                    return InputZoneAction::Handled;
-                                }
-                            }
-                            _ => {}
-                        },
-                        KeyCode::Backspace => match self.inputs.focused_mut() {
-                            InputType::Textbox(TextboxInput { value, .. })
-                            | InputType::Numberbox(TextboxInput { value, .. }) => {
-                                value.pop();
-                                return InputZoneAction::Handled;
-                            }
-                            _ => {}
-                        },
+                command => {
+                    match self.inputs.focused_mut() {
+                        InputType::Textbox(TextboxInput { value, cursor, .. }) => {
+                            apply_edit_command(command, value, cursor, false);
+                        }
+                        InputType::Numberbox(TextboxInput { value, cursor, .. }) => {
+                            apply_edit_command(command, value, cursor, true);
+                        }
                         _ => {}
                     }
+
                     return InputZoneAction::Handled;
                 }
             }
@@ -191,11 +183,7 @@ impl InputZone for SearchInputZone {
     }
 
     fn mode(&self) -> InputMode {
-        if self.inputs.insert_mode {
-            InputMode::Edit
-        } else {
-            InputMode::Normal
-        }
+        if self.inputs.insert_mode { InputMode::Edit } else { InputMode::Normal }
     }
 
     fn focus_first(&mut self) {
@@ -212,7 +200,7 @@ impl InputZone for SearchInputZone {
         if len == 0 {
             return true;
         }
-        
+
         // Find last non-separator index
         for i in (0..len).rev() {
             if !matches!(&self.inputs.inputs[i], InputType::Separator) {
@@ -228,7 +216,7 @@ impl InputZone for SearchInputZone {
         if len == 0 {
             return true;
         }
-        
+
         // Find first non-separator index
         for i in 0..len {
             if !matches!(&self.inputs.inputs[i], InputType::Separator) {

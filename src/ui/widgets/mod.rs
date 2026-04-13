@@ -5,6 +5,7 @@ pub mod browser;
 pub mod button;
 pub mod content_view;
 pub mod detail_stack;
+pub mod edit_command;
 pub(crate) mod element;
 pub mod filter_state;
 pub mod find_state;

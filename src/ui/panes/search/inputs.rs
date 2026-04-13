@@ -69,6 +69,7 @@ impl InputGroups {
                 filter_key: Some(tag.value.clone()),
                 label: format!(" {:<18}:", tag.label),
                 value: String::new(),
+                cursor: 0,
                 initial_value: None,
             }));
         }
@@ -84,6 +85,7 @@ impl InputGroups {
                 filter_key: None,
                 label: format!(" {:<18}:", "Value"),
                 value: "0".to_owned(),
+                cursor: 1,
                 initial_value: Some("0".to_owned()),
             }));
 
@@ -256,8 +258,10 @@ impl InputGroups {
                 InputType::Textbox(input) | InputType::Numberbox(input) => {
                     if let Some(init) = &input.initial_value {
                         input.value = init.clone();
+                        input.cursor = input.value.chars().count();
                     } else {
                         input.value.clear();
+                        input.cursor = 0;
                     }
                 }
                 InputType::Spinner(spinner) => match spinner.key {
@@ -374,6 +378,7 @@ pub(crate) enum InputType {
 #[derive(Debug)]
 pub(crate) struct TextboxInput {
     pub value: String,
+    pub cursor: usize,
     pub label: String,
     pub key: &'static str,
     pub filter_key: Option<String>,
@@ -508,6 +513,7 @@ impl Widget for &mut InputGroups {
                         .set_label(&input.label)
                         .set_placeholder("<None>")
                         .set_focused(is_focused && self.insert_mode)
+                        .set_cursor(input.cursor)
                         .set_label_style(self.text_style)
                         .set_input_style(self.text_style)
                         .set_text(&input.value);
@@ -532,6 +538,7 @@ impl Widget for &mut InputGroups {
                         .set_label(&input.label)
                         .set_placeholder("<None>")
                         .set_focused(is_focused && self.insert_mode)
+                        .set_cursor(input.cursor)
                         .set_label_style(self.text_style)
                         .set_input_style(self.text_style)
                         .set_text(&input.value);
