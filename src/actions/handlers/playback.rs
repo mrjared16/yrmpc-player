@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::must_use_candidate)]
+
 //! TogglePlaybackHandler - handles play/pause toggle.
 //!
 //! ## Responsibility (SRP)

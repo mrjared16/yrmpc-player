@@ -1,3 +1,10 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::missing_errors_doc
+)]
+
 //! ActionDispatcher dispatches intents to registered handlers.
 //!
 //! Handlers are called in priority order (highest first). The first

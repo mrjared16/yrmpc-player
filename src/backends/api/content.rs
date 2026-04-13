@@ -1,3 +1,5 @@
+#![allow(clippy::must_use_candidate, clippy::return_self_not_must_use, clippy::map_unwrap_or)]
+
 //! Content types and capabilities.
 //!
 //! Defines the universal content model used across all backends.

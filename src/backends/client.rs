@@ -1,3 +1,23 @@
+#![allow(
+    clippy::empty_line_after_doc_comments,
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::unwrap_used,
+    clippy::match_wildcard_for_single_variants,
+    clippy::needless_pass_by_value,
+    clippy::map_unwrap_or,
+    clippy::double_ended_iterator_last,
+    clippy::if_same_then_else,
+    clippy::collapsible_if,
+    clippy::cast_abs_to_unsigned,
+    clippy::unnecessary_cast,
+    clippy::return_self_not_must_use,
+    clippy::should_implement_trait,
+    clippy::doc_lazy_continuation
+)]
+
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, RwLock},

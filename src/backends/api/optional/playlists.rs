@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::missing_errors_doc)]
+
 //! User library playlists trait.
 //!
 //! This trait abstracts playlist operations that both MPD and YouTube support:

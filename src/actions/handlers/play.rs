@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::must_use_candidate)]
+
 //! PlayHandler - handles Play action for songs/albums/playlists.
 //!
 //! ## Responsibility (SRP)

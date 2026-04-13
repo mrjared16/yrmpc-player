@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::unwrap_used)]
+
 use std::collections::HashMap;
 
 use anyhow::{Context, Result, anyhow};

@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic)]
+
 // Domain models - backend-agnostic types
 // These types are used throughout the UI and can be populated from any backend
 

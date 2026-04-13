@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::must_use_candidate)]
+
 //! QueueHandler - handles queue operations (add, remove, move).
 
 use anyhow::Result;

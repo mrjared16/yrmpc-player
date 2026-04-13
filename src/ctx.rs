@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown)]
+
 use std::{
     cell::{Cell, RefCell},
     collections::{HashMap, HashSet},

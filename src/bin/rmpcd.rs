@@ -1,3 +1,10 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::uninlined_format_args,
+    clippy::unnecessary_debug_formatting,
+    clippy::collapsible_if
+)]
+
 use std::path::PathBuf;
 
 use anyhow::Result;

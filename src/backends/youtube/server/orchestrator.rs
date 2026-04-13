@@ -157,7 +157,7 @@ impl Orchestrator {
 
     // -- Public API --
 
-    pub async fn play_position(&self, pos: usize) -> ServerResponse {
+    pub fn play_position(&self, pos: usize) -> ServerResponse {
         self.queue.ensure_shuffle_order(pos);
         self.play_position_sync_impl(pos)
     }

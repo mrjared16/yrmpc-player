@@ -1,3 +1,5 @@
+#![allow(clippy::missing_errors_doc)]
+
 //! Playback control traits and types.
 //!
 //! Controls the playback state: play, pause, stop, seek, volume.

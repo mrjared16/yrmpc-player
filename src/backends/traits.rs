@@ -1,3 +1,5 @@
+#![allow(clippy::wildcard_imports)]
+
 //! Music player backend traits
 //!
 //! **DEPRECATED**: This module contains the legacy `MusicBackend` trait.

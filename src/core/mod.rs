@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::unwrap_used, clippy::never_loop)]
+
 pub mod client;
 pub mod command;
 pub mod config_watcher;

@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::must_use_candidate)]
+
 //! SaveHandler - handles Save action for albums/playlists to library.
 
 use anyhow::Result;

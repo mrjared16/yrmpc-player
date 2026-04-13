@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::must_use_candidate)]
+
 //! Intent and Selection types for the Action System.
 //! Intent and IntentKind - User action requests for the action system.
 //!

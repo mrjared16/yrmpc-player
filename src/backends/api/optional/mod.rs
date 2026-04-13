@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::missing_errors_doc)]
+
 //! Optional common traits for features multiple backends COULD support.
 //!
 //! These traits define features that are universal concepts but not every

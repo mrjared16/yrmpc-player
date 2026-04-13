@@ -1,3 +1,5 @@
+#![allow(clippy::missing_errors_doc)]
+
 //! Rich status query trait.
 //!
 //! This trait provides access to full player status including

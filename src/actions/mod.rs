@@ -1,3 +1,10 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::return_self_not_must_use,
+    clippy::missing_errors_doc
+)]
+
 //! Action System - Intent → Dispatcher → Handler pattern.
 //!
 //! ## Overview

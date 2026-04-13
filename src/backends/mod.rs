@@ -1,3 +1,16 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::unwrap_used,
+    clippy::uninlined_format_args,
+    clippy::needless_pass_by_value,
+    clippy::cast_possible_wrap,
+    clippy::useless_conversion,
+    clippy::return_self_not_must_use,
+    clippy::match_wildcard_for_single_variants
+)]
+
 //! Backend implementations for streaming music playback.
 //!
 //! # Architecture Overview

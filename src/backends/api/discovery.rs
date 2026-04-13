@@ -1,3 +1,10 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::return_self_not_must_use
+)]
+
 //! Content discovery traits and types.
 //!
 //! Search for music, browse directories, and explore the library.

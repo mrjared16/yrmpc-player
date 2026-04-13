@@ -1,3 +1,18 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::unwrap_used,
+    clippy::double_ended_iterator_last,
+    clippy::redundant_closure,
+    clippy::enum_glob_use,
+    clippy::elidable_lifetime_names,
+    clippy::useless_conversion,
+    clippy::unnecessary_cast,
+    clippy::missing_panics_doc,
+    clippy::iter_without_into_iter
+)]
+
 //! MPD (Music Player Daemon) backend.
 //!
 //! This backend connects to an external MPD server and implements

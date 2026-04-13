@@ -1,3 +1,14 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::explicit_iter_loop,
+    clippy::uninlined_format_args,
+    clippy::map_unwrap_or,
+    clippy::single_match_else,
+    clippy::if_not_else,
+    clippy::collapsible_if
+)]
+
 //! High-level backend actions for queue and library operations.
 //!
 //! # Overview

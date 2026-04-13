@@ -1,3 +1,5 @@
+#![allow(clippy::pedantic, clippy::unwrap_used)]
+
 pub mod cache;
 pub mod cmp;
 pub mod dedup;

@@ -1,3 +1,5 @@
+#![allow(clippy::missing_errors_doc, clippy::must_use_candidate)]
+
 //! Queue management traits and types.
 //!
 //! Add, remove, reorder, and manage items in the playback queue.
@@ -49,7 +51,7 @@ pub enum ToggleMode {
 
 impl ToggleMode {
     /// Returns true if mode is active (On or Oneshot)
-    pub fn is_active(&self) -> bool {
+    pub fn is_active(self) -> bool {
         matches!(self, ToggleMode::On | ToggleMode::Oneshot)
     }
 }

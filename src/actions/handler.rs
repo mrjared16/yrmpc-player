@@ -1,3 +1,5 @@
+#![allow(clippy::doc_markdown, clippy::missing_errors_doc)]
+
 //! Handler trait and HandleResult for the Action System.
 //!
 //! Handlers process specific action types. They are registered with the

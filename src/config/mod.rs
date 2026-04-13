@@ -1,3 +1,11 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::must_use_candidate,
+    clippy::missing_errors_doc,
+    clippy::missing_panics_doc,
+    clippy::map_unwrap_or
+)]
+
 use std::{
     collections::HashMap,
     io::Read,

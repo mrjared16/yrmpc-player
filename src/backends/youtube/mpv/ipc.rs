@@ -215,9 +215,9 @@ impl MpvIpc {
                         if resp.error.is_some() {
                             if resp.error.as_deref() == Some("success") {
                                 return Ok(());
-                            } else {
-                                return Err(anyhow::anyhow!("MPV error: {:?}", resp.error));
                             }
+
+                            return Err(anyhow::anyhow!("MPV error: {:?}", resp.error));
                         }
                     }
                     // Continue reading until we get a response

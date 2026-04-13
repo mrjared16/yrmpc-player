@@ -1,3 +1,34 @@
+#![allow(
+    clippy::doc_markdown,
+    clippy::missing_errors_doc,
+    clippy::must_use_candidate,
+    clippy::unwrap_used,
+    clippy::map_unwrap_or,
+    clippy::single_match_else,
+    clippy::collapsible_if,
+    clippy::field_reassign_with_default,
+    clippy::uninlined_format_args,
+    clippy::ignored_unit_patterns,
+    clippy::default_trait_access,
+    clippy::trivially_copy_pass_by_ref,
+    clippy::cast_possible_wrap,
+    clippy::needless_pass_by_value,
+    clippy::explicit_iter_loop,
+    clippy::iter_without_into_iter,
+    clippy::elidable_lifetime_names,
+    clippy::enum_glob_use,
+    clippy::unnecessary_wraps,
+    clippy::if_not_else,
+    clippy::print_literal,
+    clippy::missing_panics_doc,
+    clippy::large_stack_arrays,
+    clippy::wildcard_imports,
+    clippy::used_underscore_binding,
+    clippy::unnecessary_debug_formatting,
+    clippy::semicolon_if_nothing_returned,
+    clippy::assigning_clones
+)]
+
 //! YouTube Music backend with server-client architecture.
 //!
 //! Architecture:

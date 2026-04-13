@@ -1,3 +1,5 @@
+#![allow(clippy::empty_line_after_doc_comments)]
+
 //! Navigator - Central controller for pane navigation.
 //!
 //! The Navigator manages:

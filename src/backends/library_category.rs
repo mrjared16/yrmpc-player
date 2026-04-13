@@ -15,7 +15,7 @@ pub enum LibraryCategory {
 
 impl LibraryCategory {
     /// Get the path prefix for this category (used in LibraryPane navigation)
-    pub fn path_prefix(&self) -> &'static str {
+    pub fn path_prefix(self) -> &'static str {
         match self {
             Self::Playlists => "library:playlists",
             Self::Albums => "library:albums",
