@@ -43,10 +43,10 @@ use std::{
     path::{Path, PathBuf},
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -58,7 +58,7 @@ use super::{
     audio::{AudioDeliveryPlanner, AudioTransportTarget, CacheConfig, MpvAudioSource},
     config::{AudioDeliveryMode, BackgroundExtractMode, ExtractorType, YtDlpExtractorConfig},
     media::{MediaPreparer, RelayRuntime},
-    protocol::{ServerCommand, ServerResponse, framing},
+    protocol::{CLIENT_SUPERSEDED_ERROR, ServerCommand, ServerResponse, framing},
     services::{
         ApiService, InternalEvent, PlaybackService, PlaybackStateTracker, PreloadScheduler,
         QueueService, YouTubeServices,
@@ -67,6 +67,20 @@ use super::{
 use crate::shared::play_queue::PlayQueue;
 use orchestrator::Orchestrator;
 use queue_coordinator::QueueCoordinator;
+
+fn normalize_subsystem_name(name: &str) -> &str {
+    match name {
+        // Historical alias used by some handlers
+        "queue" => "playlist",
+        other => other,
+    }
+}
+
+#[derive(Clone)]
+struct ActiveIdleOwner {
+    session_id: u64,
+    tx: Sender<String>,
+}
 
 /// YouTube server orchestrates services and handles IPC
 pub struct YouTubeServer {
@@ -82,10 +96,13 @@ pub struct YouTubeServer {
     orchestrator: Arc<Orchestrator>,
     queue_coordinator: Arc<QueueCoordinator>,
     running: Arc<AtomicBool>,
+    next_client_session_id: AtomicU64,
+    latest_session_id: AtomicU64,
     socket_path: PathBuf,
     mpv_socket_path: PathBuf,
     event_tx: Sender<String>,
     event_rx: Receiver<String>,
+    idle_owner: Arc<Mutex<Option<ActiveIdleOwner>>>,
     internal_event_tx: Sender<InternalEvent>,
     internal_event_rx: Receiver<InternalEvent>,
 }
@@ -229,10 +246,13 @@ impl YouTubeServer {
             orchestrator,
             queue_coordinator,
             running: Arc::new(AtomicBool::new(false)),
+            next_client_session_id: AtomicU64::new(1),
+            latest_session_id: AtomicU64::new(0),
             socket_path: socket_path.to_path_buf(),
             mpv_socket_path: mpv_socket,
             event_tx,
             event_rx,
+            idle_owner: Arc::new(Mutex::new(None)),
             internal_event_tx,
             internal_event_rx,
         })
@@ -260,23 +280,32 @@ impl YouTubeServer {
 
         // Start internal event processor thread
         self.start_internal_event_processor();
+        self.start_event_fanout_processor();
 
-        for stream in listener.incoming() {
-            if !self.running.load(Ordering::SeqCst) {
-                break;
-            }
+        thread::scope(|scope| {
+            for stream in listener.incoming() {
+                if !self.running.load(Ordering::SeqCst) {
+                    break;
+                }
 
-            match stream {
-                Ok(stream) => {
-                    if let Err(e) = self.handle_client(stream) {
-                        log::error!("Client error: {}", e);
+                match stream {
+                    Ok(stream) => {
+                        let session_id =
+                            self.next_client_session_id.fetch_add(1, Ordering::Relaxed);
+                        self.latest_session_id.store(session_id, Ordering::SeqCst);
+                        let server = self;
+                        scope.spawn(move || {
+                            if let Err(e) = server.handle_client_session(session_id, stream) {
+                                log::error!("Client session {} error: {}", session_id, e);
+                            }
+                        });
+                    }
+                    Err(e) => {
+                        log::error!("Accept error: {}", e);
                     }
                 }
-                Err(e) => {
-                    log::error!("Accept error: {}", e);
-                }
             }
-        }
+        });
 
         self.playback.stop_event_loop();
 
@@ -322,8 +351,54 @@ impl YouTubeServer {
         });
     }
 
-    /// Handle a single client connection
-    fn handle_client(&self, stream: UnixStream) -> Result<()> {
+    /// Start processor to publish backend events only to the latest idle owner.
+    fn start_event_fanout_processor(&self) {
+        let event_rx = self.event_rx.clone();
+        let running = Arc::clone(&self.running);
+        let idle_owner = Arc::clone(&self.idle_owner);
+
+        thread::spawn(move || {
+            log::info!("Idle owner event processor started");
+
+            while running.load(Ordering::SeqCst) {
+                match event_rx.recv_timeout(Duration::from_millis(500)) {
+                    Ok(event) => {
+                        let event = normalize_subsystem_name(&event).to_string();
+                        let active_owner = idle_owner.lock().clone();
+
+                        if let Some(active_owner) = active_owner {
+                            if active_owner.tx.send(event.clone()).is_err() {
+                                log::trace!(session_id = active_owner.session_id; "Dropping stale idle owner receiver");
+
+                                let mut owner_guard = idle_owner.lock();
+                                if owner_guard.as_ref().is_some_and(|owner| {
+                                    owner.session_id == active_owner.session_id
+                                }) {
+                                    *owner_guard = None;
+                                }
+                            } else {
+                                log::trace!(session_id = active_owner.session_id, event = event.as_str(); "Published event to idle owner");
+                            }
+                        }
+                    }
+                    Err(crossbeam::channel::RecvTimeoutError::Timeout) => {}
+                    Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
+                        log::info!("Event queue disconnected, stopping idle owner processor");
+                        break;
+                    }
+                }
+            }
+
+            log::info!("Idle owner event processor stopped");
+        });
+    }
+
+    /// Handle one connected client session lifecycle.
+    fn handle_client_session(&self, session_id: u64, stream: UnixStream) -> Result<()> {
+        log::debug!("Client session {} connected", session_id);
+        let (session_event_tx, session_event_rx) = channel::unbounded();
+        let mut pending_initial_snapshot = true;
+
         stream.set_read_timeout(Some(Duration::from_secs(300)))?;
         let mut reader = BufReader::new(stream.try_clone()?);
         let mut writer = BufWriter::new(stream);
@@ -331,20 +406,64 @@ impl YouTubeServer {
         loop {
             let cmd: ServerCommand = match framing::read_message(&mut reader) {
                 Ok(cmd) => {
-                    log::trace!("Received command: {:?}", std::mem::discriminant(&cmd));
+                    log::trace!(
+                        "Session {} received command: {:?}",
+                        session_id,
+                        std::mem::discriminant(&cmd)
+                    );
                     cmd
                 }
                 Err(e) => {
-                    log::trace!("Client disconnected: {}", e);
+                    log::trace!("Session {} disconnected: {}", session_id, e);
                     break;
                 }
             };
 
-            let response = self.handle_command(cmd);
+            let response = if self.is_superseded_session(session_id) {
+                ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string())
+            } else {
+                match cmd {
+                    ServerCommand::Idle { subsystems } => {
+                        if !self.ensure_idle_ownership(session_id, session_event_tx.clone()) {
+                            ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string())
+                        } else {
+                            if pending_initial_snapshot {
+                                pending_initial_snapshot = false;
+                                let snapshot_events =
+                                    self.initial_snapshot_idle_events(&subsystems);
+                                if !snapshot_events.is_empty() {
+                                    ServerResponse::IdleEvents(snapshot_events)
+                                } else {
+                                    self.handle_idle_for_session(
+                                        session_id,
+                                        &session_event_rx,
+                                        subsystems,
+                                    )
+                                }
+                            } else {
+                                self.handle_idle_for_session(
+                                    session_id,
+                                    &session_event_rx,
+                                    subsystems,
+                                )
+                            }
+                        }
+                    }
+                    other => self.handle_non_idle_command(other),
+                }
+            };
 
-            log::trace!("Sending response: {:?}", std::mem::discriminant(&response));
+            log::trace!(
+                "Session {} sending response: {:?}",
+                session_id,
+                std::mem::discriminant(&response)
+            );
             if let Err(e) = framing::write_message(&mut writer, &response) {
-                log::trace!("Connection closed: {}", e);
+                log::trace!("Session {} connection closed: {}", session_id, e);
+                break;
+            }
+
+            if matches!(&response, ServerResponse::Error(err) if err == CLIENT_SUPERSEDED_ERROR) {
                 break;
             }
 
@@ -353,11 +472,15 @@ impl YouTubeServer {
             }
         }
 
+        self.release_idle_ownership(session_id);
+
+        log::debug!("Client session {} closed", session_id);
+
         Ok(())
     }
 
-    /// Process a command and return response
-    pub fn handle_command(&self, cmd: ServerCommand) -> ServerResponse {
+    /// Process a non-idle command and return response.
+    pub fn handle_non_idle_command(&self, cmd: ServerCommand) -> ServerResponse {
         match cmd {
             ServerCommand::Ping => ServerResponse::Pong,
 
@@ -440,8 +563,10 @@ impl YouTubeServer {
                 handlers::handle_browse_artist_details(&self.api, &artist_id)
             }
 
-            // Idle handler
-            ServerCommand::Idle { subsystems } => self.handle_idle(subsystems),
+            // Idle is handled in handle_client_session with session-local subscriptions
+            ServerCommand::Idle { .. } => {
+                unreachable!("Idle command should be handled in handle_client_session")
+            }
 
             // PlayIntent handlers
             ServerCommand::PlayWithIntent { intent, request_id } => {
@@ -462,26 +587,124 @@ impl YouTubeServer {
         }
     }
 
-    /// Handle Idle command (blocking event wait)
-    fn handle_idle(&self, subsystems: Vec<String>) -> ServerResponse {
-        log::debug!("Idle subscription for: {:?}", subsystems);
+    /// Handle Idle command for a specific session subscription.
+    fn handle_idle_for_session(
+        &self,
+        session_id: u64,
+        session_event_rx: &Receiver<String>,
+        subsystems: Vec<String>,
+    ) -> ServerResponse {
+        let normalized_subsystems: Vec<String> =
+            subsystems.into_iter().map(|s| normalize_subsystem_name(&s).to_string()).collect();
+        let deadline = Instant::now() + Duration::from_millis(100);
 
-        match self.event_rx.recv_timeout(Duration::from_secs(30)) {
-            Ok(event) => {
-                if subsystems.is_empty() || subsystems.contains(&event) {
-                    log::debug!("Idle woke up with event: {}", event);
-                    ServerResponse::IdleEvents(vec![event])
-                } else {
-                    ServerResponse::IdleEvents(vec![])
+        while Instant::now() < deadline {
+            if self.is_superseded_session(session_id) || !self.is_idle_owner(session_id) {
+                return ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string());
+            }
+
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+
+            match session_event_rx.recv_timeout(remaining) {
+                Ok(event) => {
+                    if self.is_superseded_session(session_id) || !self.is_idle_owner(session_id) {
+                        return ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string());
+                    }
+
+                    if event == CLIENT_SUPERSEDED_ERROR {
+                        return ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string());
+                    }
+
+                    let event = normalize_subsystem_name(&event).to_string();
+                    if normalized_subsystems.is_empty() || normalized_subsystems.contains(&event) {
+                        log::debug!("Session {} idle woke up with event: {}", session_id, event);
+                        return ServerResponse::IdleEvents(vec![event]);
+                    }
+                    // Ignore non-subscribed subsystem events and keep waiting.
+                }
+                Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
+                    if self.is_superseded_session(session_id) {
+                        return ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string());
+                    }
+                    break;
+                }
+                Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
+                    return ServerResponse::Error("Server shutting down".to_string());
                 }
             }
-            Err(crossbeam::channel::RecvTimeoutError::Timeout) => {
-                ServerResponse::IdleEvents(vec![])
+        }
+
+        if self.is_superseded_session(session_id) {
+            return ServerResponse::Error(CLIENT_SUPERSEDED_ERROR.to_string());
+        }
+
+        ServerResponse::IdleEvents(vec![])
+    }
+
+    fn ensure_idle_ownership(&self, session_id: u64, session_event_tx: Sender<String>) -> bool {
+        let mut idle_owner = self.idle_owner.lock();
+
+        match idle_owner.as_ref() {
+            None => {
+                *idle_owner = Some(ActiveIdleOwner { session_id, tx: session_event_tx });
+                log::debug!(session_id; "Claimed idle ownership (first owner)");
+                true
             }
-            Err(crossbeam::channel::RecvTimeoutError::Disconnected) => {
-                ServerResponse::Error("Server shutting down".to_string())
+            Some(owner) if owner.session_id == session_id => {
+                *idle_owner = Some(ActiveIdleOwner { session_id, tx: session_event_tx });
+                true
+            }
+            Some(owner) if session_id > owner.session_id => {
+                let previous_owner_tx = owner.tx.clone();
+                let previous_owner = owner.session_id;
+                *idle_owner = Some(ActiveIdleOwner { session_id, tx: session_event_tx });
+                log::debug!(session_id, previous_owner; "Claimed idle ownership from older session");
+
+                let _ = previous_owner_tx.send(CLIENT_SUPERSEDED_ERROR.to_string());
+
+                true
+            }
+            Some(owner) => {
+                log::trace!(session_id, owner = owner.session_id; "Session superseded by newer idle owner");
+                false
             }
         }
+    }
+
+    fn release_idle_ownership(&self, session_id: u64) {
+        let mut idle_owner = self.idle_owner.lock();
+        if idle_owner.as_ref().is_some_and(|owner| owner.session_id == session_id) {
+            *idle_owner = None;
+            log::debug!(session_id; "Released idle ownership");
+        }
+    }
+
+    fn is_idle_owner(&self, session_id: u64) -> bool {
+        self.idle_owner.lock().as_ref().is_some_and(|owner| owner.session_id == session_id)
+    }
+
+    fn is_superseded_session(&self, session_id: u64) -> bool {
+        session_id < self.latest_session_id.load(Ordering::SeqCst)
+    }
+
+    fn initial_snapshot_idle_events(&self, subsystems: &[String]) -> Vec<String> {
+        const SNAPSHOT_EVENTS: [&str; 3] = ["player", "playlist", "options"];
+
+        let normalized_subsystems: Vec<String> =
+            subsystems.iter().map(|s| normalize_subsystem_name(s).to_string()).collect();
+
+        if normalized_subsystems.is_empty() {
+            return SNAPSHOT_EVENTS.into_iter().map(str::to_string).collect();
+        }
+
+        SNAPSHOT_EVENTS
+            .into_iter()
+            .filter(|event| normalized_subsystems.iter().any(|s| s == event))
+            .map(str::to_string)
+            .collect()
     }
 
     /// Stop the server
@@ -503,6 +726,93 @@ impl Drop for YouTubeServer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use anyhow::{Context, Result};
+    use std::{
+        path::PathBuf,
+        sync::Arc,
+        thread,
+        time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    };
+
+    struct RunningServer {
+        socket_path: PathBuf,
+        server: Arc<YouTubeServer>,
+        handle: Option<thread::JoinHandle<Result<()>>>,
+    }
+
+    impl RunningServer {
+        fn start() -> Result<Self> {
+            let socket_path = PathBuf::from(format!(
+                "/tmp/test-yt-{}-{}.sock",
+                std::process::id(),
+                SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
+            ));
+
+            let server = Arc::new(YouTubeServer::new(
+                &socket_path,
+                None,
+                ExtractorType::default(),
+                AudioDeliveryMode::default(),
+                BackgroundExtractMode::default(),
+                2,
+                YtDlpExtractorConfig::default(),
+            )?);
+
+            let thread_server = Arc::clone(&server);
+            let handle = thread::spawn(move || thread_server.run());
+
+            wait_for_socket(&socket_path, Duration::from_secs(2))?;
+
+            Ok(Self { socket_path, server, handle: Some(handle) })
+        }
+
+        fn connect_client(&self, timeout: Duration) -> Result<UnixStream> {
+            let stream = UnixStream::connect(&self.socket_path)
+                .with_context(|| format!("failed to connect to {}", self.socket_path.display()))?;
+            stream.set_read_timeout(Some(timeout))?;
+            stream.set_write_timeout(Some(timeout))?;
+            Ok(stream)
+        }
+    }
+
+    impl Drop for RunningServer {
+        fn drop(&mut self) {
+            self.server.stop();
+
+            // Wake accept loop so it can observe running=false and exit.
+            let _ = UnixStream::connect(&self.socket_path);
+
+            if let Some(handle) = self.handle.take() {
+                let _ = handle.join();
+            }
+
+            // Allow detached internal worker loops to observe running=false and exit.
+            thread::sleep(Duration::from_millis(600));
+
+            let _ = std::fs::remove_file(&self.socket_path);
+        }
+    }
+
+    fn wait_for_socket(path: &Path, timeout: Duration) -> Result<()> {
+        let deadline = Instant::now() + timeout;
+        while Instant::now() < deadline {
+            if path.exists() {
+                return Ok(());
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+
+        anyhow::bail!("socket did not appear in time: {}", path.display())
+    }
+
+    fn send_command(stream: &UnixStream, cmd: &ServerCommand) -> Result<ServerResponse> {
+        let mut writer = BufWriter::new(stream.try_clone()?);
+        framing::write_message(&mut writer, cmd)?;
+
+        let mut reader = BufReader::new(stream.try_clone()?);
+        let response: ServerResponse = framing::read_message(&mut reader)?;
+        Ok(response)
+    }
 
     #[test]
     fn test_server_creation() {
@@ -519,5 +829,179 @@ mod tests {
             YtDlpExtractorConfig::default(),
         );
         assert!(result.is_ok() || result.is_err());
+    }
+
+    /// Regression test for yrmpc-jwq.2:
+    /// A connected idle/quiet client must not prevent another client from
+    /// sending a basic request (Ping) and receiving a response.
+    #[test]
+    fn test_second_client_ping_while_first_client_connected() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let server = RunningServer::start()?;
+
+        // First client connects and stays quiet.
+        let _first = server.connect_client(Duration::from_millis(250))?;
+
+        // Give server a moment to accept first client.
+        thread::sleep(Duration::from_millis(50));
+
+        // Second client should still be able to ping immediately.
+        let second = server.connect_client(Duration::from_millis(250))?;
+        let response = send_command(&second, &ServerCommand::Ping)?;
+
+        match response {
+            ServerResponse::Pong => Ok(()),
+            other => anyhow::bail!("expected Pong, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_newest_idle_client_supersedes_older_client() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let server = RunningServer::start()?;
+
+        let client1 = server.connect_client(Duration::from_secs(2))?;
+        let first_response = send_command(
+            &client1,
+            &ServerCommand::Idle { subsystems: vec!["options".to_string()] },
+        )?;
+        assert!(matches!(first_response, ServerResponse::IdleEvents(_)));
+
+        let client2 = server.connect_client(Duration::from_secs(2))?;
+        let second_response = send_command(
+            &client2,
+            &ServerCommand::Idle { subsystems: vec!["options".to_string()] },
+        )?;
+        assert!(matches!(second_response, ServerResponse::IdleEvents(_)));
+
+        let old_command_response = send_command(&client1, &ServerCommand::SetShuffle(false));
+        match old_command_response {
+            Ok(ServerResponse::Error(err)) if err == CLIENT_SUPERSEDED_ERROR => {}
+            Err(err)
+                if err.to_string().contains("Connection reset by peer")
+                    || err.to_string().contains("Broken pipe") => {}
+            other => {
+                anyhow::bail!("expected old non-idle command to be rejected, got {:?}", other)
+            }
+        }
+
+        let response = send_command(&client2, &ServerCommand::SetShuffle(true))?;
+        assert!(matches!(response, ServerResponse::Ok));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_superseded_client_stays_blocked_after_newer_disconnects() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let server = RunningServer::start()?;
+
+        let client1 = server.connect_client(Duration::from_secs(2))?;
+        let _ = send_command(
+            &client1,
+            &ServerCommand::Idle { subsystems: vec!["player".to_string()] },
+        )?;
+
+        let client2 = server.connect_client(Duration::from_secs(2))?;
+        let _ = send_command(
+            &client2,
+            &ServerCommand::Idle { subsystems: vec!["player".to_string()] },
+        )?;
+
+        drop(client2);
+        thread::sleep(Duration::from_millis(20));
+
+        let old_command_response = send_command(&client1, &ServerCommand::SetShuffle(false));
+        match old_command_response {
+            Ok(ServerResponse::Error(err)) if err == CLIENT_SUPERSEDED_ERROR => {}
+            Err(err)
+                if err.to_string().contains("Connection reset by peer")
+                    || err.to_string().contains("Broken pipe") => {}
+            other => anyhow::bail!(
+                "expected superseded client to remain blocked after newer disconnect, got {:?}",
+                other
+            ),
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_old_idle_waiter_is_superseded_when_new_client_connects() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let server = RunningServer::start()?;
+
+        let client1 = server.connect_client(Duration::from_secs(2))?;
+        let _ = send_command(
+            &client1,
+            &ServerCommand::Idle { subsystems: vec!["player".to_string()] },
+        )?;
+
+        let idle_wait = thread::spawn(move || {
+            send_command(&client1, &ServerCommand::Idle { subsystems: vec!["player".to_string()] })
+        });
+
+        thread::sleep(Duration::from_millis(20));
+
+        let client2 = server.connect_client(Duration::from_secs(2))?;
+        let ping = send_command(&client2, &ServerCommand::Ping)?;
+        assert!(matches!(ping, ServerResponse::Pong));
+
+        let trigger = send_command(&client2, &ServerCommand::SetShuffle(true))?;
+        assert!(matches!(trigger, ServerResponse::Ok));
+
+        let idle_wait_response = idle_wait.join().expect("idle waiter thread panicked")?;
+        match idle_wait_response {
+            ServerResponse::Error(err) if err == CLIENT_SUPERSEDED_ERROR => {}
+            other => {
+                anyhow::bail!("expected superseded error for old idle waiter, got {:?}", other)
+            }
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_first_idle_returns_snapshot_events() -> Result<()> {
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        let _guard = rt.enter();
+
+        let server = RunningServer::start()?;
+        let client = server.connect_client(Duration::from_secs(2))?;
+
+        let response = send_command(
+            &client,
+            &ServerCommand::Idle {
+                subsystems: vec![
+                    "player".to_string(),
+                    "playlist".to_string(),
+                    "options".to_string(),
+                ],
+            },
+        )?;
+
+        match response {
+            ServerResponse::IdleEvents(events) => {
+                for expected in ["player", "playlist", "options"] {
+                    if !events.iter().any(|ev| ev == expected) {
+                        anyhow::bail!(
+                            "expected snapshot idle events to include '{}', got {:?}",
+                            expected,
+                            events
+                        );
+                    }
+                }
+                Ok(())
+            }
+            other => anyhow::bail!("expected IdleEvents, got {:?}", other),
+        }
     }
 }

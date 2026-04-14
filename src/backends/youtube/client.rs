@@ -11,7 +11,9 @@ use std::{
 
 use anyhow::{Context, Result, anyhow};
 
-use super::protocol::{BrowseEntry, ServerCommand, ServerResponse, SongData, framing};
+use super::protocol::{
+    BrowseEntry, CLIENT_SUPERSEDED_ERROR, ServerCommand, ServerResponse, SongData, framing,
+};
 use crate::{
     backends::{
         LibraryCategory,
@@ -287,33 +289,62 @@ impl YouTubeProxy {
         self.reader.get_ref().try_clone().context("Failed to clone YouTube client stream")
     }
 
-    /// Enter idle mode - currently no-op for YouTube backend
-    /// NOTE: Blocking idle was causing 30s delays on all operations.
-    /// Queue updates use optimistic UI instead.
+    /// Enter idle mode.
+    ///
+    /// For YouTube backend, the actual idle request is sent in
+    /// `read_response()` so the idle loop can keep using the same
+    /// request-response lifecycle as MPD.
     pub fn enter_idle(&mut self) -> Result<()> {
-        // Don't send blocking Idle command - it blocks the shared socket
         Ok(())
     }
 
-    /// Read idle response - blocks briefly then returns timeout.
+    /// Read idle response using daemon-backed session subscriptions.
     ///
-    /// For YouTube backend, we don't use MPD-style idle events.
-    /// However, we must block here to prevent CPU spinning.
-    ///
-    /// The sleep duration controls the polling interval for request processing:
-    /// - 100ms = 10 cycles/sec, ~0.5% CPU overhead, <100ms search latency
-    ///
-    /// Returns MpdError::TimedOut so the idle thread breaks its inner loop
-    /// and cycles through the outer loop, giving the request thread a chance
-    /// to acquire the client and process pending requests (like search).
+    /// The server uses a short idle timeout. Empty idle responses are converted
+    /// to `MpdError::TimedOut` so core/client can yield to the request worker
+    /// exactly like existing timeout behavior.
     pub fn read_response(&mut self) -> Result<Vec<crate::mpd::commands::IdleEvent>> {
-        // Sleep to prevent CPU spinning and control polling frequency
-        std::thread::sleep(Duration::from_millis(100));
+        let response = self.request(ServerCommand::Idle {
+            subsystems: vec![
+                "player".to_string(),
+                "playlist".to_string(),
+                "options".to_string(),
+                "mixer".to_string(),
+            ],
+        })?;
 
-        // Return timeout error so the idle thread yields to request thread
-        Err(anyhow::Error::new(crate::mpd::errors::MpdError::TimedOut(
-            "YouTube backend idle timeout".into(),
-        )))
+        match response {
+            ServerResponse::IdleEvents(events) => {
+                let mut mapped = Vec::new();
+                for event in events {
+                    let idle_event = match event.as_str() {
+                        "player" => Some(crate::mpd::commands::IdleEvent::Player),
+                        "playlist" | "queue" => Some(crate::mpd::commands::IdleEvent::Playlist),
+                        "options" => Some(crate::mpd::commands::IdleEvent::Options),
+                        "mixer" => Some(crate::mpd::commands::IdleEvent::Mixer),
+                        other => {
+                            log::debug!("Ignoring unknown YouTube idle subsystem: {}", other);
+                            None
+                        }
+                    };
+
+                    if let Some(ev) = idle_event {
+                        mapped.push(ev);
+                    }
+                }
+
+                if mapped.is_empty() {
+                    Err(anyhow::Error::new(crate::mpd::errors::MpdError::TimedOut(
+                        "YouTube backend idle timeout".into(),
+                    )))
+                } else {
+                    Ok(mapped)
+                }
+            }
+            ServerResponse::Error(e) if e == CLIENT_SUPERSEDED_ERROR => Err(anyhow!(e)),
+            ServerResponse::Error(e) => Err(anyhow!(e)),
+            other => Err(anyhow!("Unexpected response: {:?}", other)),
+        }
     }
 
     /// Reconnect to server after connection loss

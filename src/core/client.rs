@@ -83,6 +83,7 @@ fn client_task(
 
     std::thread::scope(|s| {
         client_return_tx.send(client).expect("Client init to succeed");
+        let superseded = Arc::new(AtomicBool::new(false));
 
         loop {
             log::trace!(first_loop; "Starting worker threads");
@@ -106,6 +107,9 @@ fn client_task(
             if is_client_ok {
                 let mut client_write =
                     client.try_clone_stream().expect("Client write clone to succeed");
+                superseded.store(false, Ordering::Relaxed);
+                let idle_superseded = Arc::clone(&superseded);
+                let work_superseded = Arc::clone(&superseded);
 
                 let idle = Builder::new()
                     .name("idle".to_string())
@@ -143,6 +147,13 @@ fn client_task(
                                             // Breaking here ensures the request thread gets a chance to
                                             // process requests regardless of backend implementation.
                                             break vec![];
+                                        }
+
+                                        if is_superseded_error(&err) {
+                                            log::info!("This TUI was superseded by a newer client");
+                                            idle_superseded.store(true, Ordering::Relaxed);
+                                            HEALTHY.store(false, Ordering::Relaxed);
+                                            break 'outer;
                                         }
 
                                         log::error!(error:? = err; "Encountered error while reading idle events");
@@ -248,6 +259,18 @@ fn client_task(
                                             client_write = health!(client.try_clone_stream(), "Client write clone to succeed");
                                         },
                                         _ => {
+                                            if is_superseded_error(&err) {
+                                                work_superseded.store(true, Ordering::Relaxed);
+                                                HEALTHY.store(false, Ordering::Relaxed);
+                                                break;
+                                            }
+
+                                            if is_connection_level_error(&err) {
+                                                log::error!(error:? = err; "Detected connection-level request failure, will reconnect");
+                                                HEALTHY.store(false, Ordering::Relaxed);
+                                                break;
+                                            }
+
                                             log::error!(error:? = err; "Failed to handle client request");
                                             health!(
                                                 event_tx.send(AppEvent::WorkDone(Err(err))),
@@ -272,6 +295,14 @@ fn client_task(
 
                 idle.join().expect("idle thread not to panic");
                 work.join().expect("work thread not to panic");
+
+                if superseded.load(Ordering::Relaxed) {
+                    try_skip!(
+                        event_tx.send(AppEvent::SupersededByNewerClient),
+                        "Failed to send superseded event"
+                    );
+                    break;
+                }
             } else {
                 client_return_tx.send(client).expect("To be able to return the client");
             }
@@ -382,5 +413,65 @@ fn handle_client_request(
             query.tx.send(result)?;
             Ok(WorkDone::None)
         }
+    }
+}
+
+fn is_connection_level_error(err: &anyhow::Error) -> bool {
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        return matches!(
+            io_err.kind(),
+            std::io::ErrorKind::BrokenPipe
+                | std::io::ErrorKind::ConnectionReset
+                | std::io::ErrorKind::ConnectionAborted
+                | std::io::ErrorKind::ConnectionRefused
+                | std::io::ErrorKind::NotConnected
+                | std::io::ErrorKind::UnexpectedEof
+                | std::io::ErrorKind::TimedOut
+                | std::io::ErrorKind::WouldBlock
+        );
+    }
+
+    let text = err.to_string().to_lowercase();
+    [
+        "broken pipe",
+        "connection reset",
+        "connection aborted",
+        "connection refused",
+        "not connected",
+        "unexpected eof",
+        "resource temporarily unavailable",
+        "failed to read message length",
+        "transport endpoint",
+        "no such file or directory",
+    ]
+    .iter()
+    .any(|needle| text.contains(needle))
+}
+
+fn is_superseded_error(err: &anyhow::Error) -> bool {
+    err.to_string().contains(crate::backends::youtube::protocol::CLIENT_SUPERSEDED_ERROR)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn connection_error_detector_flags_broken_pipe() {
+        let err =
+            anyhow::Error::new(std::io::Error::new(std::io::ErrorKind::BrokenPipe, "broken pipe"));
+        assert!(is_connection_level_error(&err));
+    }
+
+    #[test]
+    fn connection_error_detector_ignores_domain_errors() {
+        let err = anyhow::Error::new(MpdError::Generic("playlist item not found".to_string()));
+        assert!(!is_connection_level_error(&err));
+    }
+
+    #[test]
+    fn superseded_error_detector_matches_protocol_message() {
+        let err = anyhow::anyhow!(crate::backends::youtube::protocol::CLIENT_SUPERSEDED_ERROR);
+        assert!(is_superseded_error(&err));
     }
 }

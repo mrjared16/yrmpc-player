@@ -10,6 +10,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::domain::{MediaItem, PlaybackState, Song, Status, status::OnOffOneshot};
 
+pub const CLIENT_SUPERSEDED_ERROR: &str = "Superseded by newer rmpc client";
+
 /// Commands sent from client to server
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum ServerCommand {

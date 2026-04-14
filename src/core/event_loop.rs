@@ -681,6 +681,14 @@ fn main_task<B: Backend + std::io::Write>(
                     }
                     connected = false;
                 }
+                AppEvent::SupersededByNewerClient => {
+                    if ctx.status.state != State::Stop {
+                        _update_loop_guard = None;
+                        ctx.status.state = State::Stop;
+                    }
+                    status_warn!("This rmpc instance was superseded by a newer client");
+                    connected = false;
+                }
                 AppEvent::TmuxHook { hook } => {
                     if let Some(tmux) = &mut tmux {
                         let old_visible = tmux.visible;

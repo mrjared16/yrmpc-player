@@ -83,6 +83,7 @@ pub(crate) enum AppEvent {
     UiEvent(UiAppEvent),
     Reconnected,
     LostConnection,
+    SupersededByNewerClient,
     TmuxHook {
         hook: String,
     },
