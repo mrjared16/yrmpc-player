@@ -47,6 +47,21 @@ impl ExtractorType {
             _ => None,
         }
     }
+
+    /// Ordered fallback candidates after this extractor for recovery flow.
+    ///
+    /// Keep this list authoritative so adding a new extractor only requires
+    /// updating one place.
+    pub const fn recovery_fallback_extractors(self) -> &'static [Self] {
+        match self {
+            Self::Ytx => &[Self::YtDlp],
+            Self::YtDlp => &[Self::Ytx],
+        }
+    }
+
+    pub fn next_recovery_extractor(self, attempted_fallbacks: usize) -> Option<Self> {
+        self.recovery_fallback_extractors().get(attempted_fallbacks).copied()
+    }
 }
 
 impl Default for ExtractorType {
@@ -424,6 +439,14 @@ mod tests {
         assert_eq!(ExtractorType::parse("ytx"), Some(ExtractorType::Ytx));
         assert_eq!(ExtractorType::parse("ytdlp"), Some(ExtractorType::YtDlp));
         assert_eq!(ExtractorType::parse("yt-dlp"), Some(ExtractorType::YtDlp));
+    }
+
+    #[test]
+    fn extractor_recovery_fallback_order_is_defined() {
+        assert_eq!(ExtractorType::Ytx.recovery_fallback_extractors(), &[ExtractorType::YtDlp]);
+        assert_eq!(ExtractorType::YtDlp.recovery_fallback_extractors(), &[ExtractorType::Ytx]);
+        assert_eq!(ExtractorType::Ytx.next_recovery_extractor(0), Some(ExtractorType::YtDlp));
+        assert_eq!(ExtractorType::Ytx.next_recovery_extractor(1), None);
     }
 
     #[test]

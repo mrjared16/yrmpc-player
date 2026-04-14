@@ -31,6 +31,8 @@ struct RelaySessionRecord {
     /// Whether a connection is currently active for this session.
     /// Prevents concurrent connections to the same session.
     active_connection: bool,
+    recovery_attempts: u8,
+    switched_extractor: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -153,6 +155,8 @@ impl RelayRuntime {
                 spec,
                 expires_at: Instant::now() + SESSION_TTL,
                 active_connection: false,
+                recovery_attempts: 0,
+                switched_extractor: false,
             },
         );
 
@@ -307,56 +311,73 @@ fn handle_connection(
                 entry.expires_at = Instant::now() + SESSION_TTL;
             }
             Some(RelayStreamFailureKind::Retryable) | Some(RelayStreamFailureKind::ExpiredUrl) => {
-                log::info!(
-                    "[RELAY] retryable error for session={} track={} host={} client_range={:?} url={} err={}",
-                    context.session_id,
-                    context.track_id,
-                    context.upstream_host,
-                    context.client_range,
-                    context.upstream_url,
-                    stream_err.as_ref().unwrap_err(),
-                );
                 entry.spec.state = RelaySessionState::AwaitingRequest;
                 entry.expires_at = Instant::now() + SESSION_TTL;
 
-                if matches!(failure_kind, Some(RelayStreamFailureKind::ExpiredUrl))
-                    && !refreshed_url_in_request
-                {
-                    if let Some(url_resolver) = url_resolver {
-                        match url_resolver.get_url_fresh(&spec.track_id) {
-                            Ok(fresh_url) => {
-                                log::info!(
-                                    "[RELAY] refreshed URL for session={} track={} old_host={} new_host={} old_url={} new_url={}",
-                                    context.session_id,
-                                    context.track_id,
-                                    context.upstream_host,
-                                    upstream_host(&fresh_url),
-                                    context.upstream_url,
-                                    fresh_url,
-                                );
-                                entry.spec.upstream.url = fresh_url;
-                            }
-                            Err(refresh_err) => {
-                                log::warn!(
-                                    "[RELAY] URL refresh failed for session={} track={} host={} url={} err={}",
-                                    context.session_id,
-                                    context.track_id,
-                                    context.upstream_host,
-                                    context.upstream_url,
-                                    refresh_err,
-                                );
-                                entry.spec.state = RelaySessionState::Failed;
-                            }
-                        }
+                if matches!(failure_kind, Some(RelayStreamFailureKind::Retryable)) {
+                    log::info!(
+                        "[RELAY] retryable error session={} track={} outcome=awaiting-request",
+                        context.session_id,
+                        context.track_id,
+                    );
+                }
+
+                if matches!(failure_kind, Some(RelayStreamFailureKind::ExpiredUrl)) {
+                    if refreshed_url_in_request && entry.recovery_attempts == 0 {
+                        entry.recovery_attempts = 1;
+                    }
+
+                    let attempt = entry.recovery_attempts;
+                    let recovery_result = if attempt == 0 {
+                        entry.recovery_attempts = 1;
+                        url_resolver.map(|resolver| resolver.refresh_url_forced(&spec.track_id))
+                    } else if attempt == 1 && !entry.switched_extractor {
+                        entry.recovery_attempts = 2;
+                        entry.switched_extractor = true;
+                        url_resolver
+                            .map(|resolver| resolver.switch_and_extract_fresh(&spec.track_id))
                     } else {
-                        log::warn!(
-                            "[RELAY] URL expired but no url_resolver available for session={} track={} host={} url={}",
-                            context.session_id,
-                            context.track_id,
-                            context.upstream_host,
-                            context.upstream_url,
-                        );
-                        entry.spec.state = RelaySessionState::Failed;
+                        None
+                    };
+
+                    match recovery_result {
+                        Some(Ok(fresh_url)) => {
+                            log::info!(
+                                "[RELAY] 403 recovery session={} track={} step={} outcome=refreshed",
+                                context.session_id,
+                                context.track_id,
+                                entry.recovery_attempts,
+                            );
+                            entry.spec.upstream.url = fresh_url;
+                        }
+                        Some(Err(refresh_err)) => {
+                            log::info!(
+                                "[RELAY] 403 recovery session={} track={} step={} outcome=failed err={}",
+                                context.session_id,
+                                context.track_id,
+                                entry.recovery_attempts,
+                                refresh_err,
+                            );
+                            entry.spec.state = RelaySessionState::Failed;
+                        }
+                        None if !refreshed_url_in_request => {
+                            log::info!(
+                                "[RELAY] 403 recovery session={} track={} step={} outcome=exhausted",
+                                context.session_id,
+                                context.track_id,
+                                entry.recovery_attempts,
+                            );
+                            entry.spec.state = RelaySessionState::Failed;
+                        }
+                        None => {
+                            log::info!(
+                                "[RELAY] 403 recovery session={} track={} step={} outcome=already-refreshed",
+                                context.session_id,
+                                context.track_id,
+                                entry.recovery_attempts,
+                            );
+                            entry.spec.state = RelaySessionState::Failed;
+                        }
                     }
                 }
             }
@@ -649,7 +670,9 @@ fn stream_upstream_with_fresh_url_recovery(
 
                 let old_url = spec.upstream.url.clone();
                 let old_host = upstream_host(&old_url);
-                let fresh_url = url_resolver.get_url_fresh(&spec.track_id).map_err(|refresh_err| {
+                let fresh_url = url_resolver
+                    .refresh_url_with_policy_forced(&spec.track_id)
+                    .map_err(|refresh_err| {
                     relay_failure(
                         RelayStreamFailureKind::Retryable,
                         format!(

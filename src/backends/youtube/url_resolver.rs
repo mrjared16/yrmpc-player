@@ -10,7 +10,7 @@ use std::{
     time::{Duration, SystemTime},
 };
 
-use anyhow::{Context, Result};
+use anyhow::{Context, Result, anyhow};
 use async_trait::async_trait;
 
 use super::{
@@ -51,13 +51,17 @@ pub struct UrlStreamInfo {
 pub struct UrlResolver {
     inner: Arc<dyn Extractor>,
     extractor_type: ExtractorType,
+    enable_fallback: bool,
+    ytdlp_config: YtDlpExtractorConfig,
 }
 
 impl std::fmt::Debug for UrlResolver {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("UrlResolver")
             .field("extractor_type", &self.extractor_type)
+            .field("enable_fallback", &self.enable_fallback)
             .field("inner", &self.inner.name())
+            .field("ytdlp_config", &self.ytdlp_config)
             .finish()
     }
 }
@@ -104,35 +108,41 @@ impl UrlResolver {
         enable_fallback: bool,
         ytdlp_config: YtDlpExtractorConfig,
     ) -> Self {
-        let cookies_path = ytdlp_config.cookies_path;
+        let cookies_path = ytdlp_config.cookies_path.clone();
         let ytx_extractor =
             || cookies_path.clone().map(YtxExtractor::with_cookies).unwrap_or_default();
         let ytdlp_extractor = || YtDlpExtractor::with_options(cookies_path.clone());
+        let fallback_type =
+            enable_fallback.then(|| extractor_type.next_recovery_extractor(0)).flatten();
 
-        let inner: Arc<dyn Extractor> = match (extractor_type, enable_fallback) {
-            (ExtractorType::Ytx, true) => Arc::new(CachedExtractor::with_config(
-                FallbackExtractor::new(ytx_extractor(), ytdlp_extractor()),
-                cache_config,
-            )),
-            (ExtractorType::Ytx, false) => {
-                Arc::new(CachedExtractor::with_config(ytx_extractor(), cache_config))
-            }
-            (ExtractorType::YtDlp, true) => {
-                let primary = ytdlp_extractor();
-                primary.eager_bootstrap_po_token_provider();
+        let ytdlp_primary = || {
+            let primary = ytdlp_extractor();
+            primary.eager_bootstrap_po_token_provider();
+            primary
+        };
+
+        let inner: Arc<dyn Extractor> = match (extractor_type, fallback_type) {
+            (ExtractorType::Ytx, Some(ExtractorType::YtDlp)) => {
                 Arc::new(CachedExtractor::with_config(
-                    FallbackExtractor::new(primary, ytx_extractor()),
+                    FallbackExtractor::new(ytx_extractor(), ytdlp_extractor()),
                     cache_config,
                 ))
             }
-            (ExtractorType::YtDlp, false) => {
-                let primary = ytdlp_extractor();
-                primary.eager_bootstrap_po_token_provider();
-                Arc::new(CachedExtractor::with_config(primary, cache_config))
+            (ExtractorType::Ytx, _) => {
+                Arc::new(CachedExtractor::with_config(ytx_extractor(), cache_config))
+            }
+            (ExtractorType::YtDlp, Some(ExtractorType::Ytx)) => {
+                Arc::new(CachedExtractor::with_config(
+                    FallbackExtractor::new(ytdlp_primary(), ytx_extractor()),
+                    cache_config,
+                ))
+            }
+            (ExtractorType::YtDlp, _) => {
+                Arc::new(CachedExtractor::with_config(ytdlp_primary(), cache_config))
             }
         };
 
-        Self { inner, extractor_type }
+        Self { inner, extractor_type, enable_fallback, ytdlp_config }
     }
 
     /// Create with default extractor type.
@@ -146,7 +156,12 @@ impl UrlResolver {
 
     #[cfg(test)]
     pub(crate) fn from_extractor(inner: Arc<dyn Extractor>, extractor_type: ExtractorType) -> Self {
-        Self { inner, extractor_type }
+        Self {
+            inner,
+            extractor_type,
+            enable_fallback: false,
+            ytdlp_config: YtDlpExtractorConfig::default(),
+        }
     }
 
     #[cfg(test)]
@@ -154,7 +169,12 @@ impl UrlResolver {
         inner: E,
         extractor_type: ExtractorType,
     ) -> Self {
-        Self { inner: Arc::new(CachedExtractor::new(inner)), extractor_type }
+        Self {
+            inner: Arc::new(CachedExtractor::new(inner)),
+            extractor_type,
+            enable_fallback: false,
+            ytdlp_config: YtDlpExtractorConfig::default(),
+        }
     }
 
     /// Create with custom cache TTL.
@@ -183,6 +203,38 @@ impl UrlResolver {
 
     pub fn get_url_fresh(&self, video_id: &str) -> Result<String> {
         self.inner.extract_one_fresh(video_id)
+    }
+
+    pub fn refresh_url_forced(&self, video_id: &str) -> Result<String> {
+        self.inner.invalidate(video_id);
+        let primary_only = Self::with_config(
+            self.extractor_type,
+            CacheConfig::default(),
+            false,
+            self.ytdlp_config.clone(),
+        );
+        primary_only.get_url_fresh(video_id)
+    }
+
+    pub fn refresh_url_with_policy_forced(&self, video_id: &str) -> Result<String> {
+        self.inner.invalidate(video_id);
+        self.inner.extract_one_fresh(video_id)
+    }
+
+    pub fn switch_and_extract_fresh(&self, video_id: &str) -> Result<String> {
+        if !self.enable_fallback {
+            return Err(anyhow!(
+                "Fallback extractor disabled for {}",
+                self.extractor_type.as_str()
+            ));
+        }
+
+        let switched = self.extractor_type.next_recovery_extractor(0).ok_or_else(|| {
+            anyhow!("No fallback extractor configured for {}", self.extractor_type.as_str())
+        })?;
+        let inner =
+            Self::with_config(switched, CacheConfig::default(), false, self.ytdlp_config.clone());
+        inner.get_url_fresh(video_id)
     }
 
     pub fn get_stream_info(&self, video_id: &str) -> Result<UrlStreamInfo> {

@@ -80,16 +80,61 @@ impl StagingPipeline {
         track_id: &str,
         stream_url: &str,
     ) -> Result<(PathBuf, u64, u64)> {
-        self.audio_cache.ensure_prefix(track_id, stream_url).await.and_then(
-            |(prefix_path, content_length)| {
-                let prefix_bytes = std::fs::metadata(&prefix_path)
-                    .with_context(|| {
-                        format!("Failed to read prefix metadata for {}", prefix_path.display())
-                    })?
-                    .len();
-                Ok((prefix_path, prefix_bytes, content_length))
-            },
-        )
+        let mut attempts = 0;
+        let mut current_url = stream_url.to_string();
+        let mut refreshed = false;
+        let mut switched = false;
+
+        loop {
+            attempts += 1;
+            match self.audio_cache.ensure_prefix(track_id, &current_url).await {
+                Ok((prefix_path, content_length)) => {
+                    let prefix_bytes = std::fs::metadata(&prefix_path)
+                        .with_context(|| {
+                            format!("Failed to read prefix metadata for {}", prefix_path.display())
+                        })?
+                        .len();
+                    if refreshed || switched {
+                        log::info!(
+                            "[CACHE] 403 recovery track_id={} context=prefix attempts={} refreshed={} switched={} outcome=recovered",
+                            track_id,
+                            attempts,
+                            refreshed,
+                            switched,
+                        );
+                    }
+                    return Ok((prefix_path, prefix_bytes, content_length));
+                }
+                Err(err) => {
+                    let msg = err.to_string();
+                    let is_403 = msg.contains("403") || msg.contains("Forbidden");
+                    if !is_403 {
+                        return Err(err);
+                    }
+
+                    if !refreshed {
+                        refreshed = true;
+                        current_url = self.url_resolver.refresh_url_forced(track_id)?;
+                        continue;
+                    }
+
+                    if !switched {
+                        switched = true;
+                        current_url = self.url_resolver.switch_and_extract_fresh(track_id)?;
+                        continue;
+                    }
+
+                    log::info!(
+                        "[CACHE] 403 recovery track_id={} context=prefix attempts={} refreshed={} switched={} outcome=failed",
+                        track_id,
+                        attempts,
+                        refreshed,
+                        switched,
+                    );
+                    return Err(err);
+                }
+            }
+        }
     }
     #[cfg(test)]
     pub(super) fn audio_cache(&self) -> Arc<AudioCache> {
