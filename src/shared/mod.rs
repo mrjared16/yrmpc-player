@@ -20,6 +20,7 @@ pub mod macros;
 pub mod mouse_event;
 pub mod percent;
 pub mod play_queue;
+pub mod paths;
 pub mod ring_vec;
 pub mod string_util;
 pub mod terminal;

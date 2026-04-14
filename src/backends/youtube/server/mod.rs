@@ -113,6 +113,7 @@ impl YouTubeServer {
         socket_path: &Path,
         cookie_file: Option<&str>,
         extractor_type: ExtractorType,
+        enable_extractor_fallback: bool,
         audio_delivery_mode: AudioDeliveryMode,
         background_extract_mode: BackgroundExtractMode,
         future_track_count: usize,
@@ -133,6 +134,7 @@ impl YouTubeServer {
         let audio_source_plan = AudioDeliveryPlanner.plan(audio_delivery_mode);
         let services = YouTubeServices::new(
             extractor_type,
+            enable_extractor_fallback,
             ytdlp_config,
             audio_source_plan,
             cache_config.clone(),
@@ -752,6 +754,7 @@ mod tests {
                 &socket_path,
                 None,
                 ExtractorType::default(),
+                crate::backends::youtube::config::DEFAULT_ENABLE_EXTRACTOR_FALLBACK,
                 AudioDeliveryMode::default(),
                 BackgroundExtractMode::default(),
                 2,
@@ -823,6 +826,7 @@ mod tests {
             socket,
             None,
             ExtractorType::default(),
+            crate::backends::youtube::config::DEFAULT_ENABLE_EXTRACTOR_FALLBACK,
             AudioDeliveryMode::default(),
             BackgroundExtractMode::default(),
             2,

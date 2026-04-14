@@ -164,32 +164,23 @@ Manages the play queue state. Handles add, remove, reorder, and clear operations
 
 ### UrlResolver
 
-Resolves video IDs to stream URLs using the extractor chain (ytx → yt-dlp fallback).
+Resolves video IDs to stream URLs using configured extractor policy:
+- `primary=ytx, fallback=true` → `ytx → yt-dlp`
+- `primary=ytdlp, fallback=true` → `yt-dlp → ytx`
+- `fallback=false` → primary only
 
 **Caching**: URLs are cached with TTL to avoid repeated extraction calls.
 
 ## Configuration
 
-```ron
-// config/rmpc.ron
-youtube: (
-    // Audio cache settings
-    audio: (
-        cache_dir: "~/.cache/rmpc/audio/",
-        prefix_size: 204800,       // 200KB
-        max_cache_size: 209715200, // 200MB
-    ),
-    
-    // URL extraction
-    extractor: (
-        prefer_ytx: true,          // Use fast Rust extractor
-        ytdlp_path: "yt-dlp",      // Fallback Python extractor
-    ),
-    
-    // Prefetch settings
-    prefetch_window: 3,            // Prefetch next N songs
-),
+```toml
+# ~/.config/rmpc/youtube.toml
+[api.extractor]
+primary = "ytx"   # default
+fallback = true    # default
 ```
+
+Legacy fallback path (still supported): `~/.config/yrmpc/youtube.toml`
 
 ## Debugging
 

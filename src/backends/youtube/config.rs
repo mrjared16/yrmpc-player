@@ -2,22 +2,108 @@
 
 use std::{path::PathBuf, time::Duration};
 
-use serde::Deserialize;
+use serde::{Deserialize, Deserializer};
+
+use crate::shared::paths::youtube_config_paths;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct YtDlpExtractorConfig {
     pub cookies_path: Option<String>,
 }
 
+pub const DEFAULT_EXTRACTOR_TYPE: ExtractorType = ExtractorType::Ytx;
+pub const DEFAULT_ENABLE_EXTRACTOR_FALLBACK: bool = true;
+
+fn default_extractor_type() -> ExtractorType {
+    DEFAULT_EXTRACTOR_TYPE
+}
+
+fn default_enable_extractor_fallback() -> bool {
+    DEFAULT_ENABLE_EXTRACTOR_FALLBACK
+}
+
 /// Stream URL extractor type
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ExtractorType {
     /// yt-dlp CLI (reliable, widely used, ~3-4s per extraction)
     YtDlp,
     /// ytx Go binary (fast, ~200ms, requires ytx in PATH)
-    #[default]
     Ytx,
+}
+
+impl ExtractorType {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::YtDlp => "ytdlp",
+            Self::Ytx => "ytx",
+        }
+    }
+
+    pub fn parse(raw: &str) -> Option<Self> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "ytx" => Some(Self::Ytx),
+            "ytdlp" | "yt-dlp" => Some(Self::YtDlp),
+            _ => None,
+        }
+    }
+}
+
+impl Default for ExtractorType {
+    fn default() -> Self {
+        DEFAULT_EXTRACTOR_TYPE
+    }
+}
+
+/// Extractor policy configuration.
+///
+/// Supports both of these TOML shapes:
+///
+/// ```toml
+/// # concise legacy style
+/// extractor = "ytx"
+///
+/// # nested policy style (preferred)
+/// [extractor]
+/// primary = "ytx"
+/// fallback = true
+/// ```
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ExtractorConfig {
+    pub primary: ExtractorType,
+    pub fallback: bool,
+}
+
+impl Default for ExtractorConfig {
+    fn default() -> Self {
+        Self { primary: DEFAULT_EXTRACTOR_TYPE, fallback: DEFAULT_ENABLE_EXTRACTOR_FALLBACK }
+    }
+}
+
+impl<'de> Deserialize<'de> for ExtractorConfig {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Repr {
+            PrimaryOnly(ExtractorType),
+            Policy {
+                #[serde(default = "default_extractor_type")]
+                primary: ExtractorType,
+                #[serde(default = "default_enable_extractor_fallback")]
+                fallback: bool,
+            },
+        }
+
+        match Repr::deserialize(deserializer)? {
+            Repr::PrimaryOnly(primary) => {
+                Ok(Self { primary, fallback: DEFAULT_ENABLE_EXTRACTOR_FALLBACK })
+            }
+            Repr::Policy { primary, fallback } => Ok(Self { primary, fallback }),
+        }
+    }
 }
 
 /// Audio delivery mode for playback.
@@ -153,11 +239,25 @@ pub struct ApiConfig {
     /// Maximum search results
     pub max_search_results: usize,
 
-    /// Stream URL extractor type
-    /// - "ytdlp" (default): Uses yt-dlp CLI, reliable and widely used
-    /// - "pytubefix": Uses pytubefix Python library, faster but requires
-    ///   installation
-    pub extractor: ExtractorType,
+    /// Stream URL extractor policy.
+    ///
+    /// Preferred TOML shape:
+    /// ```toml
+    /// [api.extractor]
+    /// primary = "ytx"
+    /// fallback = true
+    /// ```
+    ///
+    /// Defaults:
+    /// - `primary = "ytx"`
+    /// - `fallback = true`
+    pub extractor: ExtractorConfig,
+
+    /// Legacy flat fallback key.
+    ///
+    /// Deprecated in favor of `[api.extractor].fallback`.
+    #[serde(default, rename = "enable_fallback")]
+    legacy_enable_fallback: Option<bool>,
 
     pub yt_dlp_extractor_args: Vec<String>,
 }
@@ -202,9 +302,20 @@ impl Default for ApiConfig {
             request_dump_dir: None,
             cache_duration: Duration::from_secs(3600),
             max_search_results: 50,
-            extractor: ExtractorType::default(), // ytx by default (fast, ~200ms)
+            extractor: ExtractorConfig::default(),
+            legacy_enable_fallback: None,
             yt_dlp_extractor_args: Vec::new(),
         }
+    }
+}
+
+impl ApiConfig {
+    pub fn extractor_type(&self) -> ExtractorType {
+        self.extractor.primary
+    }
+
+    pub fn extractor_fallback(&self) -> bool {
+        self.legacy_enable_fallback.unwrap_or(self.extractor.fallback)
     }
 }
 
@@ -216,19 +327,26 @@ impl YouTubeConfig {
         Ok(config)
     }
 
-    /// Load from default location (~/.config/yrmpc/youtube.toml)
+    /// Load from default location (~/.config/rmpc/youtube.toml).
+    ///
+    /// Legacy fallback: `~/.config/yrmpc/youtube.toml`.
     pub fn load() -> anyhow::Result<Self> {
-        let config_dir =
-            dirs::config_dir().ok_or_else(|| anyhow::anyhow!("No config directory found"))?;
-        let path = config_dir.join("yrmpc/youtube.toml");
+        for path in youtube_config_paths() {
+            if path.exists() {
+                return Self::from_file(&path);
+            }
+        }
 
-        if path.exists() { Self::from_file(&path) } else { Ok(Self::default()) }
+        Ok(Self::default())
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::{AudioConfig, AudioDeliveryMode, BackgroundExtractMode};
+    use super::{
+        ApiConfig, AudioConfig, AudioDeliveryMode, BackgroundExtractMode,
+        DEFAULT_ENABLE_EXTRACTOR_FALLBACK, ExtractorConfig, ExtractorType,
+    };
 
     #[test]
     fn audio_delivery_mode_accepts_current_values() {
@@ -294,5 +412,50 @@ mod tests {
             toml::from_str("future_track_count = 4").expect("parse future_track_count");
 
         assert_eq!(configured.future_track_count, 4);
+    }
+
+    #[test]
+    fn extractor_default_is_ytx() {
+        assert_eq!(ExtractorType::default(), ExtractorType::Ytx);
+    }
+
+    #[test]
+    fn extractor_parse_accepts_known_values() {
+        assert_eq!(ExtractorType::parse("ytx"), Some(ExtractorType::Ytx));
+        assert_eq!(ExtractorType::parse("ytdlp"), Some(ExtractorType::YtDlp));
+        assert_eq!(ExtractorType::parse("yt-dlp"), Some(ExtractorType::YtDlp));
+    }
+
+    #[test]
+    fn extractor_config_defaults_to_ytx_with_fallback() {
+        assert_eq!(ExtractorConfig::default().primary, ExtractorType::Ytx);
+        assert_eq!(ExtractorConfig::default().fallback, DEFAULT_ENABLE_EXTRACTOR_FALLBACK);
+    }
+
+    #[test]
+    fn api_extractor_accepts_legacy_scalar_value() {
+        let configured: ApiConfig =
+            toml::from_str("extractor = \"ytdlp\"").expect("parse legacy extractor scalar");
+
+        assert_eq!(configured.extractor.primary, ExtractorType::YtDlp);
+        assert_eq!(configured.extractor_fallback(), DEFAULT_ENABLE_EXTRACTOR_FALLBACK);
+    }
+
+    #[test]
+    fn api_extractor_accepts_nested_policy_table() {
+        let configured: ApiConfig =
+            toml::from_str("[extractor]\nprimary = \"ytdlp\"\nfallback = false\n")
+                .expect("parse nested extractor policy");
+
+        assert_eq!(configured.extractor.primary, ExtractorType::YtDlp);
+        assert!(!configured.extractor_fallback());
+    }
+
+    #[test]
+    fn api_legacy_enable_fallback_is_still_honored() {
+        let configured: ApiConfig = toml::from_str("extractor = \"ytx\"\nenable_fallback = false")
+            .expect("parse legacy enable_fallback");
+
+        assert!(!configured.extractor_fallback());
     }
 }

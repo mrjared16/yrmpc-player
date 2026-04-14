@@ -13,6 +13,7 @@ use rmpc::backends::youtube::{
     YouTubeServer,
     config::{AudioDeliveryMode, ExtractorType, YouTubeConfig, YtDlpExtractorConfig},
 };
+use rmpc::shared::paths::{cookie_file_candidates, preferred_cookie_path};
 
 #[derive(Parser, Debug)]
 #[command(author, version, about = "YouTube Music daemon server", long_about = None)]
@@ -26,9 +27,17 @@ struct Args {
     #[arg(short, long)]
     cookies: Option<PathBuf>,
 
-    /// Stream URL extractor: ytdlp (default, reliable) or ytx (faster)
-    #[arg(short, long, default_value = "ytdlp")]
-    extractor: String,
+    /// Stream URL extractor override: ytx or ytdlp.
+    ///
+    /// Defaults to `api.extractor.primary` from youtube.toml (built-in default: ytx).
+    #[arg(short, long)]
+    extractor: Option<String>,
+
+    /// Extractor fallback override: true/false.
+    ///
+    /// Defaults to `api.extractor.fallback` from youtube.toml (built-in default: true).
+    #[arg(long = "extractor-fallback")]
+    extractor_fallback: Option<bool>,
 
     /// Audio delivery mode: auto (default), direct, relay, or staged/concat
     #[arg(short, long = "audio-delivery", visible_alias = "audio-source", default_value = "auto")]
@@ -53,14 +62,32 @@ fn parse_audio_delivery_mode(raw: &str) -> AudioDeliveryMode {
     }
 }
 
-fn find_default_cookie_file() -> Option<PathBuf> {
-    let locations = vec![
-        dirs::config_dir().map(|d| d.join("rmpc/cookie.txt")),
-        dirs::config_dir().map(|d| d.join("yrmpc/cookies.txt")),
-        dirs::home_dir().map(|d| d.join(".config/rmpc/cookie.txt")),
-    ];
+fn resolve_extractor_type(
+    cli_extractor_override: Option<&str>,
+    configured_extractor: ExtractorType,
+) -> Result<ExtractorType> {
+    let Some(raw) = cli_extractor_override else {
+        return Ok(configured_extractor);
+    };
 
-    for loc in locations.into_iter().flatten() {
+    ExtractorType::parse(raw).ok_or_else(|| {
+        anyhow::anyhow!(
+            "Unknown --extractor='{raw}'. Supported values: '{}' or '{}'",
+            ExtractorType::Ytx.as_str(),
+            ExtractorType::YtDlp.as_str()
+        )
+    })
+}
+
+fn resolve_extractor_fallback(
+    cli_fallback_override: Option<bool>,
+    configured_fallback: bool,
+) -> bool {
+    cli_fallback_override.unwrap_or(configured_fallback)
+}
+
+fn find_default_cookie_file() -> Option<PathBuf> {
+    for loc in cookie_file_candidates() {
         if loc.exists() {
             log::info!("Found cookie file at {:?}", loc);
             return Some(loc);
@@ -68,7 +95,10 @@ fn find_default_cookie_file() -> Option<PathBuf> {
     }
 
     log::warn!("No cookie file found. Search, browse may not work.");
-    log::info!("HINT: Export cookies from browser to ~/.config/rmpc/cookie.txt");
+    if let Some(path) = preferred_cookie_path() {
+        log::info!("HINT: Export cookies from browser to {}", path.display());
+    }
+
     None
 }
 
@@ -81,7 +111,7 @@ fn main() -> Result<()> {
     let youtube_config = match YouTubeConfig::load() {
         Ok(config) => config,
         Err(err) => {
-            log::warn!("Failed to load ~/.config/yrmpc/youtube.toml: {err}");
+            log::warn!("Failed to load YouTube config: {err}");
             YouTubeConfig::default()
         }
     };
@@ -100,11 +130,14 @@ fn main() -> Result<()> {
         log::info!("Using cookies from {:?}", path);
     }
 
-    let extractor_type = match args.extractor.to_lowercase().as_str() {
-        "ytx" => ExtractorType::Ytx,
-        _ => ExtractorType::YtDlp,
-    };
+    let extractor_type =
+        resolve_extractor_type(args.extractor.as_deref(), youtube_config.api.extractor_type())?;
+    let enable_extractor_fallback = resolve_extractor_fallback(
+        args.extractor_fallback,
+        youtube_config.api.extractor_fallback(),
+    );
     log::info!("Using stream extractor: {:?}", extractor_type);
+    log::info!("Extractor fallback enabled: {}", enable_extractor_fallback);
 
     let audio_delivery_mode = parse_audio_delivery_mode(&args.audio_delivery);
     log::info!("Using audio mode: {:?}", audio_delivery_mode);
@@ -116,6 +149,7 @@ fn main() -> Result<()> {
         &args.socket,
         cookie_path.as_deref().and_then(|p| p.to_str()),
         extractor_type,
+        enable_extractor_fallback,
         audio_delivery_mode,
         youtube_config.audio.background_extract_mode,
         youtube_config.audio.future_track_count,
@@ -131,14 +165,60 @@ fn main() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{Args, parse_audio_delivery_mode};
+    use super::{
+        Args, parse_audio_delivery_mode, resolve_extractor_fallback, resolve_extractor_type,
+    };
     use clap::Parser;
-    use rmpc::backends::youtube::config::AudioDeliveryMode;
+    use rmpc::backends::youtube::config::{AudioDeliveryMode, ExtractorType};
 
     #[test]
     fn audio_delivery_flag_defaults_to_auto() {
         let args = Args::parse_from(["rmpcd"]);
         assert_eq!(args.audio_delivery, "auto");
+    }
+
+    #[test]
+    fn extractor_flag_defaults_to_configured_value() {
+        let args = Args::parse_from(["rmpcd"]);
+        let resolved = resolve_extractor_type(args.extractor.as_deref(), ExtractorType::Ytx)
+            .expect("resolve configured extractor");
+        assert_eq!(resolved, ExtractorType::Ytx);
+    }
+
+    #[test]
+    fn extractor_flag_uses_cli_override() {
+        let args = Args::parse_from(["rmpcd", "--extractor", "ytdlp"]);
+        let resolved = resolve_extractor_type(args.extractor.as_deref(), ExtractorType::Ytx)
+            .expect("resolve cli extractor");
+        assert_eq!(resolved, ExtractorType::YtDlp);
+    }
+
+    #[test]
+    fn extractor_flag_rejects_invalid_override() {
+        let args = Args::parse_from(["rmpcd", "--extractor", "invalid"]);
+        let resolved = resolve_extractor_type(args.extractor.as_deref(), ExtractorType::Ytx);
+        assert!(resolved.is_err());
+    }
+
+    #[test]
+    fn extractor_fallback_defaults_to_configured_value() {
+        let args = Args::parse_from(["rmpcd"]);
+        let resolved = resolve_extractor_fallback(args.extractor_fallback, true);
+        assert!(resolved);
+    }
+
+    #[test]
+    fn extractor_fallback_uses_cli_true_override() {
+        let args = Args::parse_from(["rmpcd", "--extractor-fallback", "true"]);
+        let resolved = resolve_extractor_fallback(args.extractor_fallback, false);
+        assert!(resolved);
+    }
+
+    #[test]
+    fn extractor_fallback_uses_cli_false_override() {
+        let args = Args::parse_from(["rmpcd", "--extractor-fallback", "false"]);
+        let resolved = resolve_extractor_fallback(args.extractor_fallback, true);
+        assert!(!resolved);
     }
 
     #[test]

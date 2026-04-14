@@ -231,12 +231,11 @@ mod browse_tests {
 mod integration {
     use std::path::PathBuf;
 
+    use rmpc::shared::paths::cookie_file_candidates;
+
     /// Get the cookie file path for authentication
     fn get_cookie_path() -> Option<PathBuf> {
-        // Check common locations
-        let home = std::env::var("HOME").ok()?;
-        let path = PathBuf::from(home).join(".config/rmpc/cookie.txt");
-        if path.exists() { Some(path) } else { None }
+        cookie_file_candidates().into_iter().find(|path| path.exists())
     }
 
     /// Test: browse_artist must not return HTTP 400

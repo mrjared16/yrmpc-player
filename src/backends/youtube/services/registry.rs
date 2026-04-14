@@ -66,11 +66,16 @@ pub struct YouTubeServices {
 impl YouTubeServices {
     pub fn new(
         extractor_type: ExtractorType,
+        enable_extractor_fallback: bool,
         ytdlp_config: YtDlpExtractorConfig,
         audio_source_plan: AudioDeliveryPlan,
         cache_config: CacheConfig,
     ) -> Result<Self> {
-        let url_resolver = Arc::new(UrlResolver::with_ytdlp_config(extractor_type, ytdlp_config));
+        let url_resolver = Arc::new(UrlResolver::with_ytdlp_config(
+            extractor_type,
+            enable_extractor_fallback,
+            ytdlp_config,
+        ));
         let audio_cache = Arc::new(AudioCache::new(cache_config)?);
         let media_preparer = YouTubeMediaPreparer::spawn(
             Arc::clone(&url_resolver),

@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use async_trait::async_trait;
 
 use super::{
-    config::{ExtractorType, YtDlpExtractorConfig},
+    config::{DEFAULT_ENABLE_EXTRACTOR_FALLBACK, ExtractorType, YtDlpExtractorConfig},
     extractor::{
         CacheConfig, CachedExtractor, Extractor, FallbackExtractor, YtDlpExtractor, YtxExtractor,
     },
@@ -33,7 +33,7 @@ pub struct UrlStreamInfo {
 ///
 /// Provides a simple interface for resolving YouTube video IDs to stream URLs:
 /// - Configurable primary extractor (ytx or yt-dlp)
-/// - Optional fallback to yt-dlp if primary fails
+/// - Optional fallback to the other extractor if primary fails
 /// - LRU + TTL caching
 ///
 /// # Example
@@ -73,14 +73,19 @@ impl UrlResolver {
     /// External code should obtain resolvers from
     /// `YouTubeServices::url_resolver()`.
     pub(crate) fn new(extractor_type: ExtractorType) -> Self {
-        Self::with_ytdlp_config(extractor_type, YtDlpExtractorConfig::default())
+        Self::with_ytdlp_config(
+            extractor_type,
+            DEFAULT_ENABLE_EXTRACTOR_FALLBACK,
+            YtDlpExtractorConfig::default(),
+        )
     }
 
     pub(crate) fn with_ytdlp_config(
         extractor_type: ExtractorType,
+        enable_fallback: bool,
         ytdlp_config: YtDlpExtractorConfig,
     ) -> Self {
-        Self::with_config(extractor_type, CacheConfig::default(), true, ytdlp_config)
+        Self::with_config(extractor_type, CacheConfig::default(), enable_fallback, ytdlp_config)
     }
 
     /// Create a new extractor with custom configuration.
@@ -92,41 +97,45 @@ impl UrlResolver {
     /// # Arguments
     /// * `extractor_type` - Primary extractor to use
     /// * `cache_config` - Cache configuration
-    /// * `enable_fallback` - Whether to fall back to yt-dlp if primary fails
+    /// * `enable_fallback` - Whether to try the other extractor if primary fails
     pub(crate) fn with_config(
         extractor_type: ExtractorType,
         cache_config: CacheConfig,
         enable_fallback: bool,
         ytdlp_config: YtDlpExtractorConfig,
     ) -> Self {
+        let cookies_path = ytdlp_config.cookies_path;
         let ytx_extractor =
-            ytdlp_config.cookies_path.clone().map(YtxExtractor::with_cookies).unwrap_or_default();
-        let inner: Arc<dyn Extractor> = match extractor_type {
-            ExtractorType::Ytx => {
-                if enable_fallback {
-                    Arc::new(CachedExtractor::with_config(
-                        FallbackExtractor::new(
-                            ytx_extractor,
-                            YtDlpExtractor::with_options(ytdlp_config.cookies_path.clone()),
-                        ),
-                        cache_config,
-                    ))
-                } else {
-                    Arc::new(CachedExtractor::with_config(ytx_extractor, cache_config))
-                }
+            || cookies_path.clone().map(YtxExtractor::with_cookies).unwrap_or_default();
+        let ytdlp_extractor = || YtDlpExtractor::with_options(cookies_path.clone());
+
+        let inner: Arc<dyn Extractor> = match (extractor_type, enable_fallback) {
+            (ExtractorType::Ytx, true) => Arc::new(CachedExtractor::with_config(
+                FallbackExtractor::new(ytx_extractor(), ytdlp_extractor()),
+                cache_config,
+            )),
+            (ExtractorType::Ytx, false) => {
+                Arc::new(CachedExtractor::with_config(ytx_extractor(), cache_config))
             }
-            ExtractorType::YtDlp => {
-                let extractor = YtDlpExtractor::with_options(ytdlp_config.cookies_path);
-                extractor.eager_bootstrap_po_token_provider();
-                // yt-dlp is the primary extractor, so no fallback needed
-                Arc::new(CachedExtractor::with_config(extractor, cache_config))
+            (ExtractorType::YtDlp, true) => {
+                let primary = ytdlp_extractor();
+                primary.eager_bootstrap_po_token_provider();
+                Arc::new(CachedExtractor::with_config(
+                    FallbackExtractor::new(primary, ytx_extractor()),
+                    cache_config,
+                ))
+            }
+            (ExtractorType::YtDlp, false) => {
+                let primary = ytdlp_extractor();
+                primary.eager_bootstrap_po_token_provider();
+                Arc::new(CachedExtractor::with_config(primary, cache_config))
             }
         };
 
         Self { inner, extractor_type }
     }
 
-    /// Create with default extractor (yt-dlp).
+    /// Create with default extractor type.
     ///
     /// # Visibility
     ///
@@ -157,7 +166,7 @@ impl UrlResolver {
         Self::with_config(
             extractor_type,
             CacheConfig::default().with_ttl(ttl),
-            true,
+            DEFAULT_ENABLE_EXTRACTOR_FALLBACK,
             YtDlpExtractorConfig::default(),
         )
     }
@@ -413,5 +422,33 @@ mod tests {
         );
 
         assert_eq!(YtDlpExtractor::eager_bootstrap_attempts_for_tests(), 0);
+    }
+
+    #[test]
+    fn test_ytx_primary_with_fallback_does_not_attempt_eager_bootstrap() {
+        YtDlpExtractor::reset_eager_bootstrap_attempts_for_tests();
+
+        let _resolver = UrlResolver::with_config(
+            ExtractorType::Ytx,
+            CacheConfig::default(),
+            true,
+            YtDlpExtractorConfig::default(),
+        );
+
+        assert_eq!(YtDlpExtractor::eager_bootstrap_attempts_for_tests(), 0);
+    }
+
+    #[test]
+    fn test_ytdlp_primary_with_fallback_attempts_eager_bootstrap() {
+        YtDlpExtractor::reset_eager_bootstrap_attempts_for_tests();
+
+        let _resolver = UrlResolver::with_config(
+            ExtractorType::YtDlp,
+            CacheConfig::default(),
+            true,
+            YtDlpExtractorConfig::default(),
+        );
+
+        assert_eq!(YtDlpExtractor::eager_bootstrap_attempts_for_tests(), 1);
     }
 }
