@@ -325,11 +325,8 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
     fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
         let start = std::time::Instant::now();
 
-        if let Some(url) = self.get_cached(video_id) {
-            log::info!("[EXTRACT] cache_hit track_id={} elapsed={:?}", video_id, start.elapsed());
-            return Ok(url);
-        }
-
+        // Never check cache — this method must always extract fresh.
+        // Used by relay 403 recovery where the cached URL is known to be dead.
         let version = self.next_version.fetch_add(1, Ordering::Relaxed);
         log::info!(
             "[EXTRACT] fresh_start track_id={} version={} reason=demand_takeover",
