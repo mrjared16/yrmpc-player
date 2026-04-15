@@ -187,10 +187,7 @@ fn build_artist_play_scope_intent(
     source: ContextSource,
 ) -> Option<(PlayIntent, bool)> {
     if !marked_tracks.is_empty() {
-        return Some((
-            PlayIntent::Context { tracks: marked_tracks, offset: 0, shuffle, source: Some(source) },
-            true,
-        ));
+        return Some((PlayIntent::replace_and_play(marked_tracks, 0, shuffle, Some(source)), true));
     }
 
     if matches!(item, DetailItem::Ref(content_ref) if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist))
@@ -202,10 +199,7 @@ fn build_artist_play_scope_intent(
         return None;
     }
 
-    Some((
-        PlayIntent::Context { tracks: top_songs, offset: 0, shuffle, source: Some(source) },
-        false,
-    ))
+    Some((PlayIntent::replace_and_play(top_songs, 0, shuffle, Some(source)), false))
 }
 
 // =============================================================================
@@ -348,12 +342,10 @@ mod tests {
         assert!(used_marks);
         assert!(matches!(
             intent,
-            PlayIntent::Context {
-                tracks,
-                offset: 0,
-                shuffle: true,
-                source: Some(ContextSource::Artist { artist_id })
-            } if artist_id == "artist123" && tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
+            PlayIntent::Replace(replace)
+                if matches!(replace.playback, crate::backends::youtube::protocol::play_intent::ReplacePlayback::StartAtIndex(0))
+                    && matches!(&replace.source, Some(ContextSource::Artist { artist_id }) if artist_id == "artist123")
+                    && replace.tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
         ));
     }
 

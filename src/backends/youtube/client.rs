@@ -2,7 +2,6 @@
 //! Implements MusicBackend trait for use in TUI.
 
 use std::{
-    collections::HashMap,
     io::{BufReader, BufWriter},
     os::unix::net::UnixStream,
     path::{Path, PathBuf},
@@ -13,6 +12,7 @@ use anyhow::{Context, Result, anyhow};
 
 use super::protocol::{
     BrowseEntry, CLIENT_SUPERSEDED_ERROR, ServerCommand, ServerResponse, SongData, framing,
+    play_intent::{PlayIntent, RequestId},
 };
 use crate::{
     backends::{
@@ -30,6 +30,12 @@ use crate::{
         version::Version,
     },
 };
+
+static REQUEST_ID_COUNTER: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+
+fn next_request_id() -> RequestId {
+    REQUEST_ID_COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+}
 
 fn song_from_playable(p: &super::protocol::PlayableData, item_type: &str) -> Song {
     let mut metadata = std::collections::HashMap::new();
@@ -368,6 +374,54 @@ impl YouTubeProxy {
         Ok(())
     }
 
+    fn send_play_intent(&mut self, intent: PlayIntent) -> Result<()> {
+        self.request_ok(ServerCommand::PlayWithIntent { intent, request_id: next_request_id() })
+    }
+
+    fn add_songs(&mut self, songs: Vec<Song>, at: QueueInsertAt) -> Result<()> {
+        if songs.is_empty() {
+            return Ok(());
+        }
+
+        match at {
+            QueueInsertAt::End => self.send_play_intent(PlayIntent::add_last(songs)),
+            QueueInsertAt::Next => self.send_play_intent(PlayIntent::add_next(songs)),
+            QueueInsertAt::Position(position) => {
+                self.send_play_intent(PlayIntent::add_at(songs, position as usize))
+            }
+        }
+    }
+
+    fn queue_insert_at(at: InsertAt) -> QueueInsertAt {
+        match at {
+            InsertAt::End => QueueInsertAt::End,
+            InsertAt::Next => QueueInsertAt::Next,
+            InsertAt::Position(position) => QueueInsertAt::Position(position),
+            InsertAt::Replace => unreachable!("replace must be handled at the callsite"),
+        }
+    }
+
+    fn resolve_insert_at(&mut self, position: Option<QueuePosition>) -> Result<InsertAt> {
+        match position {
+            None | Some(QueuePosition::End) => Ok(InsertAt::End),
+            Some(QueuePosition::Next) => Ok(InsertAt::Next),
+            Some(QueuePosition::Absolute(n)) => Ok(InsertAt::Position(n as u32)),
+            Some(QueuePosition::Relative(offset)) => {
+                let status = self.get_status()?;
+                let queue_len = status.playlistlength as usize;
+
+                let pos = match status.song_position.map(|p| p as usize) {
+                    Some(current) if offset >= 0 => current.saturating_add(offset as usize),
+                    Some(current) => current.saturating_sub(offset.unsigned_abs() as usize),
+                    None => queue_len,
+                }
+                .min(queue_len);
+
+                Ok(if pos == queue_len { InsertAt::End } else { InsertAt::Position(pos as u32) })
+            }
+        }
+    }
+
     /// Play song at specific position (0-indexed)
     pub fn play_pos(&mut self, pos: usize) -> Result<()> {
         self.request_ok(ServerCommand::PlayPos(pos))
@@ -375,13 +429,14 @@ impl YouTubeProxy {
 
     /// Add song with full metadata (preferred over add for preserving metadata)
     pub fn add_song(&mut self, song: &Song, position: Option<u32>) -> Result<()> {
-        let song_data = SongData::from(song.clone());
+        let at = position.map_or(InsertAt::End, InsertAt::Position);
         log::debug!(
-            "YouTubeClient::add_song sending AddSong command: file={}, title={:?}",
-            song_data.file,
-            song_data.title
+            "YouTubeClient::add_song queueing file={} title={:?} at={:?}",
+            song.uri,
+            song.metadata.get("title").and_then(|v| v.first()),
+            at
         );
-        let result = self.request_ok(ServerCommand::AddSong { song: song_data, position });
+        let result = self.add_songs(vec![song.clone()], Self::queue_insert_at(at));
         log::debug!("YouTubeClient::add_song result: {:?}", result.as_ref().map(|_| "Ok"));
         result
     }
@@ -397,12 +452,8 @@ impl YouTubeProxy {
 
 impl QueueOperations for YouTubeProxy {
     fn enqueue(&mut self, song: &Song, position: Option<QueuePosition>) -> Result<()> {
-        let song_data = SongData::from(song.clone());
-        let pos = position.and_then(|p| match p {
-            QueuePosition::Absolute(n) => Some(n as u32),
-            _ => None,
-        });
-        self.request_ok(ServerCommand::AddSong { song: song_data, position: pos })
+        let at = self.resolve_insert_at(position)?;
+        self.add_songs(vec![song.clone()], Self::queue_insert_at(at))
     }
 
     fn dequeue(&mut self, id: u32) -> Result<()> {
@@ -502,13 +553,15 @@ impl MusicBackend for YouTubeProxy {
     // === Queue Management ===
 
     fn add(&mut self, uri: &str, position: Option<QueuePosition>) -> Result<()> {
-        let pos = position.map(|p| match p {
-            QueuePosition::Absolute(n) => n as u32,
-            QueuePosition::Relative(n) => n as u32,
-            QueuePosition::End => u32::MAX, // Append to end
-            QueuePosition::Next => 0,       // After current
-        });
-        self.request_ok(ServerCommand::Add { uri: uri.to_string(), position: pos })
+        let song = Song { uri: uri.to_string(), ..Default::default() };
+        let at = self.resolve_insert_at(position)?;
+        let intent = match at {
+            InsertAt::End => PlayIntent::add_last(vec![song]),
+            InsertAt::Next => PlayIntent::add_next(vec![song]),
+            InsertAt::Position(n) => PlayIntent::add_at(vec![song], n as usize),
+            InsertAt::Replace => unreachable!("resolve_insert_at never returns Replace"),
+        };
+        self.send_play_intent(intent)
     }
 
     fn delete_id(&mut self, id: u32) -> Result<()> {
@@ -680,6 +733,13 @@ use crate::backends::api::{
     self, AfterAdd, BrowseResult, Capability, InsertAt, SearchQuery, SearchResults,
 };
 
+#[derive(Debug, Clone, Copy)]
+enum QueueInsertAt {
+    End,
+    Next,
+    Position(u32),
+}
+
 impl api::Playback for YouTubeProxy {
     fn play(&mut self) -> Result<()> {
         self.request_ok(ServerCommand::Play)
@@ -741,44 +801,61 @@ impl api::Queue for YouTubeProxy {
             self.request_ok(ServerCommand::Clear)?;
         }
 
-        // Calculate starting position
-        let start_pos = match at {
+        let add_at = Self::queue_insert_at(match at {
+            InsertAt::Replace => InsertAt::End,
+            other => other,
+        });
+
+        let status_before_add = match at {
             InsertAt::End | InsertAt::Replace => None,
-            InsertAt::Next => {
-                // Get current position and insert after it
-                if let ServerResponse::Status(s) = self.request(ServerCommand::GetStatus)? {
-                    s.current_pos.map(|p| p + 1)
-                } else {
-                    None
-                }
-            }
-            InsertAt::Position(p) => Some(p),
+            InsertAt::Next | InsertAt::Position(_) => Some(self.get_status()?),
         };
 
-        // Add each item
-        for (i, item) in items.iter().enumerate() {
-            let pos = start_pos.map(|p| p + i as u32);
-            let song_data = SongData {
-                id: item.queue_id,
-                file: item.id.clone(),
-                title: Some(item.title.clone()),
-                artist: item.subtitle.clone(),
-                album: None,
-                duration_ms: item.duration.map(|d| d.as_millis() as u64),
-                thumbnail: item.thumbnail.clone(),
-                item_type: Some(
-                    match item.content_type {
-                        api::ContentType::Track => "song",
-                        api::ContentType::Album => "album",
-                        api::ContentType::Artist => "artist",
-                        api::ContentType::Playlist => "playlist",
-                        _ => "song",
-                    }
-                    .to_string(),
-                ),
-            };
-            self.request_ok(ServerCommand::AddSong { song: song_data, position: pos })?;
-        }
+        // Calculate starting position
+        let start_pos = match (at, status_before_add.as_ref()) {
+            (InsertAt::End | InsertAt::Replace, _) => None,
+            (InsertAt::Next, Some(status)) => status.song_position.map(|p| p + 1),
+            (InsertAt::Next, None) => None,
+            (InsertAt::Position(p), Some(status)) => Some(p.min(status.playlistlength)),
+            (InsertAt::Position(p), None) => Some(p),
+        };
+
+        let songs: Vec<Song> = items
+            .iter()
+            .map(|item| {
+                let mut metadata = std::collections::HashMap::new();
+                metadata.insert("title".into(), vec![item.title.clone()]);
+                if let Some(ref artist) = item.subtitle {
+                    metadata.insert("artist".into(), vec![artist.clone()]);
+                }
+                if let Some(ref thumb) = item.thumbnail {
+                    metadata.insert("thumbnail".into(), vec![thumb.clone()]);
+                }
+                metadata.insert(
+                    "type".into(),
+                    vec![
+                        match item.content_type {
+                            api::ContentType::Track => "song",
+                            api::ContentType::Album => "album",
+                            api::ContentType::Artist => "artist",
+                            api::ContentType::Playlist => "playlist",
+                            _ => "song",
+                        }
+                        .to_string(),
+                    ],
+                );
+                Song {
+                    id: item.queue_id,
+                    uri: item.id.clone(),
+                    duration: item.duration,
+                    metadata,
+                    ..Default::default()
+                }
+                .with_search_key()
+            })
+            .collect();
+
+        self.add_songs(songs, add_at)?;
 
         // Handle autoplay
         match after {
@@ -799,6 +876,12 @@ impl api::Queue for YouTubeProxy {
                 if idx < items.len() {
                     if let Some(pos) = start_pos {
                         self.request_ok(ServerCommand::PlayPos((pos as usize) + idx))?;
+                    } else if let ServerResponse::Status(s) =
+                        self.request(ServerCommand::GetStatus)?
+                    {
+                        let play_pos =
+                            s.playlist_length.saturating_sub(items.len() as u32) as usize + idx;
+                        self.request_ok(ServerCommand::PlayPos(play_pos))?;
                     }
                 }
             }

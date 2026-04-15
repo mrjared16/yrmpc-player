@@ -10,7 +10,10 @@ fn create_test_song(title: &str) -> Song {
 #[test]
 fn test_add_single_song() {
     let mut queue = PlayQueue::new();
-    let events = queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    let events = queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     assert_eq!(queue.len(), 1);
     assert_eq!(events.len(), 1);
@@ -23,10 +26,19 @@ fn test_add_single_song() {
 #[test]
 fn test_add_at_inserts_at_requested_position() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("one") });
-    queue.apply(QueueCommand::Add { song: create_test_song("three") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("one")],
+        placement: QueueInsertPlacement::End,
+    });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("three")],
+        placement: QueueInsertPlacement::End,
+    });
 
-    let events = queue.apply(QueueCommand::AddAt { song: create_test_song("two"), position: 1 });
+    let events = queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("two")],
+        placement: QueueInsertPlacement::Absolute(1),
+    });
 
     let ids = match &events[0] {
         QueueEvent::ItemsAdded { ids } => ids,
@@ -43,7 +55,7 @@ fn test_add_batch() {
     let mut queue = PlayQueue::new();
     let songs = vec![create_test_song("one"), create_test_song("two"), create_test_song("three")];
 
-    let events = queue.apply(QueueCommand::AddBatch { songs });
+    let events = queue.apply(QueueCommand::Insert { songs, placement: QueueInsertPlacement::End });
 
     assert_eq!(queue.len(), 3);
     match &events[0] {
@@ -55,7 +67,10 @@ fn test_add_batch() {
 #[test]
 fn test_clear_queue() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let events = queue.apply(QueueCommand::Clear);
 
@@ -66,7 +81,10 @@ fn test_clear_queue() {
 #[test]
 fn test_play_sets_current() {
     let mut queue = PlayQueue::new();
-    let events = queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    let events = queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let id = match &events[0] {
         QueueEvent::ItemsAdded { ids } => ids[0],
@@ -88,8 +106,9 @@ fn test_play_sets_current() {
 #[test]
 fn test_next_advances_to_next_song() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Play { id: 1 });
@@ -108,7 +127,10 @@ fn test_next_advances_to_next_song() {
 #[test]
 fn test_next_at_end_without_repeat_returns_none() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("only") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("only")],
+        placement: QueueInsertPlacement::End,
+    });
 
     queue.apply(QueueCommand::Play { id: 1 });
     queue.apply(QueueCommand::Next);
@@ -119,8 +141,9 @@ fn test_next_at_end_without_repeat_returns_none() {
 #[test]
 fn test_next_at_end_with_repeat_all_wraps() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::SetRepeat { mode: RepeatMode::All });
@@ -133,7 +156,10 @@ fn test_next_at_end_with_repeat_all_wraps() {
 #[test]
 fn test_advance_with_repeat_one_stays_on_current() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     queue.apply(QueueCommand::SetRepeat { mode: RepeatMode::One });
     queue.apply(QueueCommand::Play { id: 1 });
@@ -147,8 +173,9 @@ fn test_advance_with_repeat_one_stays_on_current() {
 #[test]
 fn test_previous_in_sequential_mode() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Play { id: 2 });
@@ -160,8 +187,9 @@ fn test_previous_in_sequential_mode() {
 #[test]
 fn test_previous_from_history_in_shuffle_mode() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B"), create_test_song("C")],
+        placement: QueueInsertPlacement::End,
     });
     queue.apply(QueueCommand::Play { id: 1 });
     queue.apply(QueueCommand::Next);
@@ -176,8 +204,9 @@ fn test_previous_from_history_in_shuffle_mode() {
 #[test]
 fn test_shuffle_changes_order() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two"), create_test_song("three")],
+        placement: QueueInsertPlacement::End,
     });
 
     let original = queue.get_play_order().to_vec();
@@ -193,8 +222,9 @@ fn test_shuffle_changes_order() {
 #[test]
 fn test_shuffle_keeps_current_first() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two"), create_test_song("three")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Play { id: 2 });
@@ -206,8 +236,9 @@ fn test_shuffle_keeps_current_first() {
 #[test]
 fn test_shuffle_emits_order_changed_event() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
     queue.apply(QueueCommand::Play { id: 1 });
 
@@ -220,8 +251,9 @@ fn test_shuffle_emits_order_changed_event() {
 #[test]
 fn test_unshuffle_restores_original_order() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two"), create_test_song("three")],
+        placement: QueueInsertPlacement::End,
     });
 
     let original = queue.get_play_order().to_vec();
@@ -235,7 +267,10 @@ fn test_unshuffle_restores_original_order() {
 #[test]
 fn test_remove_current_song_stops() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     queue.apply(QueueCommand::Play { id: 1 });
     let events = queue.apply(QueueCommand::Remove { id: 1 });
@@ -249,8 +284,9 @@ fn test_remove_current_song_stops() {
 #[test]
 fn test_remove_updates_both_orders() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B"), create_test_song("C")],
+        placement: QueueInsertPlacement::End,
     });
 
     let events = queue.apply(QueueCommand::Remove { id: 2 });
@@ -264,7 +300,10 @@ fn test_remove_updates_both_orders() {
 #[test]
 fn test_remove_nonexistent_is_noop() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let events = queue.apply(QueueCommand::Remove { id: 999 });
 
@@ -275,7 +314,10 @@ fn test_remove_nonexistent_is_noop() {
 #[test]
 fn test_stop_command() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     queue.apply(QueueCommand::Play { id: 1 });
     let events = queue.apply(QueueCommand::Stop);
@@ -287,7 +329,10 @@ fn test_stop_command() {
 #[test]
 fn test_stop_when_not_playing() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let events = queue.apply(QueueCommand::Stop);
 
@@ -298,8 +343,9 @@ fn test_stop_when_not_playing() {
 #[test]
 fn test_move_song() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two"), create_test_song("three")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Move { id: 1, to_position: 2 });
@@ -311,8 +357,9 @@ fn test_move_song() {
 #[test]
 fn test_move_emits_order_changed() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
 
     let events = queue.apply(QueueCommand::Move { id: 1, to_position: 1 });
@@ -323,8 +370,9 @@ fn test_move_emits_order_changed() {
 #[test]
 fn test_move_to_same_position_is_noop() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
 
     let events = queue.apply(QueueCommand::Move { id: 1, to_position: 0 });
@@ -335,7 +383,10 @@ fn test_move_to_same_position_is_noop() {
 #[test]
 fn test_move_nonexistent_is_noop() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("A") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("A")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let events = queue.apply(QueueCommand::Move { id: 999, to_position: 0 });
 
@@ -345,13 +396,17 @@ fn test_move_nonexistent_is_noop() {
 #[test]
 fn test_add_during_shuffle_appends_to_end() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::SetShuffle { enabled: true });
 
-    queue.apply(QueueCommand::Add { song: create_test_song("new") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("new")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let order = queue.get_play_order();
     assert_eq!(order[order.len() - 1], 3);
@@ -360,8 +415,9 @@ fn test_add_during_shuffle_appends_to_end() {
 #[test]
 fn test_get_position() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two"), create_test_song("three")],
+        placement: QueueInsertPlacement::End,
     });
 
     assert_eq!(queue.get_position(1), Some(0));
@@ -373,8 +429,9 @@ fn test_get_position() {
 #[test]
 fn test_get_current_position() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Play { id: 2 });
@@ -429,7 +486,10 @@ fn test_is_empty() {
     let mut queue = PlayQueue::new();
     assert!(queue.is_empty());
 
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
     assert!(!queue.is_empty());
 
     queue.apply(QueueCommand::Clear);
@@ -439,7 +499,10 @@ fn test_is_empty() {
 #[test]
 fn test_get_song() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let song = queue.get_song(1);
     assert!(song.is_some());
@@ -451,8 +514,9 @@ fn test_get_song() {
 #[test]
 fn test_get_songs_in_order() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B"), create_test_song("C")],
+        placement: QueueInsertPlacement::End,
     });
 
     let songs = queue.get_songs_in_order();
@@ -467,8 +531,9 @@ fn test_get_shuffle() {
     let mut queue = PlayQueue::new();
     assert!(!queue.get_shuffle());
 
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::SetShuffle { enabled: true });
@@ -489,8 +554,9 @@ fn test_default_trait() {
 #[test]
 fn test_previous_with_repeat_all_wraps() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("one"), create_test_song("two")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::SetRepeat { mode: RepeatMode::All });
@@ -503,7 +569,10 @@ fn test_previous_with_repeat_all_wraps() {
 #[test]
 fn test_play_nonexistent_is_noop() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::Add { song: create_test_song("test") });
+    queue.apply(QueueCommand::Insert {
+        songs: vec![create_test_song("test")],
+        placement: QueueInsertPlacement::End,
+    });
 
     let events = queue.apply(QueueCommand::Play { id: 999 });
 
@@ -514,8 +583,9 @@ fn test_play_nonexistent_is_noop() {
 #[test]
 fn test_play_adds_previous_to_history() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B"), create_test_song("C")],
+        placement: QueueInsertPlacement::End,
     });
 
     queue.apply(QueueCommand::Play { id: 1 });
@@ -530,8 +600,9 @@ fn test_play_adds_previous_to_history() {
 #[test]
 fn test_clear_emits_cleared_event() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
     queue.apply(QueueCommand::Play { id: 1 });
 
@@ -545,8 +616,9 @@ fn test_clear_emits_cleared_event() {
 #[test]
 fn test_advance_respects_repeat_all() {
     let mut queue = PlayQueue::new();
-    queue.apply(QueueCommand::AddBatch {
+    queue.apply(QueueCommand::Insert {
         songs: vec![create_test_song("A"), create_test_song("B")],
+        placement: QueueInsertPlacement::End,
     });
     queue.apply(QueueCommand::SetRepeat { mode: RepeatMode::All });
     queue.apply(QueueCommand::Play { id: 2 });

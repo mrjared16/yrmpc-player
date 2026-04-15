@@ -99,20 +99,20 @@ impl PlaylistDetailPane {
                 if songs.len() > 1 {
                     // Multiple songs selected - play all starting from activated song
                     let start_index = selection.find_song_index(&song.uri).unwrap_or(0);
-                    ctx.queue_mutator().play(PlayIntent::Context {
-                        tracks: songs,
-                        offset: start_index,
-                        shuffle: false,
-                        source: Some(ContextSource::Playlist { playlist_id }),
-                    });
+                    ctx.queue_mutator().play(PlayIntent::replace_and_play(
+                        songs,
+                        start_index,
+                        false,
+                        Some(ContextSource::Playlist { playlist_id }),
+                    ));
                 } else {
                     // Single song - play it
-                    ctx.queue_mutator().play(PlayIntent::Context {
-                        tracks: vec![song],
-                        offset: 0,
-                        shuffle: false,
-                        source: Some(ContextSource::Playlist { playlist_id }),
-                    });
+                    ctx.queue_mutator().play(PlayIntent::replace_and_play(
+                        vec![song],
+                        0,
+                        false,
+                        Some(ContextSource::Playlist { playlist_id }),
+                    ));
                 }
                 PaneAction::Handled
             }
@@ -191,10 +191,7 @@ fn build_detail_play_scope_intent(
     source: ContextSource,
 ) -> Option<(PlayIntent, bool)> {
     if !marked_tracks.is_empty() {
-        return Some((
-            PlayIntent::Context { tracks: marked_tracks, offset: 0, shuffle, source: Some(source) },
-            true,
-        ));
+        return Some((PlayIntent::replace_and_play(marked_tracks, 0, shuffle, Some(source)), true));
     }
 
     if matches!(item, DetailItem::Ref(content_ref) if matches!(content_ref.content_type, ContentType::Album | ContentType::Playlist))
@@ -206,10 +203,7 @@ fn build_detail_play_scope_intent(
         return None;
     }
 
-    Some((
-        PlayIntent::Context { tracks: full_tracks, offset: 0, shuffle, source: Some(source) },
-        false,
-    ))
+    Some((PlayIntent::replace_and_play(full_tracks, 0, shuffle, Some(source)), false))
 }
 
 // =============================================================================
@@ -355,12 +349,10 @@ mod tests {
         assert!(used_marks);
         assert!(matches!(
             intent,
-            PlayIntent::Context {
-                tracks,
-                offset: 0,
-                shuffle: true,
-                source: Some(ContextSource::Playlist { playlist_id })
-            } if playlist_id == "playlist123" && tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
+            PlayIntent::Replace(replace)
+                if matches!(replace.playback, crate::backends::youtube::protocol::play_intent::ReplacePlayback::StartAtIndex(0))
+                    && matches!(&replace.source, Some(ContextSource::Playlist { playlist_id }) if playlist_id == "playlist123")
+                    && replace.tracks.iter().map(|song| song.uri.clone()).collect::<Vec<_>>() == marked.iter().map(|song| song.uri.clone()).collect::<Vec<_>>()
         ));
     }
 

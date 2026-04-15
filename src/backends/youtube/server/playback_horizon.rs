@@ -125,7 +125,7 @@ mod tests {
     use crate::domain::Song;
     use crate::{
         backends::youtube::services::QueueService,
-        shared::play_queue::{PlayQueue, QueueCommand},
+        shared::play_queue::{QueueInsertPlacement, PlayQueue, QueueCommand},
     };
 
     use super::ResolvedPlaybackHorizon;
@@ -181,15 +181,27 @@ mod tests {
     #[test]
     fn from_play_queue_rotates_from_current_id() {
         let mut play_queue = PlayQueue::new();
-        let a = match play_queue.apply(QueueCommand::Add { song: test_song("youtube://a") })[0] {
+        let a = match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://a")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
         };
-        let b = match play_queue.apply(QueueCommand::Add { song: test_song("youtube://b") })[0] {
+        let b = match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://b")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
         };
-        let c = match play_queue.apply(QueueCommand::Add { song: test_song("youtube://c") })[0] {
+        let c = match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://c")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { ref ids } => ids[0],
             _ => unreachable!(),
         };
@@ -204,15 +216,27 @@ mod tests {
     #[test]
     fn from_play_queue_track_id_rotates_from_current_track() {
         let mut play_queue = PlayQueue::new();
-        match play_queue.apply(QueueCommand::Add { song: test_song("youtube://a") })[0] {
+        match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://a")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { .. } => {}
             _ => unreachable!(),
         }
-        match play_queue.apply(QueueCommand::Add { song: test_song("youtube://b") })[0] {
+        match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://b")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { .. } => {}
             _ => unreachable!(),
         }
-        match play_queue.apply(QueueCommand::Add { song: test_song("youtube://c") })[0] {
+        match play_queue.apply(QueueCommand::Insert {
+            songs: vec![test_song("youtube://c")],
+            placement: QueueInsertPlacement::End,
+        })[0]
+        {
             crate::shared::play_queue::QueueEvent::ItemsAdded { .. } => {}
             _ => unreachable!(),
         }

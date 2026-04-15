@@ -348,15 +348,10 @@ impl SearchPaneV2 {
         let count = songs.len();
         if play {
             // Play immediately (replace queue and play)
-            ctx.queue_mutator().play(PlayIntent::Context {
-                tracks: songs,
-                offset: 0,
-                shuffle: false,
-                source: None,
-            });
+            ctx.queue_mutator().play(PlayIntent::replace_and_play(songs, 0, false, None));
         } else {
             // Add to queue without playing
-            ctx.queue_mutator().play(PlayIntent::Append { tracks: songs });
+            ctx.queue_mutator().play(PlayIntent::add_last(songs));
         }
 
         let _ = ctx.render();
@@ -538,12 +533,12 @@ impl SearchPaneV2 {
     fn play_all_songs(&self, ctx: &Ctx, songs: Vec<Song>, start_index: usize) {
         if !songs.is_empty() {
             let query = self.get_current_query_string();
-            ctx.queue_mutator().play(PlayIntent::Context {
-                tracks: songs,
-                offset: start_index,
-                shuffle: false,
-                source: Some(ContextSource::Search { query }),
-            });
+            ctx.queue_mutator().play(PlayIntent::replace_and_play(
+                songs,
+                start_index,
+                false,
+                Some(ContextSource::Search { query }),
+            ));
         }
     }
 
@@ -589,12 +584,12 @@ impl SearchPaneV2 {
 
     fn play_song(&self, ctx: &Ctx, song: Song) {
         let query = self.get_current_query_string();
-        ctx.queue_mutator().play(PlayIntent::Context {
-            tracks: vec![song],
-            offset: 0,
-            shuffle: false,
-            source: Some(ContextSource::Search { query }),
-        });
+        ctx.queue_mutator().play(PlayIntent::replace_and_play(
+            vec![song],
+            0,
+            false,
+            Some(ContextSource::Search { query }),
+        ));
     }
 
     fn resolve_play_scope_action(&mut self, ctx: &mut Ctx, item: DetailItem) -> PaneAction {
@@ -612,12 +607,12 @@ impl SearchPaneV2 {
 
             if !songs.is_empty() {
                 let query = self.get_current_query_string();
-                ctx.queue_mutator().play(PlayIntent::Context {
-                    tracks: songs,
-                    offset: 0,
-                    shuffle: ctx.status.random,
-                    source: Some(ContextSource::Search { query }),
-                });
+                ctx.queue_mutator().play(PlayIntent::replace_and_play(
+                    songs,
+                    0,
+                    ctx.status.random,
+                    Some(ContextSource::Search { query }),
+                ));
                 if let Some(level) = self.view.current_mut() {
                     level.section_list.clear_marks();
                 }

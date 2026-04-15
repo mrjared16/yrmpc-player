@@ -432,17 +432,18 @@ impl Navigator {
                     return;
                 }
 
-                ctx.queue_mutator()
-                    .play(crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
-                    tracks: details.tracks,
-                    offset: 0,
-                    shuffle: ctx.status.random,
-                    source: Some(
-                        crate::backends::youtube::protocol::play_intent::ContextSource::Playlist {
-                            playlist_id: details.id,
-                        },
+                ctx.queue_mutator().play(
+                    crate::backends::youtube::protocol::play_intent::PlayIntent::replace_and_play(
+                        details.tracks,
+                        0,
+                        ctx.status.random,
+                        Some(
+                            crate::backends::youtube::protocol::play_intent::ContextSource::Playlist {
+                                playlist_id: details.id,
+                            },
+                        ),
                     ),
-                });
+                );
             }
             PlayScopeFetchResult::Album { entity, details } => {
                 if !self.pending_play_scope.as_ref().is_some_and(|pending| pending.id == entity.id)
@@ -457,16 +458,16 @@ impl Navigator {
                 }
 
                 ctx.queue_mutator().play(
-                    crate::backends::youtube::protocol::play_intent::PlayIntent::Context {
-                        tracks: details.tracks,
-                        offset: 0,
-                        shuffle: ctx.status.random,
-                        source: Some(
+                    crate::backends::youtube::protocol::play_intent::PlayIntent::replace_and_play(
+                        details.tracks,
+                        0,
+                        ctx.status.random,
+                        Some(
                             crate::backends::youtube::protocol::play_intent::ContextSource::Album {
                                 album_id: details.id,
                             },
                         ),
-                    },
+                    ),
                 );
             }
             PlayScopeFetchResult::Failed { entity } => {

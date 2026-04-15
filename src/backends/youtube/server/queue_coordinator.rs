@@ -4,15 +4,14 @@ use crossbeam::channel::Sender;
 use parking_lot::Mutex;
 
 use super::{
-    handlers::{queue_events::QueueEventHandler, stable_track_id},
+    handlers::queue_events::QueueEventHandler,
     orchestrator::{Orchestrator, PREFETCH_WINDOW_SIZE},
 };
 use crate::{
     backends::youtube::{
-        protocol::{ServerResponse, SongData},
+        protocol::ServerResponse,
         services::{PlaybackService, QueueService},
     },
-    domain::Song,
     shared::play_queue::{PlayQueue, QueueCommand, QueueEvent},
 };
 
@@ -51,40 +50,6 @@ impl QueueCoordinator {
             handler.handle(event.clone());
         }
         events
-    }
-
-    pub fn add_uri(&self, uri: &str, position: Option<u32>) -> ServerResponse {
-        let mut song = Song::default();
-        song.uri = uri.to_string();
-        song.metadata.insert("title".into(), vec![uri.to_string()]);
-        self.add_song(SongData::from(song), position)
-    }
-
-    pub fn add_song(&self, song_data: SongData, position: Option<u32>) -> ServerResponse {
-        let video_id = stable_track_id(&song_data.file);
-        let had_active_playback = self.queue.current_index().is_some();
-        let base = self.queue.playback_base_index();
-        let queue_len = self.queue.len();
-
-        let song = song_data.to_song();
-        let queue_id = self.queue.add(song.clone(), position);
-        log::debug!("Added song to queue: id={}, video_id={}", queue_id, video_id);
-
-        let cmd = match position {
-            Some(pos) => QueueCommand::AddAt { song, position: (pos as usize).min(queue_len) },
-            None => QueueCommand::Add { song },
-        };
-        self.apply(cmd);
-
-        let insert_pos = position.map(|p| (p as usize).min(queue_len)).unwrap_or(queue_len);
-        if had_active_playback && insert_pos < base + PREFETCH_WINDOW_SIZE {
-            if let Err(e) = self.orchestrator.reconcile_active_window_after_queue_mutation() {
-                log::warn!("Failed to reconcile active playback window after add: {e}");
-            }
-        }
-
-        let _ = self.event_tx.send("playlist".to_string());
-        ServerResponse::Ok
     }
 
     pub fn delete_id(&self, id: u32) -> ServerResponse {

@@ -18,7 +18,7 @@ use crate::{
         },
         services::{PlaybackService, QueueService},
     },
-    shared::play_queue::{PlayQueue, QueueEvent, QueueId, RepeatMode},
+    shared::play_queue::{PlayQueue, QueueEvent, QueueId, QueueInsertPlacement, RepeatMode},
 };
 
 pub struct QueueEventHandler {
@@ -300,6 +300,7 @@ mod tests {
         url_resolver::UrlResolver,
     };
     use crate::domain::Song;
+    use crate::shared::play_queue::QueueInsertPlacement;
 
     fn setup_playback_services() -> (MpvTestGuard, TempDir, Arc<PlaybackService>, Arc<QueueService>)
     {
@@ -330,25 +331,31 @@ mod tests {
     fn added_track_ids_extract_supported_shapes() {
         let mut play_queue = PlayQueue::new();
         let ids = [
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "video123".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song { uri: "video123".to_string(), ..Song::default() }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song {
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
                     uri: "https://music.youtube.com/watch?v=video456".to_string(),
                     ..Song::default()
-                },
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "https://youtu.be/video789".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
+                    uri: "https://youtu.be/video789".to_string(),
+                    ..Song::default()
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
@@ -366,25 +373,31 @@ mod tests {
     fn normalized_window_track_ids_uses_stable_ids() {
         let mut play_queue = PlayQueue::new();
         let ids = [
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song {
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
                     uri: "https://www.youtube.com/watch?v=video123".to_string(),
                     ..Song::default()
-                },
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "https://youtu.be/video456".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
+                    uri: "https://youtu.be/video456".to_string(),
+                    ..Song::default()
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "youtube://video789".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song { uri: "youtube://video789".to_string(), ..Song::default() }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
@@ -404,20 +417,24 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
 
         let mut play_queue = PlayQueue::new();
-        play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-            song: Song {
+        play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![Song {
                 uri: "https://music.youtube.com/watch?v=video123".to_string(),
                 ..Song::default()
-            },
+            }],
+            placement: crate::shared::play_queue::QueueInsertPlacement::End,
         });
-        play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-            song: Song { uri: "https://youtu.be/video456".to_string(), ..Song::default() },
+        play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![Song { uri: "https://youtu.be/video456".to_string(), ..Song::default() }],
+            placement: crate::shared::play_queue::QueueInsertPlacement::End,
         });
-        play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-            song: Song { uri: "youtube://video789".to_string(), ..Song::default() },
+        play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![Song { uri: "youtube://video789".to_string(), ..Song::default() }],
+            placement: crate::shared::play_queue::QueueInsertPlacement::End,
         });
-        play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-            song: Song { uri: "video101".to_string(), ..Song::default() },
+        play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![Song { uri: "video101".to_string(), ..Song::default() }],
+            placement: crate::shared::play_queue::QueueInsertPlacement::End,
         });
 
         let play_order = play_queue.get_play_order().to_vec();
@@ -444,32 +461,39 @@ mod tests {
 
         let mut play_queue = PlayQueue::new();
         let ids = [
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song {
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
                     uri: "https://music.youtube.com/watch?v=video123".to_string(),
                     ..Song::default()
-                },
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "https://youtu.be/video456".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song {
+                    uri: "https://youtu.be/video456".to_string(),
+                    ..Song::default()
+                }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "youtube://video789".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song { uri: "youtube://video789".to_string(), ..Song::default() }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
                 _ => unreachable!(),
             },
-            match play_queue.apply(crate::shared::play_queue::QueueCommand::Add {
-                song: Song { uri: "video101".to_string(), ..Song::default() },
+            match play_queue.apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![Song { uri: "video101".to_string(), ..Song::default() }],
+                placement: crate::shared::play_queue::QueueInsertPlacement::End,
             })[0]
             {
                 QueueEvent::ItemsAdded { ref ids } => ids[0],
@@ -505,24 +529,28 @@ mod tests {
         queue.add(test_song("video222"), None);
         queue.set_current(Some(0));
 
-        play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") });
-        play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") });
-        play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video222") });
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video000")],
+            placement: QueueInsertPlacement::End,
+        });
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video111")],
+            placement: QueueInsertPlacement::End,
+        });
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video222")],
+            placement: QueueInsertPlacement::End,
+        });
 
         let mut handler =
             QueueEventHandler::new(playback, Arc::clone(&queue), Arc::clone(&play_queue))
                 .with_media_preparer(preparer);
 
         queue.add(test_song("video999"), Some(1));
-        let events = play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
+        let events = play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video999")],
+            placement: QueueInsertPlacement::End,
+        });
         for event in events {
             handler.handle(event);
         }
@@ -554,13 +582,15 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let current_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
+        let current_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video000")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
         play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
         coordinator.lock().begin_immediate_play("video000");
 
@@ -569,9 +599,11 @@ mod tests {
                 .with_media_preparer(preparer)
                 .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
+        let added_event =
+            play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video999")],
+                placement: QueueInsertPlacement::End,
+            });
         for event in added_event {
             handler.handle(event);
         }
@@ -597,9 +629,11 @@ mod tests {
                     })
                 });
 
-        let added_event = play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
+        let added_event =
+            play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video999")],
+                placement: QueueInsertPlacement::End,
+            });
         for event in added_event {
             handler.handle(event);
         }
@@ -625,20 +659,24 @@ mod tests {
                     })
                 });
 
-        let first_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
-        let second_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
+        let first_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video000")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
+        let second_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video111")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
 
         handler.handle(QueueEvent::OrderChanged {
             play_order: vec![first_id, second_id],
@@ -660,20 +698,24 @@ mod tests {
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
         let notifications = Arc::new(AtomicUsize::new(0));
 
-        let current_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
-        let removed_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
+        let current_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video000")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
+        let removed_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video111")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
         play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
 
         coordinator.lock().begin_immediate_play("video000");
@@ -715,13 +757,15 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let current_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
+        let current_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video000")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
         play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Play { id: current_id });
         coordinator.lock().queue_changed(
             ResolvedPlaybackHorizon::new(vec!["video000".to_string()]),
@@ -735,9 +779,11 @@ mod tests {
                 .with_media_preparer(preparer)
                 .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video999") });
+        let added_event =
+            play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video999")],
+                placement: QueueInsertPlacement::End,
+            });
         for event in added_event {
             handler.handle(event);
         }
@@ -860,19 +906,23 @@ mod tests {
         let preparer: Arc<dyn MediaPreparer> = recording.clone();
         let coordinator = Arc::new(Mutex::new(PlaybackCoordinator::default()));
 
-        let stale_current_id = match play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video000") })[0]
-        {
-            QueueEvent::ItemsAdded { ref ids } => ids[0],
-            _ => unreachable!(),
-        };
-        play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video111") });
-        play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video222") });
+        let stale_current_id =
+            match play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video000")],
+                placement: QueueInsertPlacement::End,
+            })[0]
+            {
+                QueueEvent::ItemsAdded { ref ids } => ids[0],
+                _ => unreachable!(),
+            };
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video111")],
+            placement: QueueInsertPlacement::End,
+        });
+        play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+            songs: vec![test_song("video222")],
+            placement: QueueInsertPlacement::End,
+        });
         play_queue
             .lock()
             .apply(crate::shared::play_queue::QueueCommand::Play { id: stale_current_id });
@@ -884,9 +934,11 @@ mod tests {
                 .with_media_preparer(preparer)
                 .with_playback_coordinator(Arc::clone(&coordinator));
 
-        let added_event = play_queue
-            .lock()
-            .apply(crate::shared::play_queue::QueueCommand::Add { song: test_song("video333") });
+        let added_event =
+            play_queue.lock().apply(crate::shared::play_queue::QueueCommand::Insert {
+                songs: vec![test_song("video333")],
+                placement: QueueInsertPlacement::End,
+            });
         for event in added_event {
             handler.handle(event);
         }

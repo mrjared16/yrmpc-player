@@ -31,17 +31,9 @@ pub enum RepeatMode {
 /// Commands that can be applied to the queue
 #[derive(Debug, Clone)]
 pub enum QueueCommand {
-    /// Add a single song to the end of the queue
-    Add {
-        song: Song,
-    },
-    AddAt {
-        song: Song,
-        position: usize,
-    },
-    /// Add multiple songs to the end of the queue
-    AddBatch {
+    Insert {
         songs: Vec<Song>,
+        placement: QueueInsertPlacement,
     },
     /// Remove a song by its ID
     Remove {
@@ -95,6 +87,13 @@ pub enum QueueEvent {
     Stopped,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum QueueInsertPlacement {
+    End,
+    AfterCurrent,
+    Absolute(usize),
+}
+
 /// Pure state machine for queue management
 #[derive(Debug, Clone)]
 pub struct PlayQueue {
@@ -139,9 +138,7 @@ impl PlayQueue {
     /// Apply a command and return emitted events
     pub fn apply(&mut self, cmd: QueueCommand) -> Vec<QueueEvent> {
         match cmd {
-            QueueCommand::Add { song } => self.handle_add(song),
-            QueueCommand::AddAt { song, position } => self.handle_add_at(song, position),
-            QueueCommand::AddBatch { songs } => self.handle_add_batch(songs),
+            QueueCommand::Insert { songs, placement } => self.handle_insert(songs, placement),
             QueueCommand::Remove { id } => self.handle_remove(id),
             QueueCommand::Move { id, to_position } => self.handle_move(id, to_position),
             QueueCommand::Clear => self.handle_clear(),
@@ -159,33 +156,64 @@ impl PlayQueue {
     // Command Handlers
     // =========================================================================
 
-    fn handle_add(&mut self, song: Song) -> Vec<QueueEvent> {
-        self.handle_add_at(song, self.play_order.len())
-    }
-
-    fn handle_add_at(&mut self, song: Song, position: usize) -> Vec<QueueEvent> {
-        let id = self.next_id;
-        self.next_id += 1;
-
-        self.items.insert(id, song);
-        let insert_pos = position.min(self.play_order.len());
-        self.original_order.insert(insert_pos.min(self.original_order.len()), id);
-        self.play_order.insert(insert_pos, id);
-
-        vec![QueueEvent::ItemsAdded { ids: vec![id] }]
-    }
-
-    fn handle_add_batch(&mut self, songs: Vec<Song>) -> Vec<QueueEvent> {
+    fn handle_insert(
+        &mut self,
+        songs: Vec<Song>,
+        placement: QueueInsertPlacement,
+    ) -> Vec<QueueEvent> {
         let mut ids = Vec::with_capacity(songs.len());
+        match placement {
+            QueueInsertPlacement::End => {
+                for song in songs {
+                    let id = self.next_id;
+                    self.next_id += 1;
 
-        for song in songs {
-            let id = self.next_id;
-            self.next_id += 1;
+                    self.items.insert(id, song);
+                    self.original_order.push(id);
+                    self.play_order.push(id);
+                    ids.push(id);
+                }
+            }
+            QueueInsertPlacement::AfterCurrent => {
+                let current_play_pos =
+                    self.current_id.and_then(|id| self.play_order.iter().position(|&x| x == id));
+                let current_original_pos = self
+                    .current_id
+                    .and_then(|id| self.original_order.iter().position(|&x| x == id));
 
-            self.items.insert(id, song);
-            self.original_order.push(id);
-            self.play_order.push(id);
-            ids.push(id);
+                // If the current song cannot be located locally, append deterministically.
+                let mut play_insert_pos =
+                    current_play_pos.map(|pos| pos + 1).unwrap_or(self.play_order.len());
+                let mut original_insert_pos =
+                    current_original_pos.map(|pos| pos + 1).unwrap_or(self.original_order.len());
+
+                for song in songs {
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.items.insert(id, song);
+                    self.original_order
+                        .insert(original_insert_pos.min(self.original_order.len()), id);
+                    self.play_order.insert(play_insert_pos.min(self.play_order.len()), id);
+                    play_insert_pos += 1;
+                    original_insert_pos += 1;
+                    ids.push(id);
+                }
+            }
+            QueueInsertPlacement::Absolute(position) => {
+                let mut insert_pos = position.min(self.play_order.len());
+                let mut original_insert_pos = position.min(self.original_order.len());
+
+                for song in songs {
+                    let id = self.next_id;
+                    self.next_id += 1;
+                    self.items.insert(id, song);
+                    self.original_order.insert(original_insert_pos, id);
+                    self.play_order.insert(insert_pos, id);
+                    insert_pos += 1;
+                    original_insert_pos += 1;
+                    ids.push(id);
+                }
+            }
         }
 
         vec![QueueEvent::ItemsAdded { ids }]

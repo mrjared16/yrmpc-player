@@ -20,7 +20,7 @@
 //!   - Buffer: MPV's internal playlist (3-track rolling window for gapless playback)
 //!
 //! Data Flow:
-//!   AddSong → QueueService (metadata) + MPV buffer (URL if in window)
+//!   Insert(Absolute) → QueueService (metadata) + MPV buffer (URL if in window)
 //!   Delete  → QueueService.remove() → MPV buffer sync
 //!   Play    → Rebuild buffer at position → playlist_play_index(0)
 //! ```
@@ -507,17 +507,6 @@ impl YouTubeServer {
             ServerCommand::PlayId(id) => self.orchestrator.play_id(id),
 
             // Queue handlers
-            ServerCommand::Add { uri, position } => {
-                log::warn!("ServerCommand::Add is deprecated; prefer PlayWithIntent::Append");
-                handlers::handle_add(&self.queue_coordinator, &uri, position)
-            }
-            ServerCommand::AddSong { song, position } => {
-                log::warn!("ServerCommand::AddSong is deprecated; prefer PlayWithIntent::Append");
-                log::info!("AddSong command received: file={}, title={:?}", song.file, song.title);
-                let result = handlers::handle_add_song(&self.queue_coordinator, song, position);
-                log::info!("AddSong result: {:?}", result);
-                result
-            }
             ServerCommand::DeleteId(id) => handlers::handle_delete_id(&self.queue_coordinator, id),
             ServerCommand::Clear => handlers::handle_clear(&self.queue_coordinator),
             ServerCommand::MoveId { from, to } => {

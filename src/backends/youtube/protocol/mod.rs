@@ -39,16 +39,6 @@ pub enum ServerCommand {
     },
 
     // Queue management
-    #[deprecated(note = "Use PlayWithIntent { intent: PlayIntent::Append, ... } for queue adds")]
-    Add {
-        uri: String,
-        position: Option<u32>,
-    },
-    #[deprecated(note = "Use PlayWithIntent { intent: PlayIntent::Append, ... } for queue adds")]
-    AddSong {
-        song: SongData,
-        position: Option<u32>,
-    },
     DeleteId(u32),
     Clear,
     MoveId {

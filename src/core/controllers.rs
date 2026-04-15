@@ -5,6 +5,7 @@ use crossbeam::channel::Sender;
 use super::queue_state::QueueDaemon;
 use crate::{
     AppEvent, Query, QueryResult,
+    backends::api::{AfterAdd, InsertAt, Item},
     backends::youtube::protocol::{
         ServerCommand,
         play_intent::{PlayIntent, RequestId},
@@ -25,11 +26,10 @@ impl CtxQueueDaemon {
 
 impl QueueDaemon for CtxQueueDaemon {
     fn add(&self, songs: Vec<Song>) {
+        let items: Vec<Item> = songs.iter().map(Item::from).collect();
         let cmd = crate::PlayerCommand {
             callback: Box::new(move |client| {
-                for song in songs {
-                    client.add_song(&song, None)?;
-                }
+                crate::backends::api::Queue::add(client, &items, InsertAt::End, AfterAdd::Nothing)?;
                 Ok(())
             }),
         };
@@ -37,14 +37,15 @@ impl QueueDaemon for CtxQueueDaemon {
     }
 
     fn add_and_play(&self, songs: Vec<Song>) {
+        let items: Vec<Item> = songs.iter().map(Item::from).collect();
         let cmd = crate::PlayerCommand {
             callback: Box::new(move |client| {
-                let status = client.get_status()?;
-                let start_idx = status.playlistlength as usize;
-                for song in songs {
-                    client.add_song(&song, None)?;
-                }
-                client.play_pos(start_idx)?;
+                crate::backends::api::Queue::add(
+                    client,
+                    &items,
+                    InsertAt::End,
+                    AfterAdd::PlayFirst,
+                )?;
                 Ok(())
             }),
         };

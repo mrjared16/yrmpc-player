@@ -45,7 +45,7 @@ impl Handler for QueueHandler {
                 if songs.is_empty() {
                     return Ok(HandleResult::NotApplicable("No songs to add"));
                 }
-                ctx.queue_mutator().play(PlayIntent::Append { tracks: songs });
+                ctx.queue_mutator().play(PlayIntent::add_last(songs));
                 Ok(HandleResult::Done)
             }
 

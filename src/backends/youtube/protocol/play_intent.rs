@@ -13,22 +13,143 @@ pub type RequestId = u64;
 /// Declarative user intent for playback operations.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PlayIntent {
-    /// Replace current context and start playing.
-    /// Priority: tracks[offset]=Immediate, tracks[offset+1]=Gapless,
-    /// rest=Background
-    Context { tracks: Vec<Song>, offset: usize, shuffle: bool, source: Option<ContextSource> },
-
-    /// Insert tracks to play after current song ends.
-    /// Priority: tracks[0]=Gapless, rest=Eager
-    Next { tracks: Vec<Song> },
-
-    /// Append tracks to end of queue.
-    /// Priority: all=Background
-    Append { tracks: Vec<Song> },
+    Replace(ReplaceQueue),
+    Insert(InsertTracks),
 
     /// Start infinite radio from seed track.
     /// Priority: seed=Immediate, lazy-fetched tracks=Background
-    Radio { seed: Song, mix_type: MixType },
+    Radio {
+        seed: Song,
+        mix_type: MixType,
+    },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ReplaceQueue {
+    pub tracks: Vec<Song>,
+    pub playback: ReplacePlayback,
+    pub order: QueueOrder,
+    pub source: Option<ContextSource>,
+    pub target: QueueTarget,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct InsertTracks {
+    pub tracks: Vec<Song>,
+    pub placement: InsertPlacement,
+    pub playback: InsertPlayback,
+    pub target: QueueTarget,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum ReplacePlayback {
+    DoNotStart,
+    StartAtIndex(usize),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum QueueOrder {
+    Sequential,
+    Shuffle,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum InsertPlacement {
+    End,
+    AfterCurrent,
+    Absolute(usize),
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum InsertPlayback {
+    KeepCurrent,
+    StartInserted { index: usize },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum QueueTarget {
+    Main,
+    Temporary(TemporaryQueueSpec),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporaryQueueSpec {
+    pub on_exhausted: TemporaryQueueExit,
+    pub repeat_behavior: TemporaryRepeatBehavior,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum TemporaryQueueExit {
+    Stop,
+    ResumeMainQueue,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub enum TemporaryRepeatBehavior {
+    FollowPlayerRepeatMode,
+    IgnoreRepeatAll,
+}
+
+impl PlayIntent {
+    pub fn add_last(tracks: Vec<Song>) -> Self {
+        Self::Insert(InsertTracks {
+            tracks,
+            placement: InsertPlacement::End,
+            playback: InsertPlayback::KeepCurrent,
+            target: QueueTarget::Main,
+        })
+    }
+
+    pub fn add_next(tracks: Vec<Song>) -> Self {
+        Self::Insert(InsertTracks {
+            tracks,
+            placement: InsertPlacement::AfterCurrent,
+            playback: InsertPlayback::KeepCurrent,
+            target: QueueTarget::Main,
+        })
+    }
+
+    pub fn add_at(tracks: Vec<Song>, position: usize) -> Self {
+        Self::Insert(InsertTracks {
+            tracks,
+            placement: InsertPlacement::Absolute(position),
+            playback: InsertPlayback::KeepCurrent,
+            target: QueueTarget::Main,
+        })
+    }
+
+    pub fn play_next(tracks: Vec<Song>) -> Self {
+        Self::Insert(InsertTracks {
+            tracks,
+            placement: InsertPlacement::AfterCurrent,
+            playback: InsertPlayback::StartInserted { index: 0 },
+            target: QueueTarget::Main,
+        })
+    }
+
+    pub fn play_last(tracks: Vec<Song>) -> Self {
+        Self::Insert(InsertTracks {
+            tracks,
+            placement: InsertPlacement::End,
+            playback: InsertPlayback::StartInserted { index: 0 },
+            target: QueueTarget::Main,
+        })
+    }
+
+    pub fn replace_and_play(
+        tracks: Vec<Song>,
+        start_index: usize,
+        shuffle: bool,
+        source: Option<ContextSource>,
+    ) -> Self {
+        Self::Replace(ReplaceQueue {
+            tracks,
+            playback: ReplacePlayback::StartAtIndex(start_index),
+            order: if shuffle { QueueOrder::Shuffle } else { QueueOrder::Sequential },
+            source,
+            target: QueueTarget::Main,
+        })
+    }
 }
 
 /// Priority tier for preload work.
@@ -74,6 +195,7 @@ pub enum MixType {
 pub enum PlayError {
     EmptyTracks,
     InvalidOffset { offset: usize, len: usize },
+    UnsupportedQueueTarget,
     NetworkTimeout,
     RadioSeedInvalid,
 }
@@ -86,10 +208,12 @@ pub enum PlayError {
 ///
 /// # Priority Rules
 ///
-/// - **Context**: tracks[offset]=Immediate, tracks[offset+1]=Gapless,
+/// - **Replace + StartAtIndex(i)**: tracks[i]=Immediate, tracks[i+1]=Gapless,
 ///   rest=Background
-/// - **Next**: tracks[0]=Gapless, rest=Eager
-/// - **Append**: all=Background
+/// - **Replace + DoNotStart**: all=Background
+/// - **Insert + KeepCurrent**: End=Background, AfterCurrent=Gapless/Eager,
+///   Absolute=Eager
+/// - **Insert + StartInserted**: inserted=Immediate, next=Gapless, rest=Eager
 /// - **Radio**: seed=Immediate
 ///
 /// # Examples
@@ -103,12 +227,7 @@ pub enum PlayError {
 ///     Song { uri: "s3".into(), ..Default::default() },
 /// ];
 ///
-/// let intent = PlayIntent::Context {
-///     tracks: songs.clone(),
-///     offset: 0,
-///     shuffle: false,
-///     source: None,
-/// };
+/// let intent = PlayIntent::replace_and_play(songs.clone(), 0, false, None);
 ///
 /// let priorities = derive_priorities(&intent);
 /// assert_eq!(priorities[0].1, PreloadTier::Immediate); // First track
@@ -117,31 +236,47 @@ pub enum PlayError {
 /// ```
 pub fn derive_priorities(intent: &PlayIntent) -> Vec<(Song, PreloadTier)> {
     match intent {
-        PlayIntent::Context { tracks, offset, shuffle: _, source: _ } => tracks
+        PlayIntent::Replace(ReplaceQueue { tracks, playback, .. }) => tracks
             .iter()
             .enumerate()
             .map(|(i, song)| {
-                let tier = match i.cmp(offset) {
-                    std::cmp::Ordering::Equal => PreloadTier::Immediate,
-                    std::cmp::Ordering::Greater if i == offset + 1 => PreloadTier::Gapless,
-                    _ => PreloadTier::Background,
+                let tier = match playback {
+                    ReplacePlayback::StartAtIndex(offset) => match i.cmp(offset) {
+                        std::cmp::Ordering::Equal => PreloadTier::Immediate,
+                        std::cmp::Ordering::Greater if i == offset + 1 => PreloadTier::Gapless,
+                        _ => PreloadTier::Background,
+                    },
+                    ReplacePlayback::DoNotStart => PreloadTier::Background,
                 };
                 (song.clone(), tier)
             })
             .collect(),
 
-        PlayIntent::Next { tracks } => tracks
+        PlayIntent::Insert(InsertTracks { tracks, placement, playback, .. }) => tracks
             .iter()
             .enumerate()
             .map(|(i, song)| {
-                let tier = if i == 0 { PreloadTier::Gapless } else { PreloadTier::Eager };
+                let tier = match playback {
+                    InsertPlayback::KeepCurrent => match placement {
+                        InsertPlacement::End => PreloadTier::Background,
+                        InsertPlacement::AfterCurrent => {
+                            if i == 0 {
+                                PreloadTier::Gapless
+                            } else {
+                                PreloadTier::Eager
+                            }
+                        }
+                        InsertPlacement::Absolute(_) => PreloadTier::Eager,
+                    },
+                    InsertPlayback::StartInserted { index } => match i.cmp(index) {
+                        std::cmp::Ordering::Equal => PreloadTier::Immediate,
+                        std::cmp::Ordering::Greater if i == index + 1 => PreloadTier::Gapless,
+                        _ => PreloadTier::Eager,
+                    },
+                };
                 (song.clone(), tier)
             })
             .collect(),
-
-        PlayIntent::Append { tracks } => {
-            tracks.iter().map(|song| (song.clone(), PreloadTier::Background)).collect()
-        }
 
         PlayIntent::Radio { seed, mix_type: _ } => {
             vec![(seed.clone(), PreloadTier::Immediate)]
@@ -160,8 +295,7 @@ mod tests {
     #[test]
     fn test_derive_priorities_context_offset_0() {
         let songs = vec![test_song("s1"), test_song("s2"), test_song("s3")];
-        let intent =
-            PlayIntent::Context { tracks: songs.clone(), offset: 0, shuffle: false, source: None };
+        let intent = PlayIntent::replace_and_play(songs.clone(), 0, false, None);
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 3);
@@ -176,8 +310,7 @@ mod tests {
     #[test]
     fn test_derive_priorities_context_offset_middle() {
         let songs = vec![test_song("s1"), test_song("s2"), test_song("s3"), test_song("s4")];
-        let intent =
-            PlayIntent::Context { tracks: songs.clone(), offset: 2, shuffle: false, source: None };
+        let intent = PlayIntent::replace_and_play(songs.clone(), 2, false, None);
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 4);
@@ -190,7 +323,7 @@ mod tests {
     #[test]
     fn test_derive_priorities_next() {
         let songs = vec![test_song("s1"), test_song("s2"), test_song("s3")];
-        let intent = PlayIntent::Next { tracks: songs.clone() };
+        let intent = PlayIntent::add_next(songs.clone());
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 3);
@@ -202,7 +335,7 @@ mod tests {
     #[test]
     fn test_derive_priorities_append() {
         let songs = vec![test_song("s1"), test_song("s2")];
-        let intent = PlayIntent::Append { tracks: songs.clone() };
+        let intent = PlayIntent::add_last(songs.clone());
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 2);
@@ -223,8 +356,13 @@ mod tests {
 
     #[test]
     fn test_derive_priorities_empty_context() {
-        let intent =
-            PlayIntent::Context { tracks: vec![], offset: 0, shuffle: false, source: None };
+        let intent = PlayIntent::Replace(ReplaceQueue {
+            tracks: vec![],
+            playback: ReplacePlayback::DoNotStart,
+            order: QueueOrder::Sequential,
+            source: None,
+            target: QueueTarget::Main,
+        });
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 0);
@@ -233,8 +371,7 @@ mod tests {
     #[test]
     fn test_derive_priorities_single_track_context() {
         let songs = vec![test_song("s1")];
-        let intent =
-            PlayIntent::Context { tracks: songs.clone(), offset: 0, shuffle: false, source: None };
+        let intent = PlayIntent::replace_and_play(songs.clone(), 0, false, None);
 
         let priorities = derive_priorities(&intent);
         assert_eq!(priorities.len(), 1);

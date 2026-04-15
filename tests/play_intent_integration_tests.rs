@@ -31,12 +31,11 @@ fn test_song(uri: &str) -> Song {
     Song { uri: uri.to_string(), id: None, metadata, ..Default::default() }
 }
 
-/// Test that PlayWithIntent::Context with valid data returns Ok
+/// Test that PlayWithIntent::Replace with valid data returns Ok
 #[test]
 fn test_play_intent_context_success() {
     let songs = vec![test_song("s1"), test_song("s2"), test_song("s3")];
-    let intent =
-        PlayIntent::Context { tracks: songs.clone(), offset: 0, shuffle: false, source: None };
+    let intent = PlayIntent::replace_and_play(songs.clone(), 0, false, None);
 
     let cmd = ServerCommand::PlayWithIntent { intent, request_id: 12345 };
 
@@ -44,10 +43,10 @@ fn test_play_intent_context_success() {
     assert!(serialized.is_ok(), "Command should serialize successfully");
 }
 
-/// Test that PlayWithIntent::Context with empty tracks is rejected
+/// Test that PlayWithIntent::Replace with empty tracks is rejected
 #[test]
 fn test_play_intent_context_empty_tracks() {
-    let intent = PlayIntent::Context { tracks: vec![], offset: 0, shuffle: false, source: None };
+    let intent = PlayIntent::replace_and_play(vec![], 0, false, None);
 
     let cmd = ServerCommand::PlayWithIntent { intent, request_id: 12346 };
 
@@ -55,12 +54,11 @@ fn test_play_intent_context_empty_tracks() {
     assert!(serialized.is_ok(), "Command serialization should still work");
 }
 
-/// Test that PlayWithIntent::Context with invalid offset is rejected
+/// Test that PlayWithIntent::Replace with invalid offset is rejected
 #[test]
 fn test_play_intent_context_invalid_offset() {
     let songs = vec![test_song("s1"), test_song("s2")];
-    let intent =
-        PlayIntent::Context { tracks: songs.clone(), offset: 10, shuffle: false, source: None };
+    let intent = PlayIntent::replace_and_play(songs.clone(), 10, false, None);
 
     let cmd = ServerCommand::PlayWithIntent { intent, request_id: 12347 };
 
@@ -68,11 +66,11 @@ fn test_play_intent_context_invalid_offset() {
     assert!(serialized.is_ok());
 }
 
-/// Test that PlayWithIntent::Next with valid tracks succeeds
+/// Test that PlayWithIntent::Insert-after-current with valid tracks succeeds
 #[test]
 fn test_play_intent_next_success() {
     let songs = vec![test_song("n1"), test_song("n2")];
-    let intent = PlayIntent::Next { tracks: songs.clone() };
+    let intent = PlayIntent::add_next(songs.clone());
 
     let cmd = ServerCommand::PlayWithIntent { intent, request_id: 12348 };
 
@@ -80,11 +78,11 @@ fn test_play_intent_next_success() {
     assert!(serialized.is_ok());
 }
 
-/// Test that PlayWithIntent::Append with valid tracks succeeds
+/// Test that PlayWithIntent::Insert-at-end with valid tracks succeeds
 #[test]
 fn test_play_intent_append_success() {
     let songs = vec![test_song("a1"), test_song("a2")];
-    let intent = PlayIntent::Append { tracks: songs.clone() };
+    let intent = PlayIntent::add_last(songs.clone());
 
     let cmd = ServerCommand::PlayWithIntent { intent, request_id: 12349 };
 
@@ -129,8 +127,7 @@ fn test_cancel_request_command_exists() {
 #[test]
 fn test_play_intent_serde_round_trip() {
     let songs = vec![test_song("rt1"), test_song("rt2")];
-    let intent =
-        PlayIntent::Context { tracks: songs.clone(), offset: 1, shuffle: true, source: None };
+    let intent = PlayIntent::replace_and_play(songs.clone(), 1, true, None);
 
     let cmd = ServerCommand::PlayWithIntent { intent: intent.clone(), request_id: 55555 };
 
@@ -140,13 +137,16 @@ fn test_play_intent_serde_round_trip() {
     if let ServerCommand::PlayWithIntent { intent: deserialized_intent, request_id } = deserialized
     {
         assert_eq!(request_id, 55555);
-        if let PlayIntent::Context { tracks, offset, shuffle, .. } = deserialized_intent {
+        if let PlayIntent::Replace(replace) = deserialized_intent {
+            let tracks = replace.tracks;
             assert_eq!(tracks.len(), 2);
-            assert_eq!(offset, 1);
-            assert_eq!(shuffle, true);
+            assert!(matches!(
+                replace.playback,
+                rmpc::backends::youtube::protocol::play_intent::ReplacePlayback::StartAtIndex(1)
+            ));
             assert_eq!(tracks[0].uri, "rt1");
         } else {
-            panic!("Expected Context variant");
+            panic!("Expected Replace variant");
         }
     } else {
         panic!("Expected PlayWithIntent command");
@@ -168,21 +168,7 @@ fn test_play_intent_error_response() {
 /// Verify that legacy commands still serialize correctly
 #[test]
 fn test_legacy_commands_still_work() {
-    use rmpc::backends::youtube::protocol::SongData;
-
-    let legacy_song_data = SongData {
-        id: None,
-        file: "legacy1".to_string(),
-        title: Some("Legacy Song".to_string()),
-        artist: Some("Legacy Artist".to_string()),
-        album: None,
-        duration_ms: None,
-        thumbnail: None,
-        item_type: Some("song".to_string()),
-    };
-
     let legacy_commands = vec![
-        ServerCommand::AddSong { song: legacy_song_data, position: None },
         ServerCommand::PlayPos(5),
         ServerCommand::Play,
         ServerCommand::Pause,
@@ -202,7 +188,7 @@ fn test_request_id_preservation() {
     let request_ids: Vec<RequestId> = vec![0, 1, u64::MAX, 42424242];
 
     for rid in request_ids {
-        let intent = PlayIntent::Next { tracks: vec![test_song("id_test")] };
+        let intent = PlayIntent::add_next(vec![test_song("id_test")]);
         let cmd = ServerCommand::PlayWithIntent { intent, request_id: rid };
 
         let json = serde_json::to_string(&cmd).unwrap();
@@ -216,7 +202,7 @@ fn test_request_id_preservation() {
     }
 }
 
-/// Integration test: PlayIntent::Context should result in playback starting
+/// Integration test: PlayIntent::Replace should result in playback starting
 /// within 500ms
 ///
 /// This test requires a running YouTube backend daemon.
@@ -230,7 +216,7 @@ fn test_play_album_latency_under_500ms() {
     // This is a placeholder test structure.
     // Full implementation would:
     // 1. Connect to daemon via IPC
-    // 2. Send PlayWithIntent::Context command
+    // 2. Send PlayWithIntent::Replace command
     // 3. Wait for first PlaybackStarted event
     // 4. Assert elapsed time < 500ms
 

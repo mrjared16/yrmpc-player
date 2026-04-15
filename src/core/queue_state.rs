@@ -31,7 +31,7 @@ use crossbeam::channel::Sender;
 
 use crate::{
     AppEvent,
-    backends::youtube::protocol::play_intent::{PlayIntent, RequestId},
+    backends::youtube::protocol::play_intent::{InsertPlacement, PlayIntent, RequestId},
     domain::Song,
 };
 
@@ -166,9 +166,9 @@ impl QueueState {
         self.submit(QueueMutation::Clear);
     }
 
-    /// Deprecated: Use `play(PlayIntent::Context { ... })` instead.
+    /// Deprecated: Use `play(PlayIntent::replace_and_play(...))` instead.
     /// This method will be removed in a future version.
-    #[deprecated(since = "0.1.0", note = "Use play(PlayIntent::Context) instead")]
+    #[deprecated(since = "0.1.0", note = "Use play(PlayIntent::replace_and_play) instead")]
     pub fn replace_and_play(&self, songs: Vec<Song>) {
         self.submit(QueueMutation::ReplaceAndPlay { songs });
     }
@@ -280,16 +280,33 @@ impl QueueState {
             }
             QueueMutation::Play { intent, .. } => {
                 match intent {
-                    PlayIntent::Context { tracks, .. } => {
-                        let optimistic = Self::optimistic_songs(tracks);
+                    PlayIntent::Replace(replace) => {
+                        let optimistic = Self::optimistic_songs(&replace.tracks);
                         self.replace_queue(|_| optimistic.clone());
                     }
-                    PlayIntent::Next { tracks } | PlayIntent::Append { tracks } => {
-                        self.replace_queue(|queue| {
-                            let mut new_queue = queue.clone();
-                            new_queue.extend(Self::optimistic_songs(tracks));
-                            new_queue
-                        });
+                    PlayIntent::Insert(insert) => {
+                        match insert.placement {
+                            InsertPlacement::End | InsertPlacement::AfterCurrent => {
+                                // QueueState has no robust local current-track signal, so keep
+                                // optimistic inserts deterministic and append them.
+                                self.replace_queue(|queue| {
+                                    let mut new_queue = queue.clone();
+                                    new_queue.extend(Self::optimistic_songs(&insert.tracks));
+                                    new_queue
+                                });
+                            }
+                            InsertPlacement::Absolute(position) => {
+                                let optimistic = Self::optimistic_songs(&insert.tracks);
+                                self.replace_queue(|queue| {
+                                    let mut new_queue = queue.clone();
+                                    let insert_pos = position.min(new_queue.len());
+                                    for (offset, song) in optimistic.into_iter().enumerate() {
+                                        new_queue.insert(insert_pos + offset, song);
+                                    }
+                                    new_queue
+                                });
+                            }
+                        }
                     }
                     PlayIntent::Radio { seed, .. } => {
                         let mut optimistic = seed.clone();
@@ -426,6 +443,34 @@ mod tests {
     }
 
     #[test]
+    fn test_play_insert_absolute_respects_position() {
+        let (tx, _rx) = crossbeam::channel::unbounded();
+        let daemon = Arc::new(MockDaemon::new());
+        let store =
+            QueueState::new(vec![create_test_song("song1"), create_test_song("song2")], tx, daemon);
+
+        store.play(PlayIntent::add_at(vec![create_test_song("inserted")], 1));
+
+        let queue = store.read();
+        assert_eq!(queue[0].uri, "song1.mp3");
+        assert_eq!(queue[1].uri, "inserted.mp3");
+        assert_eq!(queue[2].uri, "song2.mp3");
+    }
+
+    #[test]
+    fn test_play_insert_after_current_appends_without_local_signal() {
+        let (tx, _rx) = crossbeam::channel::unbounded();
+        let daemon = Arc::new(MockDaemon::new());
+        let store = QueueState::new(vec![create_test_song("song1")], tx, daemon);
+
+        store.play(PlayIntent::add_next(vec![create_test_song("inserted")]));
+
+        let queue = store.read();
+        assert_eq!(queue[0].uri, "song1.mp3");
+        assert_eq!(queue[1].uri, "inserted.mp3");
+    }
+
+    #[test]
     fn test_reconcile_replaces_state() {
         let (tx, _rx) = crossbeam::channel::unbounded();
         let daemon = Arc::new(MockDaemon::new());
@@ -508,12 +553,7 @@ mod tests {
         let store = QueueState::new(vec![], tx, daemon.clone());
         let song = create_test_song("song1");
 
-        store.play(PlayIntent::Context {
-            tracks: vec![song],
-            offset: 0,
-            shuffle: false,
-            source: None,
-        });
+        store.play(PlayIntent::replace_and_play(vec![song], 0, false, None));
 
         assert_eq!(store.len(), 1);
         assert!(matches!(rx.try_recv(), Ok(AppEvent::RequestRender)));
