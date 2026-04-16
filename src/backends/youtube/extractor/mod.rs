@@ -58,7 +58,7 @@ pub trait Extractor: Send + Sync {
             .unwrap_or_else(|| Err(anyhow!("No result returned for {}", video_id)))
     }
 
-    /// Extract a URL without joining existing dedup work.
+    /// Extract a fresh candidate URL without cache reads/writes.
     ///
     /// Default implementation reuses `extract_one()`. Decorators like
     /// `CachedExtractor` may override this to bypass singleflight when a
@@ -66,6 +66,12 @@ pub trait Extractor: Send + Sync {
     fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
         self.extract_one(video_id)
     }
+
+    /// Publish an accepted URL into cache for dedup.
+    ///
+    /// Default implementation is a no-op; recovery boundaries can use this
+    /// after accepting a newly obtained URL.
+    fn accept_url(&self, _video_id: &str, _url: &str) {}
 
     /// Clear any cached data.
     fn clear_cache(&self);

@@ -29,6 +29,29 @@ pub struct UrlStreamInfo {
     pub mime_type: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ExpiredUrlRecoveryStep {
+    PrimaryRefresh,
+    PolicyRefresh,
+    SwitchExtractor,
+}
+
+impl ExpiredUrlRecoveryStep {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::PrimaryRefresh => "primary-refresh",
+            Self::PolicyRefresh => "policy-refresh",
+            Self::SwitchExtractor => "switch-extractor",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) enum ExpiredUrlRecoveryOutcome {
+    Recovered(String),
+    NoProgress,
+}
+
 /// URL resolver facade.
 ///
 /// Provides a simple interface for resolving YouTube video IDs to stream URLs:
@@ -201,8 +224,46 @@ impl UrlResolver {
         self.inner.extract_one(video_id)
     }
 
+    /// Return a fresh candidate URL without cache reads or writes.
     pub fn get_url_fresh(&self, video_id: &str) -> Result<String> {
         self.inner.extract_one_fresh(video_id)
+    }
+
+    /// Publish an accepted URL into the cache for dedup.
+    pub(crate) fn accept_url(&self, video_id: &str, url: &str) {
+        self.inner.accept_url(video_id, url)
+    }
+
+    /// Recover from an expired URL (HTTP 403) in one place.
+    ///
+    /// This is the only policy point that decides whether a fresh extraction
+    /// made progress (`Recovered`) or returned the same rejected URL
+    /// (`NoProgress`). Cache publication happens only for recovered URLs.
+    pub(crate) fn recover_after_expired(
+        &self,
+        video_id: &str,
+        rejected_url: &str,
+        step: ExpiredUrlRecoveryStep,
+    ) -> Result<ExpiredUrlRecoveryOutcome> {
+        let fresh_url = match step {
+            ExpiredUrlRecoveryStep::PrimaryRefresh => self.refresh_url_forced(video_id)?,
+            ExpiredUrlRecoveryStep::PolicyRefresh => {
+                self.refresh_url_with_policy_forced(video_id)?
+            }
+            ExpiredUrlRecoveryStep::SwitchExtractor => self.switch_and_extract_fresh(video_id)?,
+        };
+
+        if fresh_url == rejected_url {
+            log::info!(
+                "[EXTRACT] 403 recovery no_progress track_id={} step={} reason=unchanged_url",
+                video_id,
+                step.as_str(),
+            );
+            return Ok(ExpiredUrlRecoveryOutcome::NoProgress);
+        }
+
+        self.accept_url(video_id, &fresh_url);
+        Ok(ExpiredUrlRecoveryOutcome::Recovered(fresh_url))
     }
 
     pub fn refresh_url_forced(&self, video_id: &str) -> Result<String> {
@@ -228,6 +289,8 @@ impl UrlResolver {
                 self.extractor_type.as_str()
             ));
         }
+
+        self.inner.invalidate(video_id);
 
         let switched = self.extractor_type.next_recovery_extractor(0).ok_or_else(|| {
             anyhow!("No fallback extractor configured for {}", self.extractor_type.as_str())
@@ -409,6 +472,14 @@ impl Extractor for UrlResolver {
 
     fn extract_one(&self, video_id: &str) -> Result<String> {
         self.inner.extract_one(video_id)
+    }
+
+    fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
+        self.inner.extract_one_fresh(video_id)
+    }
+
+    fn accept_url(&self, video_id: &str, url: &str) {
+        self.inner.accept_url(video_id, url)
     }
 
     fn clear_cache(&self) {

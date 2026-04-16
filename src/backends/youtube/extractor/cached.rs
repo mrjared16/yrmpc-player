@@ -322,21 +322,15 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
         }
     }
 
+    /// Fresh extraction returns a candidate only; cache publication is
+    /// handled separately by `accept_url()` at the recovery boundary.
     fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
         let start = std::time::Instant::now();
 
-        // Never check cache — this method must always extract fresh.
-        // Used by relay 403 recovery where the cached URL is known to be dead.
-        let version = self.next_version.fetch_add(1, Ordering::Relaxed);
-        log::info!(
-            "[EXTRACT] fresh_start track_id={} version={} reason=demand_takeover",
-            video_id,
-            version,
-        );
+        log::info!("[EXTRACT] fresh_start track_id={} reason=demand_takeover", video_id);
 
         match self.inner.extract_one_fresh(video_id) {
             Ok(url) => {
-                self.try_cache(video_id, url.clone(), version, true);
                 log::info!(
                     "[EXTRACT] fresh_complete track_id={} elapsed={:?}",
                     video_id,
@@ -349,11 +343,16 @@ impl<E: Extractor> Extractor for CachedExtractor<E> {
                     "[EXTRACT] fresh_failed track_id={} elapsed={:?} error={}",
                     video_id,
                     start.elapsed(),
-                    error,
+                    error
                 );
                 Err(error)
             }
         }
+    }
+
+    fn accept_url(&self, video_id: &str, url: &str) {
+        let version = self.next_version.fetch_add(1, Ordering::Relaxed);
+        self.try_cache(video_id, url.to_string(), version, true);
     }
 
     fn clear_cache(&self) {
@@ -396,6 +395,7 @@ mod tests {
             atomic::{AtomicUsize, Ordering},
         },
         thread,
+        time::Duration,
     };
 
     use super::*;
@@ -473,6 +473,44 @@ mod tests {
 
         fn name(&self) -> &'static str {
             "counting"
+        }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
+    }
+
+    struct FreshSequencedExtractor {
+        responses: Mutex<Vec<String>>,
+        extract_one_fresh_count: AtomicUsize,
+    }
+
+    impl FreshSequencedExtractor {
+        fn new(responses: Vec<String>) -> Self {
+            Self { responses: Mutex::new(responses), extract_one_fresh_count: AtomicUsize::new(0) }
+        }
+
+        fn extract_one_fresh_count(&self) -> usize {
+            self.extract_one_fresh_count.load(Ordering::SeqCst)
+        }
+    }
+
+    impl Extractor for FreshSequencedExtractor {
+        fn extract_batch(&self, _video_ids: &[String]) -> HashMap<String, Result<String>> {
+            HashMap::new()
+        }
+
+        fn name(&self) -> &'static str {
+            "fresh-sequenced"
+        }
+
+        fn extract_one_fresh(&self, _video_id: &str) -> Result<String> {
+            self.extract_one_fresh_count.fetch_add(1, Ordering::SeqCst);
+            Ok(self.responses.lock().remove(0))
         }
 
         fn clear_cache(&self) {}
@@ -753,6 +791,34 @@ mod tests {
             url2
         );
         assert_eq!(cached.inner().extract_one_count(), 2);
+    }
+
+    #[test]
+    fn test_extract_one_fresh_does_not_retry_or_cache() {
+        let url = "https://example.com/fresh-once".to_string();
+        let extractor = FreshSequencedExtractor::new(vec![url.clone()]);
+        let cached = CachedExtractor::new(extractor);
+
+        let result = cached.extract_one_fresh("fresh_id").unwrap();
+
+        assert_eq!(result, url);
+        assert_eq!(cached.cache_len(), 0);
+        assert_eq!(cached.inner().extract_one_fresh_count(), 1);
+    }
+
+    #[test]
+    fn test_accept_url_populates_cache_outside_fresh_path() {
+        let url = "https://example.com/accepted-url".to_string();
+        let extractor = FreshSequencedExtractor::new(vec![url.clone()]);
+        let cached = CachedExtractor::new(extractor);
+
+        let fresh = cached.extract_one_fresh("fresh_id").unwrap();
+        assert_eq!(cached.cache_len(), 0);
+
+        cached.accept_url("fresh_id", &fresh);
+
+        assert_eq!(cached.cache_len(), 1);
+        assert_eq!(cached.get_cached("fresh_id").as_deref(), Some(url.as_str()));
     }
 
     #[test]

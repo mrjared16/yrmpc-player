@@ -121,6 +121,12 @@ impl<P: Extractor, F: Extractor> Extractor for FallbackExtractor<P, F> {
         }
     }
 
+    fn extract_one_fresh(&self, video_id: &str) -> Result<String> {
+        // Fresh requests must be single-attempt at this layer.
+        // Retry/escalation policy belongs to recovery boundaries.
+        self.primary.extract_one_fresh(video_id)
+    }
+
     fn clear_cache(&self) {
         self.primary.clear_cache();
         self.fallback.clear_cache();
@@ -142,6 +148,11 @@ unsafe impl<P: Extractor, F: Extractor> Sync for FallbackExtractor<P, F> {}
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{
+        Arc,
+        atomic::{AtomicUsize, Ordering},
+    };
+
     use anyhow::anyhow;
 
     use super::*;
@@ -149,6 +160,9 @@ mod tests {
     struct SuccessExtractor;
     struct FailingExtractor;
     struct PartialExtractor;
+    struct CountingSuccessExtractor {
+        calls: Arc<AtomicUsize>,
+    }
 
     impl Extractor for SuccessExtractor {
         fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
@@ -213,6 +227,28 @@ mod tests {
         fn invalidate(&self, _video_id: &str) {}
     }
 
+    impl Extractor for CountingSuccessExtractor {
+        fn extract_batch(&self, video_ids: &[String]) -> HashMap<String, Result<String>> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            video_ids
+                .iter()
+                .map(|id| (id.clone(), Ok(format!("counted_success_url_{}", id))))
+                .collect()
+        }
+
+        fn name(&self) -> &'static str {
+            "counting-success"
+        }
+
+        fn clear_cache(&self) {}
+
+        fn is_cached(&self, _video_id: &str) -> bool {
+            false
+        }
+
+        fn invalidate(&self, _video_id: &str) {}
+    }
+
     #[test]
     fn test_primary_succeeds() {
         let extractor = FallbackExtractor::new(SuccessExtractor, FailingExtractor);
@@ -246,5 +282,19 @@ mod tests {
 
         // "fail_bad" should come from fallback
         assert_eq!(results.get("fail_bad").unwrap().as_ref().unwrap(), "success_url_fail_bad");
+    }
+
+    #[test]
+    fn test_extract_one_fresh_does_not_fallback() {
+        let fallback_calls = Arc::new(AtomicUsize::new(0));
+        let extractor = FallbackExtractor::new(
+            FailingExtractor,
+            CountingSuccessExtractor { calls: Arc::clone(&fallback_calls) },
+        );
+
+        let result = extractor.extract_one_fresh("test");
+
+        assert!(result.is_err());
+        assert_eq!(fallback_calls.load(Ordering::SeqCst), 0);
     }
 }

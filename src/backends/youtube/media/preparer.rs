@@ -1184,7 +1184,7 @@ impl YouTubeMediaPreparer {
             let _permit = permits.acquire(tier).await;
 
             let outcome = match pipeline.ensure_prefix(&track_id, &stream_url).await {
-                Ok((prefix_path, prefix_bytes, content_length)) => {
+                Ok((prefix_path, prefix_bytes, content_length, resolved_stream_url)) => {
                     log::debug!(
                         "[TRACE] prefix_result trace_id={} track_id={} result=ok tier={:?} prefix_bytes={} content_length={}",
                         trace_token,
@@ -1196,7 +1196,7 @@ impl YouTubeMediaPreparer {
                     PrepareResult::StagedPrefix {
                         prefix_path,
                         prefix_bytes,
-                        stream_url: stream_url.clone(),
+                        stream_url: resolved_stream_url,
                         content_length,
                     }
                 }

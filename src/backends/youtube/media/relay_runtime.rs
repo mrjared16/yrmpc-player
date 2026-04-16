@@ -19,7 +19,9 @@ use super::{
     RelaySessionSpec, RelaySessionState, UpstreamReadPlan,
 };
 use crate::backends::youtube::audio::{MpvInput, cache::AudioCache};
-use crate::backends::youtube::url_resolver::UrlResolver;
+use crate::backends::youtube::url_resolver::{
+    ExpiredUrlRecoveryOutcome, ExpiredUrlRecoveryStep, UrlResolver,
+};
 
 const MAX_HEADER_BYTES: usize = 16 * 1024;
 const SESSION_TTL: Duration = Duration::from_secs(60 * 10);
@@ -328,20 +330,32 @@ fn handle_connection(
                     }
 
                     let attempt = entry.recovery_attempts;
+                    let failed_url = spec.upstream.url.clone();
                     let recovery_result = if attempt == 0 {
                         entry.recovery_attempts = 1;
-                        url_resolver.map(|resolver| resolver.refresh_url_forced(&spec.track_id))
+                        url_resolver.map(|resolver| {
+                            resolver.recover_after_expired(
+                                &spec.track_id,
+                                &failed_url,
+                                ExpiredUrlRecoveryStep::PrimaryRefresh,
+                            )
+                        })
                     } else if attempt == 1 && !entry.switched_extractor {
                         entry.recovery_attempts = 2;
                         entry.switched_extractor = true;
-                        url_resolver
-                            .map(|resolver| resolver.switch_and_extract_fresh(&spec.track_id))
+                        url_resolver.map(|resolver| {
+                            resolver.recover_after_expired(
+                                &spec.track_id,
+                                &failed_url,
+                                ExpiredUrlRecoveryStep::SwitchExtractor,
+                            )
+                        })
                     } else {
                         None
                     };
 
                     match recovery_result {
-                        Some(Ok(fresh_url)) => {
+                        Some(Ok(ExpiredUrlRecoveryOutcome::Recovered(fresh_url))) => {
                             log::info!(
                                 "[RELAY] 403 recovery session={} track={} step={} outcome=refreshed",
                                 context.session_id,
@@ -349,6 +363,17 @@ fn handle_connection(
                                 entry.recovery_attempts,
                             );
                             entry.spec.upstream.url = fresh_url;
+                        }
+                        Some(Ok(ExpiredUrlRecoveryOutcome::NoProgress)) => {
+                            log::info!(
+                                "[RELAY] 403 recovery session={} track={} step={} outcome=unchanged",
+                                context.session_id,
+                                context.track_id,
+                                entry.recovery_attempts,
+                            );
+                            if entry.recovery_attempts >= 2 || entry.switched_extractor {
+                                entry.spec.state = RelaySessionState::Failed;
+                            }
                         }
                         Some(Err(refresh_err)) => {
                             log::info!(
@@ -670,8 +695,12 @@ fn stream_upstream_with_fresh_url_recovery(
 
                 let old_url = spec.upstream.url.clone();
                 let old_host = upstream_host(&old_url);
-                let fresh_url = url_resolver
-                    .refresh_url_with_policy_forced(&spec.track_id)
+                let recovery = url_resolver
+                    .recover_after_expired(
+                        &spec.track_id,
+                        &old_url,
+                        ExpiredUrlRecoveryStep::PolicyRefresh,
+                    )
                     .map_err(|refresh_err| {
                     relay_failure(
                         RelayStreamFailureKind::Retryable,
@@ -682,19 +711,32 @@ fn stream_upstream_with_fresh_url_recovery(
                     )
                 })?;
 
-                log::info!(
-                    "[RELAY] forcing fresh URL after fallback exhaustion: session={} track={} offset={} old_host={} new_host={} old_url={} new_url={}",
-                    context.session_id,
-                    context.track_id,
-                    resume_start,
-                    old_host,
-                    upstream_host(&fresh_url),
-                    old_url,
-                    fresh_url,
-                );
+                match recovery {
+                    ExpiredUrlRecoveryOutcome::Recovered(fresh_url) => {
+                        log::info!(
+                            "[RELAY] forcing fresh URL after fallback exhaustion: session={} track={} offset={} old_host={} new_host={} old_url={} new_url={}",
+                            context.session_id,
+                            context.track_id,
+                            resume_start,
+                            old_host,
+                            upstream_host(&fresh_url),
+                            old_url,
+                            fresh_url,
+                        );
 
-                spec.upstream.url = fresh_url;
-                refreshed_once = true;
+                        spec.upstream.url = fresh_url;
+                        refreshed_once = true;
+                    }
+                    ExpiredUrlRecoveryOutcome::NoProgress => {
+                        return Err(relay_failure(
+                            RelayStreamFailureKind::ExpiredUrl,
+                            format!(
+                                "force refresh relay URL made no progress at offset {}",
+                                resume_start,
+                            ),
+                        ));
+                    }
+                }
             }
         }
     }
@@ -1534,7 +1576,7 @@ mod tests {
     use crate::backends::youtube::{
         audio::{CacheConfig, cache::AudioCache},
         config::ExtractorType,
-        extractor::Extractor,
+        extractor::{CachedExtractor, Extractor},
         media::{
             RelayByteRange, RelayPlayStrategy, RelayResponsePlan, RelaySessionSpec,
             RelaySessionState, RelayStagedArtifact, RelayTeePrefix, RelayTransportContract,
@@ -2261,11 +2303,11 @@ mod tests {
         let stale_url = format!("http://{upstream_addr}/stale?videoplayback=1");
         let fresh_url = format!("http://{upstream_addr}/fresh?videoplayback=1");
         let resolver = UrlResolver::from_extractor(
-            Arc::new(FreshUrlExtractor {
+            Arc::new(CachedExtractor::new(FreshUrlExtractor {
                 stale_url: stale_url.clone(),
                 fresh_url: fresh_url.clone(),
                 fresh_calls: Arc::clone(&fresh_calls),
-            }),
+            })),
             ExtractorType::Ytx,
         );
 
@@ -2313,6 +2355,95 @@ mod tests {
         assert_eq!(fresh_requests.load(Ordering::SeqCst), 1);
         assert_eq!(fresh_calls.load(Ordering::SeqCst), 1);
         assert_eq!(spec.upstream.url, fresh_url);
+        assert_eq!(resolver.get_url("track-123").expect("cached fresh url"), spec.upstream.url);
+        assert_eq!(fresh_calls.load(Ordering::SeqCst), 1);
+
+        server.join().expect("join upstream server");
+    }
+
+    #[test]
+    fn fresh_url_recovery_limits_unchanged_refresh_attempts() {
+        let stale_requests = Arc::new(AtomicUsize::new(0));
+        let stale_requests_server = Arc::clone(&stale_requests);
+        let fresh_calls = Arc::new(AtomicUsize::new(0));
+        let upstream_listener = TcpListener::bind("127.0.0.1:0").expect("bind upstream listener");
+        let upstream_addr = upstream_listener.local_addr().expect("upstream local addr");
+        upstream_listener.set_nonblocking(true).expect("set upstream listener nonblocking");
+
+        let server = thread::spawn(move || {
+            let started = Instant::now();
+            while started.elapsed() < Duration::from_secs(3) {
+                let (mut stream, _) = match upstream_listener.accept() {
+                    Ok(conn) => conn,
+                    Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
+                        thread::sleep(Duration::from_millis(10));
+                        continue;
+                    }
+                    Err(_) => break,
+                };
+
+                let request = read_http_request(&mut stream);
+                let request_line = request.lines().next().unwrap_or_default().to_string();
+                let target = request_line.split_whitespace().nth(1).unwrap_or_default().to_string();
+                let range = parse_query_range(&request_line).expect("query range");
+
+                if target.contains("/stale") {
+                    let stale_idx = stale_requests_server.fetch_add(1, Ordering::SeqCst);
+                    let body: Vec<u8> = (range.0..range.0 + 20).map(|i| (i % 251) as u8).collect();
+                    write_http_response(&mut stream, "403 Forbidden", &body);
+                    if stale_idx >= 1 {
+                        break;
+                    }
+                }
+            }
+        });
+
+        let stale_url = format!("http://{upstream_addr}/stale?videoplayback=1");
+        let resolver = UrlResolver::from_extractor(
+            Arc::new(CachedExtractor::new(FreshUrlExtractor {
+                stale_url: stale_url.clone(),
+                fresh_url: stale_url.clone(),
+                fresh_calls: Arc::clone(&fresh_calls),
+            })),
+            ExtractorType::Ytx,
+        );
+
+        let client = reqwest::blocking::Client::builder().build().expect("build client");
+        let (mut writer, _reader) = tcp_pair();
+        let requested_range = RelayByteRange { start: 100, end: 150 };
+        let strategy = RelayPlayStrategy::CacheHitRelay {
+            track_id: "track-123".to_string(),
+            stream_url: stale_url.clone(),
+            prefix: RelayStagedArtifact {
+                path: PathBuf::from("/tmp/prefix.webm"),
+                available: RelayByteRange { start: 0, end: 100 },
+            },
+        };
+        let mut spec = RelaySessionSpec {
+            track_id: "track-123".to_string(),
+            staged: RelayStagedArtifact {
+                path: PathBuf::from("/tmp/prefix.webm"),
+                available: RelayByteRange { start: 0, end: 100 },
+            },
+            upstream: RelayUpstreamStream { url: stale_url, content_length: 1_000 },
+            contract: RelayTransportContract::default(),
+            state: RelaySessionState::AwaitingRequest,
+            tee_prefix: None,
+        };
+
+        let result = stream_upstream_with_fresh_url_recovery(
+            &mut writer,
+            &client,
+            &strategy,
+            &mut spec,
+            requested_range,
+            Some(&resolver),
+            &test_request_context(),
+        );
+
+        assert!(result.is_err(), "unchanged fresh URL should not loop indefinitely");
+        assert_eq!(stale_requests.load(Ordering::SeqCst), 2);
+        assert_eq!(fresh_calls.load(Ordering::SeqCst), 1);
 
         server.join().expect("join upstream server");
     }

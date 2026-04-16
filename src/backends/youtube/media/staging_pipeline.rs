@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 
 use super::super::{
     audio::{AudioDeliveryPlan, cache::AudioCache},
-    url_resolver::UrlResolver,
+    url_resolver::{ExpiredUrlRecoveryOutcome, ExpiredUrlRecoveryStep, UrlResolver},
 };
 
 #[derive(Debug)]
@@ -79,7 +79,7 @@ impl StagingPipeline {
         &self,
         track_id: &str,
         stream_url: &str,
-    ) -> Result<(PathBuf, u64, u64)> {
+    ) -> Result<(PathBuf, u64, u64, String)> {
         let mut attempts = 0;
         let mut current_url = stream_url.to_string();
         let mut refreshed = false;
@@ -103,7 +103,7 @@ impl StagingPipeline {
                             switched,
                         );
                     }
-                    return Ok((prefix_path, prefix_bytes, content_length));
+                    return Ok((prefix_path, prefix_bytes, content_length, current_url.clone()));
                 }
                 Err(err) => {
                     let msg = err.to_string();
@@ -114,14 +114,32 @@ impl StagingPipeline {
 
                     if !refreshed {
                         refreshed = true;
-                        current_url = self.url_resolver.refresh_url_forced(track_id)?;
-                        continue;
+                        match self.url_resolver.recover_after_expired(
+                            track_id,
+                            &current_url,
+                            ExpiredUrlRecoveryStep::PrimaryRefresh,
+                        )? {
+                            ExpiredUrlRecoveryOutcome::Recovered(recovered_url) => {
+                                current_url = recovered_url;
+                                continue;
+                            }
+                            ExpiredUrlRecoveryOutcome::NoProgress => {}
+                        }
                     }
 
                     if !switched {
                         switched = true;
-                        current_url = self.url_resolver.switch_and_extract_fresh(track_id)?;
-                        continue;
+                        match self.url_resolver.recover_after_expired(
+                            track_id,
+                            &current_url,
+                            ExpiredUrlRecoveryStep::SwitchExtractor,
+                        )? {
+                            ExpiredUrlRecoveryOutcome::Recovered(recovered_url) => {
+                                current_url = recovered_url;
+                                continue;
+                            }
+                            ExpiredUrlRecoveryOutcome::NoProgress => {}
+                        }
                     }
 
                     log::info!(
